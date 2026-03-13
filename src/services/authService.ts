@@ -15,7 +15,7 @@ type ColumnRow = {
 type LoginTenantRecord = {
   userId: string;
   tenantId: string;
-  targetDbUrl: string;
+  targetDbUrl: string | null;
   storedPassword: string;
   userIsActive: boolean | null;
   tenantIsActive: boolean | null;
@@ -67,6 +67,10 @@ export class AuthService {
 
     if (loginRecord.tenantIsActive === false) {
       throw new AppError('Tenant sudah tidak aktif', 403);
+    }
+
+    if (!loginRecord.targetDbUrl) {
+      throw new AppError('Konfigurasi DB tenant tidak ditemukan untuk login', 500);
     }
 
     const expiresIn = (process.env.JWT_EXPIRES_IN ?? '1d') as SignOptions['expiresIn'];
@@ -138,21 +142,26 @@ export class AuthService {
     const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userAppAccessUserIdColumn = pickColumn(metadata.userAppAccesses, ['userId', 'user_id']);
-    const userAppAccessTenantIdColumn = pickColumn(metadata.userAppAccesses, ['tenantId', 'tenant_id']);
+    const userAppAccessAppInstanceIdColumn = pickColumn(metadata.userAppAccesses, ['appInstanceId', 'app_instance_id']);
     const userAppAccessIsActiveColumn = pickColumn(metadata.userAppAccesses, ['isActive', 'is_active']);
     const userAppAccessCreatedAtColumn = pickColumn(metadata.userAppAccesses, ['createdAt', 'created_at']);
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
-    const tenantDbUrlColumn = pickColumn(metadata.tenants, ['db_connection_url', 'dbConnectionUrl']);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
+    const appInstanceIdColumn = pickColumn(metadata.appInstances, ['id']);
+    const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
+    const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
+    const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
+    const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
     if (
       !usernameColumn ||
       !passwordColumn ||
       !userIdColumn ||
       !userAppAccessUserIdColumn ||
-      !userAppAccessTenantIdColumn ||
+      !userAppAccessAppInstanceIdColumn ||
       !tenantIdColumn ||
-      !tenantDbUrlColumn
+      !appInstanceIdColumn ||
+      !appInstanceTenantIdColumn
     ) {
       return this.findLoginRecordFromTenantDb(username, candidatePassword, metadata);
     }
@@ -166,6 +175,12 @@ export class AuthService {
     const userAppAccessIsActiveFilter = userAppAccessIsActiveColumn
       ? `AND uaa.${quoteIdentifier(userAppAccessIsActiveColumn)} = TRUE`
       : '';
+    const appInstanceIsActiveFilter = appInstanceStatusColumn
+      ? `AND ai.${quoteIdentifier(appInstanceStatusColumn)} = 'ACTIVE'`
+      : '';
+    const targetDbUrlSelect = appInstanceDbUrlColumn
+      ? `COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn)}, $2) AS "targetDbUrl"`
+      : '$2::text AS "targetDbUrl"';
     const orderBy = userAppAccessCreatedAtColumn
       ? `ORDER BY uaa.${quoteIdentifier(userAppAccessCreatedAtColumn)} DESC`
       : '';
@@ -173,25 +188,33 @@ export class AuthService {
     const query = `
       SELECT
         u.${quoteIdentifier(userIdColumn)} AS "userId",
-        uaa.${quoteIdentifier(userAppAccessTenantIdColumn)} AS "tenantId",
-        t.${quoteIdentifier(tenantDbUrlColumn)} AS "targetDbUrl",
+        ai.${quoteIdentifier(appInstanceTenantIdColumn)} AS "tenantId",
+        ${targetDbUrlSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
         ${userIsActiveSelect},
         ${tenantIsActiveSelect}
       FROM users u
       JOIN user_app_accesses uaa
         ON uaa.${quoteIdentifier(userAppAccessUserIdColumn)} = u.${quoteIdentifier(userIdColumn)}
+      JOIN app_instances ai
+        ON ai.${quoteIdentifier(appInstanceIdColumn)} = uaa.${quoteIdentifier(userAppAccessAppInstanceIdColumn)}
       JOIN tenants t
-        ON t.${quoteIdentifier(tenantIdColumn)} = uaa.${quoteIdentifier(userAppAccessTenantIdColumn)}
+        ON t.${quoteIdentifier(tenantIdColumn)} = ai.${quoteIdentifier(appInstanceTenantIdColumn)}
       WHERE u.${quoteIdentifier(usernameColumn)} = $1
         ${userAppAccessIsActiveFilter}
+        ${appInstanceIsActiveFilter}
       ${orderBy}
       LIMIT 1
     `;
 
-    const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username);
+    const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username, masterDbUrl);
 
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row && !row.targetDbUrl && masterDbUrl) {
+      row.targetDbUrl = masterDbUrl;
+    }
+
+    return row;
   }
 
   private static async findLoginRecordFromTenantDb(

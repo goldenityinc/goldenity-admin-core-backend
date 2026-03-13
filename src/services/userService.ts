@@ -107,13 +107,34 @@ export class UserService {
       select: { dbConnectionString: true },
     });
 
-    if (!appInstance?.dbConnectionString) {
-      // No active app instance with a DB URL yet — skip silently.
+    const tenantDbConnectionString = appInstance?.dbConnectionString?.trim();
+    const masterDbConnectionString = process.env.DATABASE_URL?.trim();
+
+    if (!tenantDbConnectionString) {
+      console.warn(
+        `[UserService] Gagal sync: dbConnectionString tenant tidak ditemukan (tenantId=${tenantId}).`,
+      );
+
+      if (!masterDbConnectionString) {
+        console.warn(
+          `[UserService] Sinkronisasi POS dilewati: DATABASE_URL (Master DB) juga tidak tersedia (tenantId=${tenantId}, username=${username}).`,
+        );
+        return;
+      }
+
+      console.warn(
+        `[UserService] Fallback ke Master DB (single DB mode) untuk sync user POS (tenantId=${tenantId}, username=${username}).`,
+      );
+    }
+
+    const resolvedConnectionString = tenantDbConnectionString ?? masterDbConnectionString;
+
+    if (!resolvedConnectionString) {
       return;
     }
 
     const client = new Client({
-      connectionString: appInstance.dbConnectionString,
+      connectionString: resolvedConnectionString,
       ssl: { rejectUnauthorized: false },
     });
 
