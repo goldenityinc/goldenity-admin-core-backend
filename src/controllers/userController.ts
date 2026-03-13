@@ -5,6 +5,7 @@ import { AppError } from '../utils/AppError';
 import {
   createUserSchema,
   listUsersQuerySchema,
+  syncPosUsersSchema,
   tenantIdParamSchema,
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
@@ -124,5 +125,30 @@ export const resetUserPassword = asyncHandler(async (req: Request, res: Response
     success: true,
     message: 'Password berhasil direset',
     data: updatedUser,
+  });
+});
+
+export const syncPosUsers = asyncHandler(async (req: Request, res: Response) => {
+  const parsed = syncPosUsersSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? 'Payload sync POS tidak valid', 400);
+  }
+
+  if (parsed.data.tenantId) {
+    const summary = await UserService.syncTenantUsersToPos(parsed.data.tenantId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Sync user admin panel ke auth POS selesai untuk tenant',
+      data: summary,
+    });
+  }
+
+  const summaries = await UserService.syncAllTenantUsersToPos();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Sync user admin panel ke auth POS selesai untuk semua tenant',
+    data: summaries,
   });
 });

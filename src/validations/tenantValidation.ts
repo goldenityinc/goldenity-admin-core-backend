@@ -43,3 +43,7 @@ export const listUsersQuerySchema = z.object({
   search: z.string().trim().optional(),
   tenantId: z.string().uuid('tenantId must be a valid UUID').optional(),
 });
+
+export const syncPosUsersSchema = z.object({
+  tenantId: z.string().uuid('tenantId must be a valid UUID').optional(),
+});
