@@ -25,6 +25,7 @@ type ColumnMetadata = {
   tenants: Set<string>;
   userAppAccesses: Set<string>;
   users: Set<string>;
+  appInstances: Set<string>;
 };
 
 type TenantDbCandidate = {
@@ -95,7 +96,7 @@ export class AuthService {
       SELECT table_name, column_name
       FROM information_schema.columns
       WHERE table_schema = 'public'
-        AND table_name IN ('users', 'user_app_accesses', 'tenants')
+        AND table_name IN ('users', 'user_app_accesses', 'tenants', 'app_instances')
     `;
 
     return rows.reduce<ColumnMetadata>(
@@ -112,12 +113,17 @@ export class AuthService {
           metadata.tenants.add(row.column_name);
         }
 
+        if (row.table_name === 'app_instances') {
+          metadata.appInstances.add(row.column_name);
+        }
+
         return metadata;
       },
       {
         tenants: new Set<string>(),
         userAppAccesses: new Set<string>(),
         users: new Set<string>(),
+        appInstances: new Set<string>(),
       }
     );
   }
@@ -194,10 +200,15 @@ export class AuthService {
     metadata: ColumnMetadata
   ): Promise<LoginTenantRecord | null> {
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
-    const tenantDbUrlColumn = pickColumn(metadata.tenants, ['db_connection_url', 'dbConnectionUrl']);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
 
-    if (!tenantIdColumn || !tenantDbUrlColumn) {
+    // Prefer db URL stored directly on tenants; fall back to app_instances (current schema)
+    const tenantDbUrlColumn = pickColumn(metadata.tenants, ['db_connection_url', 'dbConnectionUrl']);
+    const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
+    const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
+    const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
+
+    if (!tenantIdColumn || (!tenantDbUrlColumn && !appInstanceDbUrlColumn)) {
       throw new AppError('Konfigurasi kolom tenant belum lengkap untuk login', 500);
     }
 
@@ -205,16 +216,39 @@ export class AuthService {
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
 
-    const tenantRows = await prisma.$queryRawUnsafe<TenantDbCandidate[]>(
-      `
-      SELECT
-        t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
-        t.${quoteIdentifier(tenantDbUrlColumn)} AS "targetDbUrl",
-        ${tenantIsActiveSelect}
-      FROM tenants t
-      WHERE t.${quoteIdentifier(tenantDbUrlColumn)} IS NOT NULL
-      `
-    );
+    let tenantRows: TenantDbCandidate[];
+
+    if (tenantDbUrlColumn) {
+      // Legacy path: DB URL is a column on the tenants table
+      tenantRows = await prisma.$queryRawUnsafe<TenantDbCandidate[]>(
+        `
+        SELECT
+          t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
+          t.${quoteIdentifier(tenantDbUrlColumn)} AS "targetDbUrl",
+          ${tenantIsActiveSelect}
+        FROM tenants t
+        WHERE t.${quoteIdentifier(tenantDbUrlColumn)} IS NOT NULL
+        `
+      );
+    } else {
+      // Current schema path: DB URL lives in app_instances.dbConnectionString
+      const statusFilter = appInstanceStatusColumn
+        ? `AND ai.${quoteIdentifier(appInstanceStatusColumn)} = 'ACTIVE'`
+        : '';
+      tenantRows = await prisma.$queryRawUnsafe<TenantDbCandidate[]>(
+        `
+        SELECT
+          t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
+          ai.${quoteIdentifier(appInstanceDbUrlColumn!)} AS "targetDbUrl",
+          ${tenantIsActiveSelect}
+        FROM tenants t
+        JOIN app_instances ai
+          ON ai.${quoteIdentifier(appInstanceTenantIdColumn!)} = t.${quoteIdentifier(tenantIdColumn)}
+        WHERE ai.${quoteIdentifier(appInstanceDbUrlColumn!)} IS NOT NULL
+          ${statusFilter}
+        `
+      );
+    }
 
     for (const tenant of tenantRows) {
       if (!tenant.targetDbUrl || tenant.tenantIsActive === false) {

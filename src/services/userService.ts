@@ -1,5 +1,6 @@
 import { UserRole } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { Client } from 'pg';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 
@@ -24,7 +25,7 @@ export class UserService {
     const passwordHash = await bcrypt.hash(data.password, 10);
 
     try {
-      return await prisma.user.create({
+      const createdUser = await prisma.user.create({
         data: {
           username: data.username,
           passwordHash,
@@ -45,6 +46,17 @@ export class UserService {
           },
         },
       });
+
+      // Best-effort: provision credentials into the tenant's POS database so the
+      // user can immediately authenticate via /auth/login on the POS app.
+      await UserService.syncToTenantPosDb(
+        tenantId,
+        data.username,
+        passwordHash,
+        data.role ?? 'TENANT_ADMIN',
+      );
+
+      return createdUser;
     } catch (error) {
       throw error;
     }
@@ -59,13 +71,79 @@ export class UserService {
       throw new AppError('Cannot reset password for SUPER_ADMIN via this endpoint', 403);
     }
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    return prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { passwordHash },
       include: {
         tenant: { select: { id: true, name: true, slug: true } },
       },
     });
+
+    // Best-effort: keep the POS tenant DB in sync with the new password hash.
+    if (updatedUser.username) {
+      await UserService.syncToTenantPosDb(
+        updatedUser.tenantId,
+        updatedUser.username,
+        passwordHash,
+        updatedUser.role,
+      );
+    }
+
+    return updatedUser;
+  }
+
+  /**
+   * Upserts a user's credentials into the tenant's POS database (app_users table).
+   * Failures are logged and swallowed so they never roll back the master-DB operation.
+   */
+  static async syncToTenantPosDb(
+    tenantId: string,
+    username: string,
+    passwordHash: string,
+    role: string,
+  ): Promise<void> {
+    const appInstance = await prisma.appInstance.findFirst({
+      where: { tenantId, status: 'ACTIVE' },
+      select: { dbConnectionString: true },
+    });
+
+    if (!appInstance?.dbConnectionString) {
+      // No active app instance with a DB URL yet — skip silently.
+      return;
+    }
+
+    const client = new Client({
+      connectionString: appInstance.dbConnectionString,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    try {
+      await client.connect();
+
+      const existing = await client.query<{ id: number }>(
+        'SELECT id FROM app_users WHERE username = $1 LIMIT 1',
+        [username],
+      );
+
+      if (existing.rowCount && existing.rowCount > 0) {
+        await client.query(
+          'UPDATE app_users SET password = $1, role = $2 WHERE username = $3',
+          [passwordHash, role, username],
+        );
+      } else {
+        await client.query(
+          'INSERT INTO app_users (username, password, role) VALUES ($1, $2, $3)',
+          [username, passwordHash, role],
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[UserService] syncToTenantPosDb failed for user '${username}' (tenantId=${tenantId}):`,
+        error,
+      );
+    } finally {
+      await client.end().catch(() => undefined);
+    }
   }
 
   static async listUsers(options: {
