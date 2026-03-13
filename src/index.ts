@@ -48,6 +48,7 @@ app.get('/', (_req: Request, res: Response) => {
 
 // API Routes
 app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/solutions', solutionRoutes);
 app.use('/api/app-instances', appInstanceRoutes);

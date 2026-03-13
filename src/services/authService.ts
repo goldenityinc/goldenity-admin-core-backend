@@ -17,6 +17,7 @@ type LoginTenantRecord = {
   tenantId: string;
   targetDbUrl: string | null;
   storedPassword: string;
+  role: string | null;
   userIsActive: boolean | null;
   tenantIsActive: boolean | null;
 };
@@ -56,28 +57,36 @@ export class AuthService {
       credentials.password,
       metadata
     );
+    const passwordMatchesMaster =
+      !!loginRecord &&
+      (await verifyPassword(credentials.password, loginRecord.storedPassword));
 
-    if (!loginRecord || !(await verifyPassword(credentials.password, loginRecord.storedPassword))) {
+    const resolvedLoginRecord = passwordMatchesMaster
+      ? loginRecord
+      : await this.findLoginRecordFromTenantDb(credentials.username, credentials.password, metadata);
+
+    if (!resolvedLoginRecord || !(await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword))) {
       throw new AppError('Username atau password tidak valid', 401);
     }
 
-    if (loginRecord.userIsActive === false) {
+    if (resolvedLoginRecord.userIsActive === false) {
       throw new AppError('Akun user sudah tidak aktif', 403);
     }
 
-    if (loginRecord.tenantIsActive === false) {
+    if (resolvedLoginRecord.tenantIsActive === false) {
       throw new AppError('Tenant sudah tidak aktif', 403);
     }
 
-    if (!loginRecord.targetDbUrl) {
+    if (!resolvedLoginRecord.targetDbUrl) {
       throw new AppError('Konfigurasi DB tenant tidak ditemukan untuk login', 500);
     }
 
     const expiresIn = (process.env.JWT_EXPIRES_IN ?? '1d') as SignOptions['expiresIn'];
     const payload: JwtAuthPayload = {
-      userId: loginRecord.userId,
-      tenantId: loginRecord.tenantId,
-      dbUrl: loginRecord.targetDbUrl,
+      userId: resolvedLoginRecord.userId,
+      tenantId: resolvedLoginRecord.tenantId,
+      dbUrl: resolvedLoginRecord.targetDbUrl,
+      role: resolvedLoginRecord.role ?? undefined,
     };
 
     const token = jwt.sign(
@@ -140,6 +149,7 @@ export class AuthService {
     const usernameColumn = pickColumn(metadata.users, ['username', 'email']);
     const passwordColumn = pickColumn(metadata.users, ['password', 'password_hash', 'passwordHash']);
     const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
+    const userRoleColumn = pickColumn(metadata.users, ['role']);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userAppAccessUserIdColumn = pickColumn(metadata.userAppAccesses, ['userId', 'user_id']);
     const userAppAccessAppInstanceIdColumn = pickColumn(metadata.userAppAccesses, ['appInstanceId', 'app_instance_id']);
@@ -169,6 +179,9 @@ export class AuthService {
     const userIsActiveSelect = userIsActiveColumn
       ? `u.${quoteIdentifier(userIsActiveColumn)} AS "userIsActive"`
       : 'NULL::boolean AS "userIsActive"';
+    const userRoleSelect = userRoleColumn
+      ? `u.${quoteIdentifier(userRoleColumn)} AS "role"`
+      : 'NULL::text AS "role"';
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
@@ -191,6 +204,7 @@ export class AuthService {
         ai.${quoteIdentifier(appInstanceTenantIdColumn)} AS "tenantId",
         ${targetDbUrlSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
+        ${userRoleSelect},
         ${userIsActiveSelect},
         ${tenantIsActiveSelect}
       FROM users u
@@ -288,8 +302,9 @@ export class AuthService {
         const userRows = await tenantClient.query<{
           id: string;
           password: string;
+          role: string | null;
         }>(
-          'SELECT id, password FROM app_users WHERE username = $1 LIMIT 1',
+          'SELECT id, password, role FROM app_users WHERE username = $1 LIMIT 1',
           [username]
         );
 
@@ -307,6 +322,7 @@ export class AuthService {
           tenantId: tenant.tenantId,
           targetDbUrl: tenant.targetDbUrl,
           storedPassword: tenantUser.password,
+          role: tenantUser.role,
           userIsActive: true,
           tenantIsActive: tenant.tenantIsActive,
         };

@@ -93,6 +93,26 @@ export const authMiddleware = async (
       throw new AppError('Invalid token format', 401);
     }
 
+    // Prioritaskan JWT internal backend agar token dari /auth/login bisa dipakai lintas endpoint.
+    const jwtSecret = process.env.JWT_SECRET;
+    if (jwtSecret) {
+      try {
+        const decoded = jwt.verify(token, jwtSecret);
+        if (isJwtAuthPayload(decoded)) {
+          req.user = {
+            userId: decoded.userId,
+            tenantId: decoded.tenantId,
+            dbUrl: decoded.dbUrl,
+            role: decoded.role,
+          };
+
+          return next();
+        }
+      } catch {
+        // Bukan JWT internal, lanjutkan ke validasi Firebase.
+      }
+    }
+
     // 2. Verifikasi token dengan Firebase
     const decodedToken = await firebaseAuth.verifyIdToken(token);
     const { uid } = decodedToken;
