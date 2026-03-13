@@ -2,6 +2,13 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { AppError } from './utils/AppError';
+import tenantRoutes from './routes/tenantRoutes';
+import dashboardRoutes from './routes/dashboardRoutes';
+import solutionRoutes from './routes/solutionRoutes';
+import appInstanceRoutes from './routes/appInstanceRoutes';
+import authRoutes from './routes/authRoutes';
+import userRoutes from './routes/userRoutes';
+import settingsRoutes from './routes/settingsRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -12,7 +19,9 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
+  origin: process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim())
+    : true,
   credentials: true,
 }));
 app.use(express.json());
@@ -36,6 +45,16 @@ app.get('/', (_req: Request, res: Response) => {
     version: '1.0.0',
   });
 });
+
+// API Routes
+app.use('/auth', authRoutes);
+app.use('/api/tenants', tenantRoutes);
+app.use('/api/solutions', solutionRoutes);
+app.use('/api/app-instances', appInstanceRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/settings', settingsRoutes);
+
 
 // 404 Handler - Route not found
 app.use((req: Request, _res: Response, next: NextFunction) => {

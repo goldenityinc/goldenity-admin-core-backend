@@ -77,6 +77,10 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour Private Key Here\n-----E
 
 # CORS Configuration
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+
+# JWT Configuration
+JWT_SECRET=replace-with-a-long-random-secret
+JWT_EXPIRES_IN=1d
 ```
 
 ### 2.4 Generate Prisma Client & Migrate Database
@@ -222,6 +226,13 @@ Response:
 ```bash
 curl -H "Authorization: Bearer <your-firebase-token>" \
      http://localhost:5000/api/products
+```
+
+### Tenant Login Endpoint
+```bash
+curl -X POST http://localhost:5000/auth/login-tenant \
+   -H "Content-Type: application/json" \
+   -d '{"username":"tenant-admin","password":"secret"}'
 ```
 
 ## 🔧 Development Commands

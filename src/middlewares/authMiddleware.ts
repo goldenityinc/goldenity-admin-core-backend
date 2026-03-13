@@ -1,21 +1,68 @@
 import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
 import { firebaseAuth } from '../config/firebase';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
+import { isJwtAuthPayload } from '../types/auth';
 
 // Extend Express Request type to include user
 declare global {
   namespace Express {
     interface Request {
       user?: {
-        uid: string;
+        uid?: string;
+        userId?: string;
         email?: string;
         tenantId: string;
-        role: string;
+        role?: string;
+        dbUrl?: string;
       };
     }
   }
 }
+
+export const verifyToken = (req: Request, _res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new AppError('No token provided. Please login first.', 401);
+    }
+
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      throw new AppError('Invalid token format', 401);
+    }
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new AppError('JWT_SECRET is not configured', 500);
+    }
+
+    const decoded = jwt.verify(token, jwtSecret);
+    if (!isJwtAuthPayload(decoded)) {
+      throw new AppError('Invalid token payload', 401);
+    }
+
+    req.user = {
+      userId: decoded.userId,
+      tenantId: decoded.tenantId,
+      dbUrl: decoded.dbUrl,
+    };
+
+    next();
+  } catch (error: any) {
+    if (error?.name === 'TokenExpiredError') {
+      return next(new AppError('Token has expired. Please login again.', 401));
+    }
+
+    if (error?.name === 'JsonWebTokenError') {
+      return next(new AppError('Invalid token', 401));
+    }
+
+    return next(error);
+  }
+};
 
 /**
  * Middleware untuk verifikasi Firebase ID Token dan ekstraksi tenantId
@@ -76,8 +123,8 @@ export const authMiddleware = async (
 
     // 5. Attach user info ke request
     req.user = {
-      uid: user.firebaseUid,
-      email: user.email,
+      uid: user.firebaseUid ?? undefined,
+      email: user.email ?? undefined,
       tenantId: user.tenantId,
       role: user.role,
     };
@@ -107,6 +154,10 @@ export const roleMiddleware = (...allowedRoles: string[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) {
       return next(new AppError('User not authenticated', 401));
+    }
+
+    if (!req.user.role) {
+      return next(new AppError('Role is missing in authenticated user', 403));
     }
 
     if (!allowedRoles.includes(req.user.role)) {
