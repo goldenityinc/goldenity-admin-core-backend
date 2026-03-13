@@ -35,6 +35,17 @@ type TenantDbCandidate = {
   tenantIsActive: boolean | null;
 };
 
+type TenantAppUserColumnRow = {
+  column_name: string;
+};
+
+type TenantAppUserRow = {
+  userId: string;
+  storedPassword: string;
+  role: string | null;
+  userIsActive: boolean | null;
+};
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -43,7 +54,106 @@ function pickColumn(columns: Set<string>, candidates: string[]): string | null {
   return candidates.find((candidate) => columns.has(candidate)) ?? null;
 }
 
+function normalizeUserId(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value);
+}
+
 export class AuthService {
+  private static async resolvePreferredTenantIds(
+    username: string,
+    metadata: ColumnMetadata,
+  ): Promise<Set<string>> {
+    const usernameColumn = pickColumn(metadata.users, ['username', 'email']);
+    const userTenantIdColumn = pickColumn(metadata.users, ['tenantId', 'tenant_id']);
+
+    if (!usernameColumn || !userTenantIdColumn) {
+      return new Set<string>();
+    }
+
+    const rows = await prisma.$queryRawUnsafe<Array<{ tenantId: string }>>(
+      `
+      SELECT u.${quoteIdentifier(userTenantIdColumn)} AS "tenantId"
+      FROM users u
+      WHERE u.${quoteIdentifier(usernameColumn)} = $1
+      `,
+      username,
+    );
+
+    return new Set(rows.map((row) => row.tenantId).filter((value) => !!value));
+  }
+
+  private static async findUserInTenantAppUsers(
+    tenantClient: Client,
+    username: string,
+  ): Promise<TenantAppUserRow | null> {
+    const columnRows = await tenantClient.query<TenantAppUserColumnRow>(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'app_users'
+      `,
+    );
+
+    const appUserColumns = new Set(columnRows.rows.map((row) => row.column_name));
+    const idColumn = pickColumn(appUserColumns, ['id', 'user_id', 'uid']);
+    const usernameColumn = pickColumn(appUserColumns, ['username', 'email']);
+    const passwordColumn = pickColumn(appUserColumns, ['password', 'password_hash', 'passwordHash']);
+    const roleColumn = pickColumn(appUserColumns, ['role']);
+    const userIsActiveColumn = pickColumn(appUserColumns, ['is_active', 'isActive']);
+
+    if (!usernameColumn || !passwordColumn) {
+      return null;
+    }
+
+    const userIdSelect = idColumn
+      ? `${quoteIdentifier(idColumn)} AS "userId"`
+      : '$2::text AS "userId"';
+    const roleSelect = roleColumn
+      ? `${quoteIdentifier(roleColumn)} AS "role"`
+      : 'NULL::text AS "role"';
+    const isActiveSelect = userIsActiveColumn
+      ? `${quoteIdentifier(userIsActiveColumn)} AS "userIsActive"`
+      : 'NULL::boolean AS "userIsActive"';
+
+    const queryValues = idColumn ? [username] : [username, username];
+
+    const tenantUserResult = await tenantClient.query<{
+      userId: unknown;
+      storedPassword: string;
+      role: string | null;
+      userIsActive: boolean | null;
+    }>(
+      `
+      SELECT
+        ${userIdSelect},
+        ${quoteIdentifier(passwordColumn)} AS "storedPassword",
+        ${roleSelect},
+        ${isActiveSelect}
+      FROM app_users
+      WHERE ${quoteIdentifier(usernameColumn)} = $1
+      LIMIT 1
+      `,
+      queryValues,
+    );
+
+    const tenantUser = tenantUserResult.rows[0];
+    if (!tenantUser) {
+      return null;
+    }
+
+    return {
+      userId: normalizeUserId(tenantUser.userId) || username,
+      storedPassword: tenantUser.storedPassword,
+      role: tenantUser.role,
+      userIsActive: tenantUser.userIsActive,
+    };
+  }
+
   static async login(credentials: LoginInput) {
     const jwtSecret = process.env.JWT_SECRET;
 
@@ -238,12 +348,15 @@ export class AuthService {
   ): Promise<LoginTenantRecord | null> {
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
+    const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
     // Prefer db URL stored directly on tenants; fall back to app_instances (current schema)
     const tenantDbUrlColumn = pickColumn(metadata.tenants, ['db_connection_url', 'dbConnectionUrl']);
     const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
+    const appInstanceUpdatedAtColumn = pickColumn(metadata.appInstances, ['updatedAt', 'updated_at']);
+    const appInstanceCreatedAtColumn = pickColumn(metadata.appInstances, ['createdAt', 'created_at']);
 
     if (!tenantIdColumn || (!tenantDbUrlColumn && !appInstanceDbUrlColumn)) {
       throw new AppError('Konfigurasi kolom tenant belum lengkap untuk login', 500);
@@ -261,33 +374,54 @@ export class AuthService {
         `
         SELECT
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
-          t.${quoteIdentifier(tenantDbUrlColumn)} AS "targetDbUrl",
+          COALESCE(t.${quoteIdentifier(tenantDbUrlColumn)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
-        WHERE t.${quoteIdentifier(tenantDbUrlColumn)} IS NOT NULL
-        `
+        `,
+        masterDbUrl,
       );
     } else {
       // Current schema path: DB URL lives in app_instances.dbConnectionString
-      const statusFilter = appInstanceStatusColumn
-        ? `AND ai.${quoteIdentifier(appInstanceStatusColumn)} = 'ACTIVE'`
-        : '';
+      const statusOrderExpression = appInstanceStatusColumn
+        ? `CASE ai.${quoteIdentifier(appInstanceStatusColumn)}
+            WHEN 'ACTIVE' THEN 0
+            WHEN 'DEPLOYING' THEN 1
+            WHEN 'SUSPENDED' THEN 2
+            ELSE 3
+          END`
+        : '3';
+      const updatedAtOrderExpression = appInstanceUpdatedAtColumn
+        ? `ai.${quoteIdentifier(appInstanceUpdatedAtColumn)} DESC`
+        : 'NULL';
+      const createdAtOrderExpression = appInstanceCreatedAtColumn
+        ? `ai.${quoteIdentifier(appInstanceCreatedAtColumn)} DESC`
+        : 'NULL';
+
       tenantRows = await prisma.$queryRawUnsafe<TenantDbCandidate[]>(
         `
-        SELECT
+        SELECT DISTINCT ON (t.${quoteIdentifier(tenantIdColumn)})
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
-          ai.${quoteIdentifier(appInstanceDbUrlColumn!)} AS "targetDbUrl",
+          COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn!)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
-        JOIN app_instances ai
+        LEFT JOIN app_instances ai
           ON ai.${quoteIdentifier(appInstanceTenantIdColumn!)} = t.${quoteIdentifier(tenantIdColumn)}
-        WHERE ai.${quoteIdentifier(appInstanceDbUrlColumn!)} IS NOT NULL
-          ${statusFilter}
-        `
+        ORDER BY
+          t.${quoteIdentifier(tenantIdColumn)},
+          ${statusOrderExpression},
+          ${updatedAtOrderExpression},
+          ${createdAtOrderExpression}
+        `,
+        masterDbUrl,
       );
     }
 
-    for (const tenant of tenantRows) {
+    const preferredTenantIds = await this.resolvePreferredTenantIds(username, metadata);
+    const scopedTenantRows = preferredTenantIds.size > 0
+      ? tenantRows.filter((tenant) => preferredTenantIds.has(tenant.tenantId))
+      : tenantRows;
+
+    for (const tenant of scopedTenantRows) {
       if (!tenant.targetDbUrl || tenant.tenantIsActive === false) {
         continue;
       }
@@ -299,34 +433,36 @@ export class AuthService {
 
       try {
         await tenantClient.connect();
-        const userRows = await tenantClient.query<{
-          id: string;
-          password: string;
-          role: string | null;
-        }>(
-          'SELECT id, password, role FROM app_users WHERE username = $1 LIMIT 1',
-          [username]
-        );
-
-        const tenantUser = userRows.rows[0];
+        const tenantUser = await this.findUserInTenantAppUsers(tenantClient, username);
         if (!tenantUser) {
           continue;
         }
 
-        if (!(await verifyPassword(candidatePassword, tenantUser.password))) {
+        if (!(await verifyPassword(candidatePassword, tenantUser.storedPassword))) {
+          continue;
+        }
+
+        if (tenantUser.userIsActive === false) {
           continue;
         }
 
         return {
-          userId: tenantUser.id,
+          userId: tenantUser.userId,
           tenantId: tenant.tenantId,
           targetDbUrl: tenant.targetDbUrl,
-          storedPassword: tenantUser.password,
+          storedPassword: tenantUser.storedPassword,
           role: tenantUser.role,
-          userIsActive: true,
+          userIsActive: tenantUser.userIsActive,
           tenantIsActive: tenant.tenantIsActive,
         };
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.warn(
+            `[AuthService] Tenant DB fallback skipped (tenantId=${tenant.tenantId}): ${reason}`,
+          );
+        }
+
         // Ignore inaccessible tenant DB and continue to next candidate.
       } finally {
         await tenantClient.end().catch(() => undefined);

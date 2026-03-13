@@ -16,6 +16,18 @@ type PosSyncSummary = {
   skippedUsers: number;
 };
 
+type TenantConnectionCandidate = {
+  dbConnectionString: string | null;
+};
+
+type TenantColumnRow = {
+  column_name: string;
+};
+
+type TenantUrlCandidate = {
+  targetDbUrl: string | null;
+};
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -54,6 +66,67 @@ function getRoleCandidates(role: string): string[] {
 }
 
 export class UserService {
+  private static async resolveTenantDbConnectionString(
+    tenantId: string,
+  ): Promise<string | null> {
+    const tenantColumnRows = await prisma.$queryRawUnsafe<TenantColumnRow[]>(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'tenants'
+        AND column_name IN ('db_connection_url', 'dbConnectionUrl')
+      `,
+    );
+
+    const tenantColumns = new Set(tenantColumnRows.map((row) => row.column_name));
+    const tenantDbUrlColumn = tenantColumns.has('db_connection_url')
+      ? 'db_connection_url'
+      : tenantColumns.has('dbConnectionUrl')
+      ? 'dbConnectionUrl'
+      : null;
+
+    if (tenantDbUrlColumn) {
+      const tenantUrlRows = await prisma.$queryRawUnsafe<TenantUrlCandidate[]>(
+        `
+        SELECT t.${quoteIdentifier(tenantDbUrlColumn)} AS "targetDbUrl"
+        FROM tenants t
+        WHERE t.id = $1
+        LIMIT 1
+        `,
+        tenantId,
+      );
+
+      const tenantUrl = tenantUrlRows[0]?.targetDbUrl?.trim() ?? null;
+      if (tenantUrl && tenantUrl.length > 0) {
+        return tenantUrl;
+      }
+    }
+
+    const connectionRows = await prisma.$queryRawUnsafe<TenantConnectionCandidate[]>(
+      `
+      SELECT ai."dbConnectionString"
+      FROM app_instances ai
+      WHERE ai."tenantId" = $1
+        AND ai."dbConnectionString" IS NOT NULL
+      ORDER BY
+        CASE ai.status
+          WHEN 'ACTIVE' THEN 0
+          WHEN 'DEPLOYING' THEN 1
+          WHEN 'SUSPENDED' THEN 2
+          ELSE 3
+        END,
+        ai."updatedAt" DESC,
+        ai."createdAt" DESC
+      LIMIT 1
+      `,
+      tenantId,
+    );
+
+    const connectionString = connectionRows[0]?.dbConnectionString?.trim() ?? null;
+    return connectionString && connectionString.length > 0 ? connectionString : null;
+  }
+
   static async createTenantUser(data: {
     tenantId: string;
     username: string;
@@ -166,12 +239,7 @@ export class UserService {
     role: string,
     isActive: boolean,
   ): Promise<PosSyncResult> {
-    const appInstance = await prisma.appInstance.findFirst({
-      where: { tenantId, status: 'ACTIVE' },
-      select: { dbConnectionString: true },
-    });
-
-    const tenantDbConnectionString = appInstance?.dbConnectionString?.trim();
+    const tenantDbConnectionString = await UserService.resolveTenantDbConnectionString(tenantId);
     const masterDbConnectionString = process.env.DATABASE_URL?.trim();
 
     if (!tenantDbConnectionString) {
@@ -304,6 +372,8 @@ export class UserService {
       isActive: boolean;
     },
   ): Promise<void> {
+    await UserService.ensureTenantAppUsersAuthSchema(client);
+
     const columnRows = await client.query<{ column_name: string }>(
       `
       SELECT column_name
@@ -395,6 +465,26 @@ export class UserService {
         `Tidak ada role yang kompatibel untuk app_users.role (username=${payload.username})`,
       );
     }
+  }
+
+  private static async ensureTenantAppUsersAuthSchema(client: Client): Promise<void> {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_users (
+        id BIGSERIAL PRIMARY KEY,
+        username TEXT,
+        password TEXT,
+        role TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS username TEXT');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password TEXT');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role TEXT');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
+    await client.query('CREATE INDEX IF NOT EXISTS app_users_username_idx ON app_users(username)');
   }
 
   static async listUsers(options: {
