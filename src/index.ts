@@ -9,6 +9,7 @@ import appInstanceRoutes from './routes/appInstanceRoutes';
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
 import settingsRoutes from './routes/settingsRoutes';
+import integrationRoutes from './routes/integrationRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -55,6 +56,7 @@ app.use('/api/app-instances', appInstanceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/integrations', integrationRoutes);
 
 
 // 404 Handler - Route not found
