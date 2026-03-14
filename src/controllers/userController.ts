@@ -68,7 +68,42 @@ export const getTenantUsers = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const createUser = asyncHandler(async (req: Request, res: Response) => {
-  const bodyParsed = createUserSchema.safeParse(req.body);
+  const actorRole = (req.user?.role ?? '').toString().toUpperCase();
+  const isSuperAdmin = actorRole === 'SUPER_ADMIN';
+  const isTenantScopedAdmin =
+    actorRole === 'TENANT_ADMIN' || actorRole === 'ADMIN' || actorRole === 'OWNER';
+
+  if (!isSuperAdmin && !isTenantScopedAdmin) {
+    throw new AppError('You do not have permission to create users', 403);
+  }
+
+  const incomingRoleRaw = (req.body as { role?: unknown })?.role;
+  const normalizedIncomingRole =
+    typeof incomingRoleRaw === 'string' ? incomingRoleRaw.toUpperCase() : undefined;
+
+  if (isTenantScopedAdmin) {
+    const tenantAdminAllowedRoles = new Set(['CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']);
+    const targetRole = normalizedIncomingRole ?? 'CRM_STAFF';
+
+    if (!tenantAdminAllowedRoles.has(targetRole)) {
+      throw new AppError(
+        'Admin tenant hanya boleh membuat user role CRM_MANAGER, CRM_STAFF, atau READ_ONLY',
+        403,
+      );
+    }
+  }
+
+  const bodyForValidation = {
+    ...(req.body as Record<string, unknown>),
+    // SUPER_ADMIN boleh menentukan tenantId target dari payload.
+    // TENANT_ADMIN dipaksa ke tenant miliknya sendiri.
+    tenantId: isSuperAdmin
+      ? (req.body as Record<string, unknown>).tenantId
+      : req.user?.tenantId,
+    role: normalizedIncomingRole,
+  };
+
+  const bodyParsed = createUserSchema.safeParse(bodyForValidation);
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
   }
