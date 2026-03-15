@@ -36,6 +36,7 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
             organizationId: result.tenant.slug,
             organizationName: result.tenant.name,
             features: ['crm', 'sales'],
+            logoUrl: parsed.data.logoUrl,
           },
           authHeader,
           { dryRun: false },

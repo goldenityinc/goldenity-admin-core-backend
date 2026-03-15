@@ -255,7 +255,7 @@ export class ErpProvisionService {
   ) {
     const tenant = await prisma.tenant.findUnique({
       where: { id: input.tenantId },
-      select: { id: true, name: true, slug: true, isActive: true, address: true, phone: true },
+      select: { id: true, name: true, slug: true, isActive: true, address: true, phone: true, logoUrl: true },
     });
 
     if (!tenant) {
@@ -298,7 +298,8 @@ export class ErpProvisionService {
     createPayload.displayName = orgName;
     if (tenant.address) createPayload.address = tenant.address;
     if (tenant.phone) createPayload.phone = tenant.phone;
-    if (input.logoUrl?.trim()) createPayload.logoUrl = input.logoUrl.trim();
+    const logoUrlToUse = input.logoUrl?.trim() || tenant.logoUrl?.trim() || '';
+    if (logoUrlToUse) createPayload.logoUrl = logoUrlToUse;
 
     const plannedMappingPayload = {
       externalTenantId: tenant.id,
@@ -334,7 +335,7 @@ export class ErpProvisionService {
                 displayName: orgName,
                 ...(tenant.address ? { address: tenant.address } : {}),
                 ...(tenant.phone ? { phone: tenant.phone } : {}),
-                ...(input.logoUrl?.trim() ? { logoUrl: input.logoUrl.trim() } : {}),
+                ...(logoUrlToUse ? { logoUrl: logoUrlToUse } : {}),
               },
             },
             upsertMapping: {
@@ -447,7 +448,7 @@ export class ErpProvisionService {
     };
     if (tenant.address) profilePayload.address = tenant.address;
     if (tenant.phone) profilePayload.phone = tenant.phone;
-    if (input.logoUrl?.trim()) profilePayload.logoUrl = input.logoUrl.trim();
+    if (logoUrlToUse) profilePayload.logoUrl = logoUrlToUse;
 
     const profileRes = await http.put(
       `/tenant-admin/organizations/${encodeURIComponent(organizationId)}/profile`,

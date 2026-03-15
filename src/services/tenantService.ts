@@ -9,6 +9,7 @@ export class TenantService {
     email?: string;
     phone?: string;
     address?: string;
+    logoUrl?: string;
     adminEmail?: string;
     adminPassword?: string;
     isActive?: boolean;
@@ -28,6 +29,7 @@ export class TenantService {
           email: data.email,
           phone: data.phone,
           address: data.address,
+          logoUrl: data.logoUrl,
           isActive: data.isActive ?? true,
         },
       });

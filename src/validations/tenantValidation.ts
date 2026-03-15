@@ -10,6 +10,7 @@ export const createTenantSchema = z.object({
   email: z.string().email('Invalid tenant email').optional(),
   phone: z.string().min(6, 'Phone must be at least 6 characters').optional(),
   address: z.string().min(5, 'Address must be at least 5 characters').optional(),
+  logoUrl: z.string().url('logoUrl harus berupa URL valid').max(500).optional(),
   adminEmail: z.string().email('Invalid admin email').optional(),
   adminPassword: z.string().min(8, 'Admin password must be at least 8 characters').optional(),
   isActive: z.boolean().optional(),
