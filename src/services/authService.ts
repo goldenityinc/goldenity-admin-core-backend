@@ -17,6 +17,7 @@ type LoginTenantRecord = {
   tenantId: string;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
+  subscriptionTier: string | null;
   targetDbUrl: string | null;
   storedPassword: string;
   role: string | null;
@@ -35,6 +36,7 @@ type TenantDbCandidate = {
   tenantId: string;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
+  subscriptionTier: string | null;
   targetDbUrl: string;
   tenantIsActive: boolean | null;
 };
@@ -231,6 +233,9 @@ export class AuthService {
         slug: resolvedLoginRecord.tenantSlug,
         bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
       },
+      subscription: {
+        tier: resolvedLoginRecord.subscriptionTier,
+      },
     };
   }
 
@@ -293,6 +298,7 @@ export class AuthService {
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
     const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
+    const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
     if (
@@ -332,6 +338,9 @@ export class AuthService {
     const targetDbUrlSelect = appInstanceDbUrlColumn
       ? `COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn)}, $2) AS "targetDbUrl"`
       : '$2::text AS "targetDbUrl"';
+    const subscriptionTierSelect = appInstanceTierColumn
+      ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
+      : 'NULL::text AS "subscriptionTier"';
     const orderBy = userAppAccessCreatedAtColumn
       ? `ORDER BY uaa.${quoteIdentifier(userAppAccessCreatedAtColumn)} DESC`
       : '';
@@ -343,6 +352,7 @@ export class AuthService {
         ${targetDbUrlSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
+        ${subscriptionTierSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
         ${userRoleSelect},
         ${userIsActiveSelect},
@@ -389,6 +399,7 @@ export class AuthService {
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
     const appInstanceUpdatedAtColumn = pickColumn(metadata.appInstances, ['updatedAt', 'updated_at']);
     const appInstanceCreatedAtColumn = pickColumn(metadata.appInstances, ['createdAt', 'created_at']);
+    const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
 
     if (!tenantIdColumn || (!tenantDbUrlColumn && !appInstanceDbUrlColumn)) {
       throw new AppError('Konfigurasi kolom tenant belum lengkap untuk login', 500);
@@ -403,6 +414,9 @@ export class AuthService {
     const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
       ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
       : 'NULL::text AS "tenantBridgeApiUrl"';
+    const subscriptionTierSelect = appInstanceTierColumn
+      ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
+      : 'NULL::text AS "subscriptionTier"';
 
     let tenantRows: TenantDbCandidate[];
 
@@ -414,6 +428,7 @@ export class AuthService {
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
+          NULL::text AS "subscriptionTier",
           COALESCE(t.${quoteIdentifier(tenantDbUrlColumn)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -443,6 +458,7 @@ export class AuthService {
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
+          ${subscriptionTierSelect},
           COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn!)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -493,6 +509,7 @@ export class AuthService {
           tenantId: tenant.tenantId,
           tenantSlug: tenant.tenantSlug,
           tenantBridgeApiUrl: tenant.tenantBridgeApiUrl,
+          subscriptionTier: tenant.subscriptionTier,
           targetDbUrl: tenant.targetDbUrl,
           storedPassword: tenantUser.storedPassword,
           role: tenantUser.role,

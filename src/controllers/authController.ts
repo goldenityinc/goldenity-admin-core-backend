@@ -20,6 +20,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     expiresIn: result.expiresIn,
     user: result.user,
     tenant: result.tenant,
+    subscription: result.subscription,
   });
 });
 
