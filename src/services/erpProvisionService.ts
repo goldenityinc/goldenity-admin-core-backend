@@ -39,10 +39,18 @@ type ProvisionSteps = {
 };
 
 function getErpConfig() {
-  const baseURL = process.env.ERP_API_BASE_URL?.trim();
-  if (!baseURL) {
-    throw new AppError('ERP_API_BASE_URL belum dikonfigurasi', 500);
+  const baseUrlRaw =
+    process.env.ERP_API_BASE_URL?.trim() ||
+    process.env.ERP_API_URL?.trim();
+
+  if (!baseUrlRaw) {
+    throw new AppError(
+      'ERP_API_BASE_URL belum dikonfigurasi. Set ke format: https://<erp-api-domain>/api/v1',
+      503,
+    );
   }
+
+  const baseURL = normalizeErpApiBaseUrl(baseUrlRaw);
 
   const timeoutMsRaw = process.env.ERP_API_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 15000;
@@ -51,6 +59,17 @@ function getErpConfig() {
     baseURL,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000,
   };
+}
+
+function normalizeErpApiBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return trimmed;
+
+  // Accept already-versioned base URLs.
+  if (/\/api\/v\d+$/.test(trimmed)) return trimmed;
+
+  // Common misconfig: provide origin only (e.g., https://domain). Our ERP endpoints are under /api/v1.
+  return `${trimmed}/api/v1`;
 }
 
 function isValidOrgIdCandidate(value: string): boolean {
