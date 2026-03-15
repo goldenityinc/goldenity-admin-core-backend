@@ -474,11 +474,10 @@ export class AuthService {
       const statusOrderExpression = appInstanceStatusColumn
         ? `CASE ai.${quoteIdentifier(appInstanceStatusColumn)}
             WHEN 'ACTIVE' THEN 0
-            WHEN 'DEPLOYING' THEN 1
-            WHEN 'SUSPENDED' THEN 2
-            ELSE 3
+            WHEN 'SUSPENDED' THEN 1
+            ELSE 2
           END`
-        : '3';
+        : '2';
       const updatedAtOrderExpression = appInstanceUpdatedAtColumn
         ? `ai.${quoteIdentifier(appInstanceUpdatedAtColumn)} DESC`
         : 'NULL';

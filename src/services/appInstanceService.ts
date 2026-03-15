@@ -26,7 +26,7 @@ export class AppInstanceService {
     tenantId: string;
     solutionId: string;
     tier: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
-    status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
+    status?: 'ACTIVE' | 'SUSPENDED';
     dbConnectionString?: string | null;
     appUrl?: string | null;
   }) {
@@ -64,7 +64,7 @@ export class AppInstanceService {
         tenantId: data.tenantId,
         solutionId: data.solutionId,
         tier: data.tier,
-        status: data.status ?? 'DEPLOYING',
+        status: data.status ?? 'ACTIVE',
         dbConnectionString: resolvedDbConnectionString,
         appUrl: data.appUrl,
       },
@@ -80,7 +80,7 @@ export class AppInstanceService {
     limit: number;
     tenantId?: string;
     solutionId?: string;
-    status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
+    status?: 'ACTIVE' | 'SUSPENDED';
     tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
   }) {
     const skip = (options.page - 1) * options.limit;
@@ -131,7 +131,7 @@ export class AppInstanceService {
     id: string,
     data: {
       tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
-      status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
+      status?: 'ACTIVE' | 'SUSPENDED';
       dbConnectionString?: string | null;
       appUrl?: string | null;
     }

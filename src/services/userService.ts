@@ -113,9 +113,8 @@ export class UserService {
       ORDER BY
         CASE ai.status
           WHEN 'ACTIVE' THEN 0
-          WHEN 'DEPLOYING' THEN 1
-          WHEN 'SUSPENDED' THEN 2
-          ELSE 3
+          WHEN 'SUSPENDED' THEN 1
+          ELSE 2
         END,
         ai."updatedAt" DESC,
         ai."createdAt" DESC
