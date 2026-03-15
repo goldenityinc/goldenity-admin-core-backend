@@ -7,6 +7,8 @@ import {
   listUsersQuerySchema,
   syncPosUsersSchema,
   tenantIdParamSchema,
+  updateUserStatusSchema,
+  userIdParamSchema,
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
 
@@ -160,6 +162,43 @@ export const resetUserPassword = asyncHandler(async (req: Request, res: Response
     success: true,
     message: 'Password berhasil direset',
     data: updatedUser,
+  });
+});
+
+export const updateUserStatus = asyncHandler(async (req: Request, res: Response) => {
+  const paramParsed = userIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid user id', 400);
+  }
+
+  const bodyParsed = updateUserStatusSchema.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid status payload', 400);
+  }
+
+  const updatedUser = await UserService.updateUserStatus(
+    paramParsed.data.id,
+    bodyParsed.data.isActive,
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: `Status user berhasil diubah menjadi ${bodyParsed.data.isActive ? 'aktif' : 'nonaktif'}`,
+    data: updatedUser,
+  });
+});
+
+export const deleteUserHard = asyncHandler(async (req: Request, res: Response) => {
+  const paramParsed = userIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid user id', 400);
+  }
+
+  await UserService.deleteUserHard(paramParsed.data.id);
+
+  return res.status(200).json({
+    success: true,
+    message: 'User berhasil dihapus permanen',
   });
 });
 

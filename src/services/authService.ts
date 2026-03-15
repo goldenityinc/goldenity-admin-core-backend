@@ -46,6 +46,9 @@ type TenantAppUserRow = {
   userIsActive: boolean | null;
 };
 
+const INACTIVE_ACCOUNT_ERROR_MESSAGE =
+  'Akun Anda telah dinonaktifkan. Silakan hubungi pusat layanan Goldenity.';
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -180,7 +183,7 @@ export class AuthService {
     }
 
     if (resolvedLoginRecord.userIsActive === false) {
-      throw new AppError('Akun user sudah tidak aktif', 403);
+      throw new AppError(INACTIVE_ACCOUNT_ERROR_MESSAGE, 403);
     }
 
     if (resolvedLoginRecord.tenantIsActive === false) {
@@ -443,7 +446,7 @@ export class AuthService {
         }
 
         if (tenantUser.userIsActive === false) {
-          continue;
+          throw new AppError(INACTIVE_ACCOUNT_ERROR_MESSAGE, 403);
         }
 
         return {

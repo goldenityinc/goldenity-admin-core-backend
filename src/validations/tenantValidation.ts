@@ -31,6 +31,10 @@ export const tenantIdParamSchema = z.object({
   tenantId: z.string().uuid('tenantId must be a valid UUID'),
 });
 
+export const userIdParamSchema = z.object({
+  id: z.string().uuid('id must be a valid UUID'),
+});
+
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
@@ -46,4 +50,11 @@ export const listUsersQuerySchema = z.object({
 
 export const syncPosUsersSchema = z.object({
   tenantId: z.string().uuid('tenantId must be a valid UUID').optional(),
+});
+
+export const updateUserStatusSchema = z.object({
+  isActive: z.boolean({
+    required_error: 'isActive is required',
+    invalid_type_error: 'isActive must be a boolean',
+  }),
 });

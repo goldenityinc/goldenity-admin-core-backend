@@ -228,6 +228,58 @@ export class UserService {
     return updatedUser;
   }
 
+  static async updateUserStatus(userId: string, isActive: boolean) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      throw new AppError('Cannot update status for SUPER_ADMIN via this endpoint', 403);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { isActive },
+      include: {
+        tenant: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    if (updatedUser.username && updatedUser.passwordHash) {
+      const syncResult = await UserService.syncToTenantPosDb(
+        updatedUser.tenantId,
+        updatedUser.username,
+        updatedUser.passwordHash,
+        updatedUser.role,
+        updatedUser.isActive,
+      );
+
+      if (!syncResult.synced) {
+        console.warn(
+          `[UserService] updateUserStatus: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${updatedUser.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+        );
+      }
+    }
+
+    return updatedUser;
+  }
+
+  static async deleteUserHard(userId: string) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      throw new AppError('Cannot delete SUPER_ADMIN via this endpoint', 403);
+    }
+
+    await prisma.user.delete({ where: { id: userId } });
+
+    return { id: userId };
+  }
+
   /**
    * Upserts a user's credentials into the tenant's POS database (app_users table).
    * Failures are logged and swallowed so they never roll back the master-DB operation.
