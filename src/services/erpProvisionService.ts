@@ -30,6 +30,12 @@ type ProvisionSteps = {
     created: boolean;
     response?: unknown;
   };
+  upsertProfile: {
+    attempted: boolean;
+    status: number | null;
+    ok: boolean;
+    response?: unknown;
+  };
   upsertMapping: {
     attempted: boolean;
     status: number | null;
@@ -249,7 +255,7 @@ export class ErpProvisionService {
   ) {
     const tenant = await prisma.tenant.findUnique({
       where: { id: input.tenantId },
-      select: { id: true, name: true, slug: true, isActive: true },
+      select: { id: true, name: true, slug: true, isActive: true, address: true, phone: true },
     });
 
     if (!tenant) {
@@ -289,6 +295,11 @@ export class ErpProvisionService {
       createPayload.features = input.features;
     }
 
+    createPayload.displayName = orgName;
+    if (tenant.address) createPayload.address = tenant.address;
+    if (tenant.phone) createPayload.phone = tenant.phone;
+    if (input.logoUrl?.trim()) createPayload.logoUrl = input.logoUrl.trim();
+
     const plannedMappingPayload = {
       externalTenantId: tenant.id,
       organizationId: orgIdCandidate ?? '<auto>',
@@ -313,6 +324,18 @@ export class ErpProvisionService {
               method: 'POST',
               path: '/tenant-admin/organizations',
               body: createPayload,
+            },
+            upsertProfile: {
+              method: 'PUT',
+              path: orgIdCandidate
+                ? `/tenant-admin/organizations/${orgIdCandidate}/profile`
+                : '/tenant-admin/organizations/<organizationId>/profile',
+              body: {
+                displayName: orgName,
+                ...(tenant.address ? { address: tenant.address } : {}),
+                ...(tenant.phone ? { phone: tenant.phone } : {}),
+                ...(input.logoUrl?.trim() ? { logoUrl: input.logoUrl.trim() } : {}),
+              },
             },
             upsertMapping: {
               method: 'PUT',
@@ -354,6 +377,11 @@ export class ErpProvisionService {
         status: null,
         organizationId: null,
         created: false,
+      },
+      upsertProfile: {
+        attempted: false,
+        status: null,
+        ok: false,
       },
       upsertMapping: {
         attempted: false,
@@ -412,6 +440,29 @@ export class ErpProvisionService {
     }
 
     steps.upsertMapping.ok = true;
+
+    steps.upsertProfile.attempted = true;
+    const profilePayload: Record<string, unknown> = {
+      displayName: orgName,
+    };
+    if (tenant.address) profilePayload.address = tenant.address;
+    if (tenant.phone) profilePayload.phone = tenant.phone;
+    if (input.logoUrl?.trim()) profilePayload.logoUrl = input.logoUrl.trim();
+
+    const profileRes = await http.put(
+      `/tenant-admin/organizations/${encodeURIComponent(organizationId)}/profile`,
+      profilePayload,
+    );
+
+    steps.upsertProfile.status = profileRes.status;
+    steps.upsertProfile.response = profileRes.data;
+
+    if (profileRes.status !== 200 || profileRes.data?.ok !== true) {
+      const reason = profileRes.data?.error ?? profileRes.statusText ?? 'UNKNOWN_ERROR';
+      throw new AppError(`Gagal set company profile organization di ERP: ${reason}`, 502);
+    }
+
+    steps.upsertProfile.ok = true;
 
     let featuresApplied: string[] | null = null;
     if (input.features?.length) {
