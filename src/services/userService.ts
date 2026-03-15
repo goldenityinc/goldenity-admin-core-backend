@@ -185,6 +185,48 @@ export class UserService {
         );
       }
 
+      // Link the new user to the tenant's active AppInstance so that
+      // findLoginRecord's JOIN on user_app_accesses works and subscription
+      // tier is returned correctly during POS login.
+      try {
+        const posAppInstance = await prisma.appInstance.findFirst({
+          where: {
+            tenantId,
+            status: 'ACTIVE',
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+        if (posAppInstance) {
+          await prisma.userAppAccess.upsert({
+            where: {
+              userId_appInstanceId: {
+                userId: createdUser.id,
+                appInstanceId: posAppInstance.id,
+              },
+            },
+            create: {
+              userId: createdUser.id,
+              appInstanceId: posAppInstance.id,
+              role: 'ADMIN',
+              isActive: data.isActive ?? true,
+            },
+            update: {
+              isActive: data.isActive ?? true,
+            },
+          });
+        } else {
+          console.warn(
+            `[UserService] createTenantUser: no ACTIVE AppInstance found for tenant ${tenantId}, skipping UserAppAccess creation.`,
+          );
+        }
+      } catch (accessError) {
+        // Non-fatal: the user is still created; login will fall back to tenant DB scan.
+        console.warn(
+          `[UserService] createTenantUser: failed to create UserAppAccess (tenantId=${tenantId}, username=${data.username}): ${accessError instanceof Error ? accessError.message : String(accessError)}`,
+        );
+      }
+
       return createdUser;
     } catch (error) {
       throw error;

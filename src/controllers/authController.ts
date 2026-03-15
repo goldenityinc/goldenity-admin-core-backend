@@ -34,3 +34,23 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
     data: req.user,
   });
 });
+
+export const getSubscription = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) {
+    throw new AppError('User not authenticated', 401);
+  }
+
+  const tenantId = (req.user as { tenantId?: string }).tenantId ?? '';
+  if (!tenantId) {
+    throw new AppError('Tenant ID tidak ditemukan di token', 400);
+  }
+
+  const tier = await AuthService.resolveTierForTenant(tenantId);
+
+  return res.status(200).json({
+    success: true,
+    subscription: {
+      tier: tier ?? null,
+    },
+  });
+});

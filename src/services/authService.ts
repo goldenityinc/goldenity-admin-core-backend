@@ -220,6 +220,10 @@ export class AuthService {
       }
     );
 
+    const resolvedTier =
+      (await this.resolveTierForTenant(resolvedLoginRecord.tenantId)) ??
+      resolvedLoginRecord.subscriptionTier;
+
     return {
       token,
       tokenType: 'Bearer',
@@ -234,9 +238,39 @@ export class AuthService {
         bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
       },
       subscription: {
-        tier: resolvedLoginRecord.subscriptionTier,
+        tier: resolvedTier,
       },
     };
+  }
+
+  /**
+   * Resolves subscription tier for a tenant by querying app_instances directly.
+   * Used as a fallback when subscriptionTier is missing from the login record.
+   */
+  static async resolveTierForTenant(tenantId: string): Promise<string | null> {
+    try {
+      const rows = await prisma.$queryRawUnsafe<Array<{ tier: string }>>(
+        `
+        SELECT ai."tier"::text AS tier
+        FROM app_instances ai
+        LEFT JOIN solutions s ON s.id = ai."solutionId"
+        WHERE ai."tenantId" = $1
+          AND ai.status = 'ACTIVE'
+        ORDER BY
+          CASE
+            WHEN UPPER(COALESCE(s.code, '')) = 'POS' THEN 0
+            WHEN UPPER(COALESCE(s.name, '')) LIKE '%POS%' THEN 1
+            ELSE 2
+          END,
+          ai."updatedAt" DESC
+        LIMIT 1
+        `,
+        tenantId,
+      );
+      return rows[0]?.tier ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private static async getColumnMetadata(): Promise<ColumnMetadata> {
