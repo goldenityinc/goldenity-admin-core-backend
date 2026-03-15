@@ -5,10 +5,21 @@ import { AppError } from '../utils/AppError';
 import {
   createTenantSchema,
   paginationQuerySchema,
+  tenantIdParamSchema,
 } from '../validations/tenantValidation';
 import { TenantService } from '../services/tenantService';
 import { ErpProvisionService } from '../services/erpProvisionService';
 import prisma from '../config/database';
+import { ObjectStorageService } from '../services/objectStorageService';
+
+function inferImageExtension(mimeType: string): string | null {
+  const mt = mimeType.trim().toLowerCase();
+  if (mt === 'image/png') return 'png';
+  if (mt === 'image/jpeg' || mt === 'image/jpg') return 'jpg';
+  if (mt === 'image/webp') return 'webp';
+  if (mt === 'image/svg+xml') return 'svg';
+  return null;
+}
 
 export const createTenant = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createTenantSchema.safeParse(req.body);
@@ -95,5 +106,66 @@ export const getTenants = asyncHandler(async (req: Request, res: Response) => {
     success: true,
     data: result.items,
     meta: result.meta,
+  });
+});
+
+export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response) => {
+  const parsed = tenantIdParamSchema.safeParse(req.params);
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
+  }
+
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!file) {
+    throw new AppError('File logo wajib diupload (field: file)', 400);
+  }
+
+  if (!file.mimetype || !file.mimetype.toLowerCase().startsWith('image/')) {
+    throw new AppError('File harus berupa gambar', 400);
+  }
+
+  const ext = inferImageExtension(file.mimetype);
+  if (!ext) {
+    throw new AppError('Format gambar tidak didukung (png/jpg/webp/svg)', 400);
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: parsed.data.tenantId },
+    select: { id: true, slug: true, name: true, address: true, phone: true },
+  });
+  if (!tenant) throw new AppError('Tenant tidak ditemukan', 404);
+
+  const key = `tenants/${tenant.id}/logo-${Date.now()}.${ext}`;
+  const uploaded = await ObjectStorageService.putPublicObject({
+    key,
+    body: file.buffer,
+    contentType: file.mimetype,
+  });
+
+  const updated = await prisma.tenant.update({
+    where: { id: tenant.id },
+    data: { logoUrl: uploaded.url },
+    select: { id: true, logoUrl: true },
+  });
+
+  const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
+  const authHeader = req.headers.authorization;
+  if (erpConfigured && typeof authHeader === 'string') {
+    await ErpProvisionService.upsertOrganizationProfile(
+      {
+        organizationId: tenant.slug,
+        displayName: tenant.name,
+        address: tenant.address ?? undefined,
+        phone: tenant.phone ?? undefined,
+        logoUrl: uploaded.url,
+      },
+      authHeader,
+    );
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Logo tenant berhasil diupload',
+    data: { tenantId: updated.id, logoUrl: updated.logoUrl },
   });
 });

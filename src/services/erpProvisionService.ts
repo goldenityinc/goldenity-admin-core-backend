@@ -194,6 +194,49 @@ function isValidOrgIdCandidate(value: string): boolean {
 }
 
 export class ErpProvisionService {
+  static async upsertOrganizationProfile(
+    input: {
+      organizationId: string;
+      displayName?: string;
+      address?: string;
+      phone?: string;
+      logoUrl?: string;
+    },
+    authHeader?: string,
+  ) {
+    const orgId = input.organizationId.trim();
+    if (!orgId) throw new AppError('organizationId wajib diisi', 400);
+
+    const { baseURL, timeoutMs } = getErpConfig();
+    const erpAuthHeader = await resolveErpAuthHeader(authHeader);
+    const http = axios.create({
+      baseURL,
+      timeout: timeoutMs,
+      headers: {
+        Authorization: erpAuthHeader,
+        'content-type': 'application/json',
+      },
+      validateStatus: () => true,
+    });
+
+    const payload: Record<string, unknown> = {};
+    if (typeof input.displayName === 'string' && input.displayName.trim()) payload.displayName = input.displayName.trim();
+    if (typeof input.address === 'string' && input.address.trim()) payload.address = input.address.trim();
+    if (typeof input.phone === 'string' && input.phone.trim()) payload.phone = input.phone.trim();
+    if (typeof input.logoUrl === 'string' && input.logoUrl.trim()) payload.logoUrl = input.logoUrl.trim();
+
+    const res = await http.put(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/profile`, payload);
+    if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
+    if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
+    if (res.status === 404) throw new AppError('Organization ERP tidak ditemukan', 404);
+    if (res.status !== 200 || res.data?.ok !== true) {
+      const reason = res.data?.error ?? res.statusText ?? 'UNKNOWN_ERROR';
+      throw new AppError(`Gagal update company profile ERP: ${reason}`, 502);
+    }
+
+    return { ok: true };
+  }
+
   static async getFeatureCatalog(authHeader?: string): Promise<ErpFeatureDefinition[]> {
     const { baseURL, timeoutMs } = getErpConfig();
     const erpAuthHeader = await resolveErpAuthHeader(authHeader);
