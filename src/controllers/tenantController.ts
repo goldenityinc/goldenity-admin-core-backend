@@ -41,16 +41,18 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
           { dryRun: false },
         );
 
-        await ErpProvisionService.ensureTenantAdmin(
-          {
-            tenantId: result.tenant.id,
-            organizationId: result.tenant.slug,
-            adminEmail: parsed.data.adminEmail,
-            adminPassword: parsed.data.adminPassword,
-            adminName: `${parsed.data.name} Admin`,
-          },
-          authHeader,
-        );
+        if (parsed.data.adminEmail && parsed.data.adminPassword) {
+          await ErpProvisionService.ensureTenantAdmin(
+            {
+              tenantId: result.tenant.id,
+              organizationId: result.tenant.slug,
+              adminEmail: parsed.data.adminEmail,
+              adminPassword: parsed.data.adminPassword,
+              adminName: `${parsed.data.name} Admin`,
+            },
+            authHeader,
+          );
+        }
       } catch (e) {
         await prisma.tenant.delete({ where: { id: result.tenant.id } });
         throw e;
@@ -61,10 +63,12 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
       success: true,
       message: 'Tenant created successfully',
       data: result.tenant,
-      firstAdmin: {
-        ...result.firstAdmin,
-        password: parsed.data.adminPassword,
-      },
+      firstAdmin: result.firstAdmin
+        ? {
+            ...result.firstAdmin,
+            password: parsed.data.adminPassword,
+          }
+        : null,
     });
   } catch (error: unknown) {
     if (

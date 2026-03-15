@@ -9,12 +9,16 @@ export class TenantService {
     email?: string;
     phone?: string;
     address?: string;
-    adminEmail: string;
-    adminPassword: string;
+    adminEmail?: string;
+    adminPassword?: string;
     isActive?: boolean;
   }) {
     const resolvedSlug = data.slug ?? this.generateSlug(data.name);
-    const passwordHash = await bcrypt.hash(data.adminPassword, 10);
+
+    const shouldCreateFirstAdmin = Boolean(data.adminEmail && data.adminPassword);
+    const passwordHash = shouldCreateFirstAdmin
+      ? await bcrypt.hash(data.adminPassword as string, 10)
+      : null;
 
     const result = await prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
@@ -28,15 +32,19 @@ export class TenantService {
         },
       });
 
+      if (!shouldCreateFirstAdmin) {
+        return { tenant, firstAdmin: null };
+      }
+
       const firstAdmin = await tx.user.create({
         data: {
-          email: data.adminEmail,
+          email: data.adminEmail as string,
           name: `${data.name} Admin`,
           role: UserRole.TENANT_ADMIN,
           tenantId: tenant.id,
           isActive: true,
           firebaseUid: null,
-          passwordHash,
+          passwordHash: passwordHash as string,
         },
       });
 
@@ -45,11 +53,13 @@ export class TenantService {
 
     return {
       tenant: result.tenant,
-      firstAdmin: {
-        id: result.firstAdmin.id,
-        email: result.firstAdmin.email,
-        role: result.firstAdmin.role,
-      },
+      firstAdmin: result.firstAdmin
+        ? {
+            id: result.firstAdmin.id,
+            email: result.firstAdmin.email,
+            role: result.firstAdmin.role,
+          }
+        : null,
     };
   }
 

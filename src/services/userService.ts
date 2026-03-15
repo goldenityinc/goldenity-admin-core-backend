@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { Client } from 'pg';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
+import { ErpProvisionService } from './erpProvisionService';
 
 type PosSyncResult = {
   synced: boolean;
@@ -129,7 +130,8 @@ export class UserService {
 
   static async createTenantUser(data: {
     tenantId: string;
-    username: string;
+    username?: string;
+    email?: string;
     password: string;
     name: string;
     role?: 'TENANT_ADMIN' | 'CRM_MANAGER' | 'CRM_STAFF' | 'READ_ONLY';
@@ -146,13 +148,19 @@ export class UserService {
 
     const passwordHash = await bcrypt.hash(data.password, 10);
 
+    const resolvedRole = ((data.role ?? 'TENANT_ADMIN') as string).toUpperCase();
+    const erpConfigured = Boolean(
+      process.env.ERP_API_BASE_URL?.trim() ||
+      process.env.ERP_API_URL?.trim(),
+    );
+
     try {
       const createdUser = await prisma.user.create({
         data: {
-          username: data.username,
+          username: data.username ?? null,
           passwordHash,
           firebaseUid: null,
-          email: null,
+          email: data.email ?? null,
           name: data.name,
           role: (data.role ?? 'TENANT_ADMIN') as UserRole,
           isActive: data.isActive ?? true,
@@ -171,18 +179,51 @@ export class UserService {
 
       // Best-effort: provision credentials into the tenant's POS database so the
       // user can immediately authenticate via /auth/login on the POS app.
-      const syncResult = await UserService.syncToTenantPosDb(
-        tenantId,
-        data.username,
-        passwordHash,
-        data.role ?? 'TENANT_ADMIN',
-        data.isActive ?? true,
-      );
-
-      if (!syncResult.synced) {
-        console.warn(
-          `[UserService] createTenantUser: provisioning POS belum berhasil (tenantId=${tenantId}, username=${data.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+      if (data.username) {
+        const syncResult = await UserService.syncToTenantPosDb(
+          tenantId,
+          data.username,
+          passwordHash,
+          data.role ?? 'TENANT_ADMIN',
+          data.isActive ?? true,
         );
+
+        if (!syncResult.synced) {
+          console.warn(
+            `[UserService] createTenantUser: provisioning POS belum berhasil (tenantId=${tenantId}, username=${data.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+          );
+        }
+      }
+
+      // If ERP integration is configured, ensure TENANT_ADMIN users with email can login to ERP.
+      if (erpConfigured && resolvedRole === 'TENANT_ADMIN' && data.email) {
+        try {
+          // Ensure org + mapping exist (idempotent). Do not override features here.
+          await ErpProvisionService.provision(
+            {
+              tenantId,
+              organizationId: tenant.slug,
+              organizationName: tenant.name,
+            },
+            undefined,
+            { dryRun: false },
+          );
+
+          await ErpProvisionService.ensureTenantAdmin(
+            {
+              tenantId,
+              organizationId: tenant.slug,
+              adminEmail: data.email,
+              adminPassword: data.password,
+              adminName: data.name,
+            },
+            undefined,
+          );
+        } catch (e) {
+          // Avoid partial state where CRM user exists but ERP tenant admin failed.
+          await prisma.user.delete({ where: { id: createdUser.id } });
+          throw e;
+        }
       }
 
       // Link the new user to the tenant's active AppInstance so that

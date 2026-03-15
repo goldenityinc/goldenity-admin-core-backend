@@ -48,3 +48,21 @@ export const getErpFeatureCatalog = asyncHandler(async (req: Request, res: Respo
     data: { features },
   });
 });
+
+export const getErpOrganizationEnabledFeatures = asyncHandler(async (req: Request, res: Response) => {
+  const orgId = (req.params as any)?.orgId;
+  if (!orgId || typeof orgId !== 'string') {
+    throw new AppError('orgId wajib diisi', 400);
+  }
+
+  const authHeader = req.headers.authorization;
+  const enabledFeatures = await ErpProvisionService.getOrganizationEnabledFeatures(
+    { organizationId: orgId },
+    typeof authHeader === 'string' ? authHeader : undefined,
+  );
+
+  return res.status(200).json({
+    success: true,
+    data: { organizationId: orgId, enabledFeatures },
+  });
+});

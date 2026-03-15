@@ -9,6 +9,13 @@ type ErpOrganization = {
   createdAt?: string;
 };
 
+type ErpOrganizationFeaturesResponse = {
+  ok?: boolean;
+  organizationId?: string;
+  enabledFeatures?: unknown;
+  error?: string;
+};
+
 type ErpFeatureDefinition = {
   key: string;
   label: string;
@@ -203,6 +210,36 @@ export class ErpProvisionService {
     }
 
     return res.data.features as ErpFeatureDefinition[];
+  }
+
+  static async getOrganizationEnabledFeatures(input: { organizationId: string }, authHeader?: string): Promise<string[]> {
+    const orgId = input.organizationId.trim();
+    if (!orgId) throw new AppError('organizationId wajib diisi', 400);
+
+    const { baseURL, timeoutMs } = getErpConfig();
+    const erpAuthHeader = await resolveErpAuthHeader(authHeader);
+    const http = axios.create({
+      baseURL,
+      timeout: timeoutMs,
+      headers: {
+        Authorization: erpAuthHeader,
+        'content-type': 'application/json',
+      },
+      validateStatus: () => true,
+    });
+
+    const res = await http.get(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/features`);
+    if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
+    if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
+    if (res.status === 404) throw new AppError('Organization ERP tidak ditemukan', 404);
+    if (res.status !== 200) {
+      const reason = res.data?.error ?? res.statusText ?? 'UNKNOWN_ERROR';
+      throw new AppError(`Gagal mengambil enabled features ERP: ${reason}`, 502);
+    }
+
+    const data = (res.data ?? {}) as ErpOrganizationFeaturesResponse;
+    const enabled = data.enabledFeatures;
+    return Array.isArray(enabled) ? enabled.filter((x): x is string => typeof x === 'string') : [];
   }
 
   static async provision(

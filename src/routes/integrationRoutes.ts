@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getErpFeatureCatalog, provisionErp } from '../controllers/integrationController';
+import { getErpFeatureCatalog, getErpOrganizationEnabledFeatures, provisionErp } from '../controllers/integrationController';
 import { authMiddleware, roleMiddleware } from '../middlewares/authMiddleware';
 
 const router = Router();
@@ -13,5 +13,8 @@ router.post('/erp/provision', provisionErp);
 
 // Feature catalog for ERP (used by CRM UI when selecting Custom features).
 router.get('/erp/features', getErpFeatureCatalog);
+
+// Enabled features for a specific ERP organization (used to preload Custom selection on edit).
+router.get('/erp/organizations/:orgId/features', getErpOrganizationEnabledFeatures);
 
 export default router;
