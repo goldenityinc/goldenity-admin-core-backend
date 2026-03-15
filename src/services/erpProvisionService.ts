@@ -52,12 +52,19 @@ function getErpConfig() {
 
   const baseURL = normalizeErpApiBaseUrl(baseUrlRaw);
 
+  const masterEmail = process.env.ERP_MASTER_EMAIL?.trim() || undefined;
+  const masterPassword = process.env.ERP_MASTER_PASSWORD?.trim() || undefined;
+  const masterAccessToken = process.env.ERP_MASTER_ACCESS_TOKEN?.trim() || undefined;
+
   const timeoutMsRaw = process.env.ERP_API_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 15000;
 
   return {
     baseURL,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000,
+    masterEmail,
+    masterPassword,
+    masterAccessToken,
   };
 }
 
@@ -72,23 +79,116 @@ function normalizeErpApiBaseUrl(value: string): string {
   return `${trimmed}/api/v1`;
 }
 
+type JwtPayload = { exp?: number; iss?: string };
+
+function decodeJwtPayload(token: string): JwtPayload | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const json = Buffer.from(padded, 'base64').toString('utf8');
+    return JSON.parse(json) as JwtPayload;
+  } catch {
+    return null;
+  }
+}
+
+function isFirebaseIdToken(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload?.iss) return false;
+  return payload.iss.includes('securetoken.google.com');
+}
+
+function stripBearer(authHeader: string): string {
+  return authHeader.replace(/^bearer\s+/i, '').trim();
+}
+
+type CachedToken = { token: string; expMs: number };
+
+let cachedMasterToken: CachedToken | null = null;
+
+async function getMasterAccessToken(): Promise<string> {
+  const { baseURL, timeoutMs, masterEmail, masterPassword, masterAccessToken } = getErpConfig();
+
+  if (masterAccessToken) return masterAccessToken;
+
+  if (!masterEmail || !masterPassword) {
+    throw new AppError(
+      'ERP master credential belum dikonfigurasi. Set ERP_MASTER_EMAIL & ERP_MASTER_PASSWORD (atau ERP_MASTER_ACCESS_TOKEN).',
+      503,
+    );
+  }
+
+  const now = Date.now();
+  if (cachedMasterToken && cachedMasterToken.expMs - now > 60_000) {
+    return cachedMasterToken.token;
+  }
+
+  const http = axios.create({
+    baseURL,
+    timeout: timeoutMs,
+    headers: { 'content-type': 'application/json' },
+    validateStatus: () => true,
+  });
+
+  const res = await http.post('/auth/login', {
+    email: masterEmail,
+    password: masterPassword,
+  });
+
+  const token = res.data?.accessToken;
+  if (res.status !== 200 || typeof token !== 'string' || !token) {
+    const reason = res.data?.error ?? res.statusText ?? 'UNKNOWN_ERROR';
+    throw new AppError(`Gagal login ke ERP sebagai master admin: ${reason}`, 502);
+  }
+
+  const payload = decodeJwtPayload(token);
+  const expMs = typeof payload?.exp === 'number' ? payload.exp * 1000 : now + 10 * 60_000;
+  cachedMasterToken = { token, expMs };
+  return token;
+}
+
+async function resolveErpAuthHeader(fallbackAuthHeader?: string): Promise<string> {
+  const cfg = getErpConfig();
+  if (cfg.masterAccessToken || (cfg.masterEmail && cfg.masterPassword)) {
+    const token = await getMasterAccessToken();
+    return `Bearer ${token}`;
+  }
+
+  if (!fallbackAuthHeader || !fallbackAuthHeader.toLowerCase().startsWith('bearer ')) {
+    throw new AppError(
+      'ERP master credential belum dikonfigurasi. Set ERP_MASTER_EMAIL & ERP_MASTER_PASSWORD (atau ERP_MASTER_ACCESS_TOKEN).',
+      503,
+    );
+  }
+
+  const token = stripBearer(fallbackAuthHeader);
+  if (isFirebaseIdToken(token)) {
+    throw new AppError(
+      'ERP master credential belum dikonfigurasi. Token yang dikirim adalah token CRM (Firebase), bukan token ERP.',
+      503,
+    );
+  }
+
+  return fallbackAuthHeader;
+}
+
 function isValidOrgIdCandidate(value: string): boolean {
   // Keep aligned with ERP routing slug/id constraints used across the UI.
   return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value) && value.length >= 2 && value.length <= 50;
 }
 
 export class ErpProvisionService {
-  static async getFeatureCatalog(authHeader: string): Promise<ErpFeatureDefinition[]> {
-    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
-      throw new AppError('Authorization Bearer token wajib diisi', 401);
-    }
-
+  static async getFeatureCatalog(authHeader?: string): Promise<ErpFeatureDefinition[]> {
     const { baseURL, timeoutMs } = getErpConfig();
+    const erpAuthHeader = await resolveErpAuthHeader(authHeader);
     const http = axios.create({
       baseURL,
       timeout: timeoutMs,
       headers: {
-        Authorization: authHeader,
+        Authorization: erpAuthHeader,
         'content-type': 'application/json',
       },
       validateStatus: () => true,
@@ -107,13 +207,9 @@ export class ErpProvisionService {
 
   static async provision(
     input: ProvisionErpInput,
-    authHeader: string,
+    authHeader?: string,
     options?: { dryRun?: boolean },
   ) {
-    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
-      throw new AppError('Authorization Bearer token wajib diisi', 401);
-    }
-
     const tenant = await prisma.tenant.findUnique({
       where: { id: input.tenantId },
       select: { id: true, name: true, slug: true, isActive: true },
@@ -201,11 +297,12 @@ export class ErpProvisionService {
     }
 
     const { baseURL, timeoutMs } = getErpConfig();
+    const erpAuthHeader = await resolveErpAuthHeader(authHeader);
     const http = axios.create({
       baseURL,
       timeout: timeoutMs,
       headers: {
-        Authorization: authHeader,
+        Authorization: erpAuthHeader,
         'content-type': 'application/json',
       },
       validateStatus: () => true,
@@ -321,12 +418,8 @@ export class ErpProvisionService {
 
   static async ensureTenantAdmin(
     input: { tenantId: string; organizationId?: string; adminEmail: string; adminPassword: string; adminName: string },
-    authHeader: string,
+    authHeader?: string,
   ) {
-    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
-      throw new AppError('Authorization Bearer token wajib diisi', 401);
-    }
-
     const tenant = await prisma.tenant.findUnique({
       where: { id: input.tenantId },
       select: { id: true, name: true, slug: true, isActive: true },
@@ -349,11 +442,12 @@ export class ErpProvisionService {
           })();
 
     const { baseURL, timeoutMs } = getErpConfig();
+    const erpAuthHeader = await resolveErpAuthHeader(authHeader);
     const http = axios.create({
       baseURL,
       timeout: timeoutMs,
       headers: {
-        Authorization: authHeader,
+        Authorization: erpAuthHeader,
         'content-type': 'application/json',
       },
       validateStatus: () => true,

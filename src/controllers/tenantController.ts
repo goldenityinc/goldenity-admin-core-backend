@@ -20,15 +20,13 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
   try {
     const result = await TenantService.createTenant(parsed.data);
 
-    const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim());
+    const erpConfigured = Boolean(
+      process.env.ERP_API_BASE_URL?.trim() ||
+      process.env.ERP_API_URL?.trim(),
+    );
     const authHeader = req.headers.authorization;
 
     if (erpConfigured) {
-      if (!authHeader || typeof authHeader !== 'string') {
-        await prisma.tenant.delete({ where: { id: result.tenant.id } });
-        throw new AppError('Authorization header wajib diisi untuk provisioning ERP', 401);
-      }
-
       try {
         // Default: provision ERP org + mapping + seed baseline features, then ensure tenant admin exists in ERP.
         // Subscription upgrades can later update features via /api/integrations/erp/provision.
