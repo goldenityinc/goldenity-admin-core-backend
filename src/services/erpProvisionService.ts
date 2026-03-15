@@ -9,6 +9,12 @@ type ErpOrganization = {
   createdAt?: string;
 };
 
+type ErpFeatureDefinition = {
+  key: string;
+  label: string;
+  description?: string;
+};
+
 type ProvisionSteps = {
   createOrganization: {
     attempted: boolean;
@@ -53,6 +59,33 @@ function isValidOrgIdCandidate(value: string): boolean {
 }
 
 export class ErpProvisionService {
+  static async getFeatureCatalog(authHeader: string): Promise<ErpFeatureDefinition[]> {
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+      throw new AppError('Authorization Bearer token wajib diisi', 401);
+    }
+
+    const { baseURL, timeoutMs } = getErpConfig();
+    const http = axios.create({
+      baseURL,
+      timeout: timeoutMs,
+      headers: {
+        Authorization: authHeader,
+        'content-type': 'application/json',
+      },
+      validateStatus: () => true,
+    });
+
+    const res = await http.get('/tenant-admin/features');
+    if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
+    if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
+    if (res.status !== 200 || !Array.isArray(res.data?.features)) {
+      const reason = res.data?.error ?? res.statusText ?? 'UNKNOWN_ERROR';
+      throw new AppError(`Gagal mengambil feature catalog ERP: ${reason}`, 502);
+    }
+
+    return res.data.features as ErpFeatureDefinition[];
+  }
+
   static async provision(
     input: ProvisionErpInput,
     authHeader: string,
@@ -265,5 +298,60 @@ export class ErpProvisionService {
       },
       steps,
     };
+  }
+
+  static async ensureTenantAdmin(
+    input: { tenantId: string; organizationId?: string; adminEmail: string; adminPassword: string; adminName: string },
+    authHeader: string,
+  ) {
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+      throw new AppError('Authorization Bearer token wajib diisi', 401);
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: input.tenantId },
+      select: { id: true, name: true, slug: true, isActive: true },
+    });
+
+    if (!tenant) throw new AppError('Tenant tidak ditemukan', 404);
+    if (!tenant.isActive) throw new AppError('Tenant sudah tidak aktif', 403);
+
+    const requestedOrgId = input.organizationId?.trim();
+    const orgId = requestedOrgId && isValidOrgIdCandidate(requestedOrgId)
+      ? requestedOrgId
+      : requestedOrgId
+      ? (() => {
+          throw new AppError('organizationId harus berupa slug (a-z0-9-), 2..50 karakter', 400);
+        })()
+      : isValidOrgIdCandidate(tenant.slug)
+        ? tenant.slug
+        : (() => {
+            throw new AppError('Tenant slug tidak valid untuk organizationId ERP. Kirim organizationId.', 400);
+          })();
+
+    const { baseURL, timeoutMs } = getErpConfig();
+    const http = axios.create({
+      baseURL,
+      timeout: timeoutMs,
+      headers: {
+        Authorization: authHeader,
+        'content-type': 'application/json',
+      },
+      validateStatus: () => true,
+    });
+
+    const res = await http.post(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/admins`, {
+      email: input.adminEmail,
+      password: input.adminPassword,
+      name: input.adminName,
+    });
+
+    if (res.status === 201) return { ok: true, created: true };
+    if (res.status === 409 && res.data?.error === 'EMAIL_TAKEN') return { ok: true, created: false };
+    if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
+    if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
+
+    const reason = res.data?.error ?? res.statusText ?? 'UNKNOWN_ERROR';
+    throw new AppError(`Gagal membuat tenant admin di ERP: ${reason}`, 502);
   }
 }

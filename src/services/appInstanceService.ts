@@ -25,7 +25,7 @@ export class AppInstanceService {
   static async create(data: {
     tenantId: string;
     solutionId: string;
-    tier: 'Standard' | 'Professional' | 'Enterprise';
+    tier: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
     status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
     dbConnectionString?: string | null;
     appUrl?: string | null;
@@ -81,7 +81,7 @@ export class AppInstanceService {
     tenantId?: string;
     solutionId?: string;
     status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
-    tier?: 'Standard' | 'Professional' | 'Enterprise';
+    tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
   }) {
     const skip = (options.page - 1) * options.limit;
 
@@ -130,7 +130,7 @@ export class AppInstanceService {
   static async update(
     id: string,
     data: {
-      tier?: 'Standard' | 'Professional' | 'Enterprise';
+      tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
       status?: 'ACTIVE' | 'SUSPENDED' | 'DEPLOYING';
       dbConnectionString?: string | null;
       appUrl?: string | null;

@@ -7,6 +7,8 @@ import {
   paginationQuerySchema,
 } from '../validations/tenantValidation';
 import { TenantService } from '../services/tenantService';
+import { ErpProvisionService } from '../services/erpProvisionService';
+import prisma from '../config/database';
 
 export const createTenant = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createTenantSchema.safeParse(req.body);
@@ -17,6 +19,45 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
 
   try {
     const result = await TenantService.createTenant(parsed.data);
+
+    const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim());
+    const authHeader = req.headers.authorization;
+
+    if (erpConfigured) {
+      if (!authHeader || typeof authHeader !== 'string') {
+        await prisma.tenant.delete({ where: { id: result.tenant.id } });
+        throw new AppError('Authorization header wajib diisi untuk provisioning ERP', 401);
+      }
+
+      try {
+        // Default: provision ERP org + mapping + seed baseline features, then ensure tenant admin exists in ERP.
+        // Subscription upgrades can later update features via /api/integrations/erp/provision.
+        await ErpProvisionService.provision(
+          {
+            tenantId: result.tenant.id,
+            organizationId: result.tenant.slug,
+            organizationName: result.tenant.name,
+            features: ['crm', 'sales'],
+          },
+          authHeader,
+          { dryRun: false },
+        );
+
+        await ErpProvisionService.ensureTenantAdmin(
+          {
+            tenantId: result.tenant.id,
+            organizationId: result.tenant.slug,
+            adminEmail: parsed.data.adminEmail,
+            adminPassword: parsed.data.adminPassword,
+            adminName: `${parsed.data.name} Admin`,
+          },
+          authHeader,
+        );
+      } catch (e) {
+        await prisma.tenant.delete({ where: { id: result.tenant.id } });
+        throw e;
+      }
+    }
 
     return res.status(201).json({
       success: true,

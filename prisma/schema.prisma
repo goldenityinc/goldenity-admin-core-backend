@@ -118,6 +118,7 @@ enum SubscriptionTier {
   Standard
   Professional
   Enterprise
+  Custom
 }
 
 enum AppInstanceStatus {

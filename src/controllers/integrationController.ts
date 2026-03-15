@@ -34,3 +34,17 @@ export const provisionErp = asyncHandler(async (req: Request, res: Response) => 
     data: result,
   });
 });
+
+export const getErpFeatureCatalog = asyncHandler(async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || typeof authHeader !== 'string') {
+    throw new AppError('Authorization header wajib diisi', 401);
+  }
+
+  const features = await ErpProvisionService.getFeatureCatalog(authHeader);
+
+  return res.status(200).json({
+    success: true,
+    data: { features },
+  });
+});
