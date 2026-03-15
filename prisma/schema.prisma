@@ -11,6 +11,7 @@ model Tenant {
   id             String        @id @default(uuid())
   name           String
   slug           String        @unique
+  bridgeApiUrl   String?       @map("bridge_api_url")
   email          String?       @unique
   phone          String?
   address        String?

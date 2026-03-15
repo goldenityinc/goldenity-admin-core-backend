@@ -15,6 +15,8 @@ type ColumnRow = {
 type LoginTenantRecord = {
   userId: string;
   tenantId: string;
+  tenantSlug: string | null;
+  tenantBridgeApiUrl: string | null;
   targetDbUrl: string | null;
   storedPassword: string;
   role: string | null;
@@ -31,6 +33,8 @@ type ColumnMetadata = {
 
 type TenantDbCandidate = {
   tenantId: string;
+  tenantSlug: string | null;
+  tenantBridgeApiUrl: string | null;
   targetDbUrl: string;
   tenantIsActive: boolean | null;
 };
@@ -194,6 +198,10 @@ export class AuthService {
       throw new AppError('Konfigurasi DB tenant tidak ditemukan untuk login', 500);
     }
 
+    if (!resolvedLoginRecord.tenantSlug) {
+      throw new AppError('Konfigurasi slug tenant tidak ditemukan untuk login', 500);
+    }
+
     const expiresIn = (process.env.JWT_EXPIRES_IN ?? '1d') as SignOptions['expiresIn'];
     const payload: JwtAuthPayload = {
       userId: resolvedLoginRecord.userId,
@@ -214,6 +222,15 @@ export class AuthService {
       token,
       tokenType: 'Bearer',
       expiresIn,
+      user: {
+        id: resolvedLoginRecord.userId,
+        role: resolvedLoginRecord.role,
+        tenantId: resolvedLoginRecord.tenantId,
+      },
+      tenant: {
+        slug: resolvedLoginRecord.tenantSlug,
+        bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
+      },
     };
   }
 
@@ -269,6 +286,8 @@ export class AuthService {
     const userAppAccessIsActiveColumn = pickColumn(metadata.userAppAccesses, ['isActive', 'is_active']);
     const userAppAccessCreatedAtColumn = pickColumn(metadata.userAppAccesses, ['createdAt', 'created_at']);
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
+    const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
+    const tenantBridgeApiUrlColumn = pickColumn(metadata.tenants, ['bridge_api_url', 'bridgeApiUrl']);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
     const appInstanceIdColumn = pickColumn(metadata.appInstances, ['id']);
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
@@ -298,6 +317,12 @@ export class AuthService {
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
+    const tenantSlugSelect = tenantSlugColumn
+      ? `t.${quoteIdentifier(tenantSlugColumn)} AS "tenantSlug"`
+      : 'NULL::text AS "tenantSlug"';
+    const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
+      ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
+      : 'NULL::text AS "tenantBridgeApiUrl"';
     const userAppAccessIsActiveFilter = userAppAccessIsActiveColumn
       ? `AND uaa.${quoteIdentifier(userAppAccessIsActiveColumn)} = TRUE`
       : '';
@@ -316,6 +341,8 @@ export class AuthService {
         u.${quoteIdentifier(userIdColumn)} AS "userId",
         ai.${quoteIdentifier(appInstanceTenantIdColumn)} AS "tenantId",
         ${targetDbUrlSelect},
+        ${tenantSlugSelect},
+        ${tenantBridgeApiUrlSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
         ${userRoleSelect},
         ${userIsActiveSelect},
@@ -350,6 +377,8 @@ export class AuthService {
     metadata: ColumnMetadata
   ): Promise<LoginTenantRecord | null> {
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
+    const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
+    const tenantBridgeApiUrlColumn = pickColumn(metadata.tenants, ['bridge_api_url', 'bridgeApiUrl']);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
@@ -368,6 +397,12 @@ export class AuthService {
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
+    const tenantSlugSelect = tenantSlugColumn
+      ? `t.${quoteIdentifier(tenantSlugColumn)} AS "tenantSlug"`
+      : 'NULL::text AS "tenantSlug"';
+    const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
+      ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
+      : 'NULL::text AS "tenantBridgeApiUrl"';
 
     let tenantRows: TenantDbCandidate[];
 
@@ -377,6 +412,8 @@ export class AuthService {
         `
         SELECT
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
+          ${tenantSlugSelect},
+          ${tenantBridgeApiUrlSelect},
           COALESCE(t.${quoteIdentifier(tenantDbUrlColumn)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -404,6 +441,8 @@ export class AuthService {
         `
         SELECT DISTINCT ON (t.${quoteIdentifier(tenantIdColumn)})
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
+          ${tenantSlugSelect},
+          ${tenantBridgeApiUrlSelect},
           COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn!)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -452,6 +491,8 @@ export class AuthService {
         return {
           userId: tenantUser.userId,
           tenantId: tenant.tenantId,
+          tenantSlug: tenant.tenantSlug,
+          tenantBridgeApiUrl: tenant.tenantBridgeApiUrl,
           targetDbUrl: tenant.targetDbUrl,
           storedPassword: tenantUser.storedPassword,
           role: tenantUser.role,

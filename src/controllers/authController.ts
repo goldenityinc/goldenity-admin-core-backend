@@ -16,6 +16,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   return res.status(200).json({
     success: true,
     token: result.token,
+    tokenType: result.tokenType,
+    expiresIn: result.expiresIn,
+    user: result.user,
+    tenant: result.tenant,
   });
 });
 
