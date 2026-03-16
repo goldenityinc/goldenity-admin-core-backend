@@ -6,6 +6,7 @@ import {
   createTenantSchema,
   paginationQuerySchema,
   tenantIdParamSchema,
+  updateTenantSchema,
 } from '../validations/tenantValidation';
 import { TenantService } from '../services/tenantService';
 import { ErpProvisionService } from '../services/erpProvisionService';
@@ -106,6 +107,53 @@ export const getTenants = asyncHandler(async (req: Request, res: Response) => {
     success: true,
     data: result.items,
     meta: result.meta,
+  });
+});
+
+export const updateTenant = asyncHandler(async (req: Request, res: Response) => {
+  const paramParsed = tenantIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
+  }
+
+  const bodyParsed = updateTenantSchema.safeParse(req.body);
+  if (!bodyParsed.success) {
+    throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid tenant payload', 400);
+  }
+
+  const existing = await prisma.tenant.findUnique({ where: { id: paramParsed.data.tenantId } });
+  if (!existing) throw new AppError('Tenant tidak ditemukan', 404);
+
+  const updated = await prisma.tenant.update({
+    where: { id: existing.id },
+    data: {
+      ...(typeof bodyParsed.data.name === 'string' ? { name: bodyParsed.data.name } : {}),
+      ...(bodyParsed.data.email !== undefined ? { email: bodyParsed.data.email } : {}),
+      ...(bodyParsed.data.phone !== undefined ? { phone: bodyParsed.data.phone } : {}),
+      ...(bodyParsed.data.address !== undefined ? { address: bodyParsed.data.address } : {}),
+      ...(typeof bodyParsed.data.isActive === 'boolean' ? { isActive: bodyParsed.data.isActive } : {}),
+    },
+  });
+
+  const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
+  const authHeader = req.headers.authorization;
+  if (erpConfigured && typeof authHeader === 'string') {
+    await ErpProvisionService.upsertOrganizationProfile(
+      {
+        organizationId: updated.slug,
+        displayName: updated.name,
+        address: updated.address ?? undefined,
+        phone: updated.phone ?? undefined,
+        logoUrl: updated.logoUrl ?? undefined,
+      },
+      authHeader,
+    );
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Tenant updated successfully',
+    data: updated,
   });
 });
 

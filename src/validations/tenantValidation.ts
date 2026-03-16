@@ -22,6 +22,14 @@ export const createTenantSchema = z.object({
   },
 );
 
+export const updateTenantSchema = z.object({
+  name: z.string().min(2, 'Tenant name must be at least 2 characters').optional(),
+  email: z.string().email('Invalid tenant email').optional().nullable(),
+  phone: z.string().min(6, 'Phone must be at least 6 characters').optional().nullable(),
+  address: z.string().min(5, 'Address must be at least 5 characters').optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
 export const createUserSchema = z.object({
   tenantId: z.string().uuid('tenantId must be a valid UUID'),
   username: z
