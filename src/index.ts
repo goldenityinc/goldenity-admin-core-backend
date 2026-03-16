@@ -20,10 +20,8 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim())
-    : true,
-  credentials: true,
+  origin: '*',
+  credentials: false,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
