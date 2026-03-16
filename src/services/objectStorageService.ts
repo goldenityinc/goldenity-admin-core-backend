@@ -11,14 +11,28 @@ type StorageConfig = {
 };
 
 function getStorageConfig(): StorageConfig {
-  const bucket = process.env.STORAGE_BUCKET?.trim() || process.env.S3_BUCKET?.trim();
+  const bucket =
+    process.env.STORAGE_BUCKET?.trim() ||
+    process.env.STORAGE_BUCKET_NAME?.trim() ||
+    process.env.S3_BUCKET?.trim() ||
+    process.env.S3_BUCKET_NAME?.trim() ||
+    process.env.R2_BUCKET?.trim() ||
+    process.env.BUCKET?.trim() ||
+    process.env.BUCKET_NAME?.trim() ||
+    process.env.AWS_S3_BUCKET?.trim() ||
+    process.env.AWS_BUCKET?.trim();
   const region = process.env.STORAGE_REGION?.trim() || process.env.S3_REGION?.trim() || 'auto';
   const endpoint = process.env.STORAGE_ENDPOINT?.trim() || process.env.S3_ENDPOINT?.trim() || undefined;
   const accessKeyId = process.env.STORAGE_ACCESS_KEY_ID?.trim() || process.env.S3_ACCESS_KEY_ID?.trim();
   const secretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY?.trim() || process.env.S3_SECRET_ACCESS_KEY?.trim();
   const publicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL?.trim() || process.env.S3_PUBLIC_BASE_URL?.trim() || undefined;
 
-  if (!bucket) throw new AppError('Storage bucket belum dikonfigurasi (STORAGE_BUCKET)', 503);
+  if (!bucket) {
+    throw new AppError(
+      'Storage bucket belum dikonfigurasi. Set STORAGE_BUCKET (atau S3_BUCKET / BUCKET_NAME / R2_BUCKET).',
+      503,
+    );
+  }
   if (!accessKeyId || !secretAccessKey) {
     throw new AppError('Storage credential belum dikonfigurasi (STORAGE_ACCESS_KEY_ID/SECRET)', 503);
   }
