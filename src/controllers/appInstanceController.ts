@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { AppError } from '../utils/AppError';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppInstanceService } from '../services/appInstanceService';
+import { ErpProvisionService } from '../services/erpProvisionService';
 import {
   appInstanceIdParamSchema,
   createAppInstanceSchema,
@@ -18,6 +19,21 @@ export const createAppInstance = asyncHandler(async (req: Request, res: Response
 
   try {
     const appInstance = await AppInstanceService.create(bodyParsed.data);
+
+    // If ERP subscription changes, sync endDate to ERP so tenant login can be blocked when expired.
+    if (appInstance?.solution?.code === 'ERP') {
+      const authHeader = req.headers.authorization;
+      if (typeof authHeader === 'string') {
+        await ErpProvisionService.upsertOrganizationProfile(
+          {
+            organizationId: appInstance.tenant.slug,
+            subscriptionStartDate: appInstance.createdAt,
+            subscriptionEndDate: appInstance.endDate ?? null,
+          },
+          authHeader,
+        );
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -73,6 +89,20 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
   }
 
   const updated = await AppInstanceService.update(paramParsed.data.id, bodyParsed.data);
+
+  if (updated?.solution?.code === 'ERP') {
+    const authHeader = req.headers.authorization;
+    if (typeof authHeader === 'string') {
+      await ErpProvisionService.upsertOrganizationProfile(
+        {
+          organizationId: updated.tenant.slug,
+          subscriptionStartDate: updated.createdAt,
+          subscriptionEndDate: updated.endDate ?? null,
+        },
+        authHeader,
+      );
+    }
+  }
 
   return res.status(200).json({
     success: true,

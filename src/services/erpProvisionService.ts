@@ -201,6 +201,8 @@ export class ErpProvisionService {
       address?: string;
       phone?: string;
       logoUrl?: string;
+      subscriptionStartDate?: string | Date;
+      subscriptionEndDate?: string | Date | null;
     },
     authHeader?: string,
   ) {
@@ -224,6 +226,11 @@ export class ErpProvisionService {
     if (typeof input.address === 'string' && input.address.trim()) payload.address = input.address.trim();
     if (typeof input.phone === 'string' && input.phone.trim()) payload.phone = input.phone.trim();
     if (typeof input.logoUrl === 'string' && input.logoUrl.trim()) payload.logoUrl = input.logoUrl.trim();
+    if (input.subscriptionStartDate instanceof Date) payload.subscriptionStartDate = input.subscriptionStartDate.toISOString();
+    if (typeof input.subscriptionStartDate === 'string' && input.subscriptionStartDate.trim()) payload.subscriptionStartDate = input.subscriptionStartDate.trim();
+    if (input.subscriptionEndDate instanceof Date) payload.subscriptionEndDate = input.subscriptionEndDate.toISOString();
+    if (typeof input.subscriptionEndDate === 'string' && input.subscriptionEndDate.trim()) payload.subscriptionEndDate = input.subscriptionEndDate.trim();
+    if (input.subscriptionEndDate === null) payload.subscriptionEndDate = null;
 
     const res = await http.put(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/profile`, payload);
     if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);

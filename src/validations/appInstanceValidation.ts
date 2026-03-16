@@ -7,6 +7,13 @@ export const createAppInstanceSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),
+  endDate: z
+    .union([
+      z.string().datetime({ message: 'endDate must be a valid ISO datetime' }),
+      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be a valid date (YYYY-MM-DD)'),
+    ])
+    .optional()
+    .nullable(),
 });
 
 export const updateAppInstanceSchema = z.object({
@@ -14,6 +21,13 @@ export const updateAppInstanceSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),
+  endDate: z
+    .union([
+      z.string().datetime({ message: 'endDate must be a valid ISO datetime' }),
+      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be a valid date (YYYY-MM-DD)'),
+    ])
+    .optional()
+    .nullable(),
 });
 
 export const appInstanceIdParamSchema = z.object({

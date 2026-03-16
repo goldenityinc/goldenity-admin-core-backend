@@ -22,6 +22,27 @@ function sanitizeIdentifier(value: string): string {
 
 export class AppInstanceService {
 
+  static parseEndDateInput(input: string | null | undefined): Date | null | undefined {
+    if (input === undefined) return undefined;
+    if (input === null) return null;
+    const raw = input.trim();
+    if (!raw) return null;
+
+    // Accept YYYY-MM-DD (treat as end of day UTC).
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const year = Number(m[1]);
+      const month = Number(m[2]);
+      const day = Number(m[3]);
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+      return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+    }
+
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  }
+
   static async create(data: {
     tenantId: string;
     solutionId: string;
@@ -29,6 +50,7 @@ export class AppInstanceService {
     status?: 'ACTIVE' | 'SUSPENDED';
     dbConnectionString?: string | null;
     appUrl?: string | null;
+    endDate?: string | null;
   }) {
     let resolvedDbConnectionString = data.dbConnectionString;
 
@@ -67,6 +89,7 @@ export class AppInstanceService {
         status: data.status ?? 'ACTIVE',
         dbConnectionString: resolvedDbConnectionString,
         appUrl: data.appUrl,
+        ...(data.endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(data.endDate) } : {}),
       },
       include: {
         tenant: { select: { id: true, name: true, slug: true } },
@@ -134,11 +157,15 @@ export class AppInstanceService {
       status?: 'ACTIVE' | 'SUSPENDED';
       dbConnectionString?: string | null;
       appUrl?: string | null;
+      endDate?: string | null;
     }
   ) {
     return prisma.appInstance.update({
       where: { id },
-      data,
+      data: {
+        ...data,
+        ...(data.endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(data.endDate) } : {}),
+      },
       include: {
         tenant: { select: { id: true, name: true, slug: true } },
         solution: { select: { id: true, name: true, code: true } },

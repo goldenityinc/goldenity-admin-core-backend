@@ -84,6 +84,7 @@ model AppInstance {
   status               AppInstanceStatus  @default(ACTIVE)
   dbConnectionString   String?
   appUrl               String?
+  endDate              DateTime?          @map("end_date")
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
