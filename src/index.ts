@@ -10,6 +10,7 @@ import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import integrationRoutes from './routes/integrationRoutes';
+import publicRoutes from './routes/publicRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -17,6 +18,9 @@ dotenv.config();
 // Initialize Express app
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
+
+// Trust X-Forwarded-* headers (Railway/ingress)
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors({
@@ -46,6 +50,7 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 // API Routes
+app.use('/public', publicRoutes);
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/tenants', tenantRoutes);

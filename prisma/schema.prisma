@@ -16,6 +16,7 @@ model Tenant {
   phone          String?
   address        String?
   logoUrl        String?       @map("logo_url")
+  logoObjectKey  String?       @map("logo_object_key")
   city           String?
   country        String?
   isActive       Boolean       @default(true)

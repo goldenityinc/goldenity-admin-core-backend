@@ -12,6 +12,64 @@ import { TenantService } from '../services/tenantService';
 import { ErpProvisionService } from '../services/erpProvisionService';
 import prisma from '../config/database';
 import { ObjectStorageService } from '../services/objectStorageService';
+import { Readable } from 'node:stream';
+
+function getServicePublicBaseUrl(req?: Request): string {
+  const explicit = process.env.PUBLIC_BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+
+  const railwayHost = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  if (railwayHost) return `https://${railwayHost}`;
+
+  if (!req) return '';
+  const xfProtoRaw = req.headers['x-forwarded-proto'];
+  const proto = Array.isArray(xfProtoRaw)
+    ? xfProtoRaw[0]
+    : typeof xfProtoRaw === 'string'
+      ? xfProtoRaw.split(',')[0]?.trim()
+      : undefined;
+
+  const xfHostRaw = req.headers['x-forwarded-host'];
+  const host = Array.isArray(xfHostRaw)
+    ? xfHostRaw[0]
+    : typeof xfHostRaw === 'string'
+      ? xfHostRaw.split(',')[0]?.trim()
+      : req.get('host');
+
+  const scheme = proto || req.protocol;
+  return host ? `${scheme}://${host}` : '';
+}
+
+function buildTenantLogoProxyUrl(req: Request, tenantId: string, versionToken: string): string {
+  const base = getServicePublicBaseUrl(req);
+  // If base cannot be determined, fall back to relative URL.
+  const path = `/public/tenants/${tenantId}/logo?v=${encodeURIComponent(versionToken)}`;
+  return base ? `${base}${path}` : path;
+}
+
+function tryParseTigrisKeyFromUrl(logoUrl: string): { bucket?: string; key?: string } {
+  try {
+    const u = new URL(logoUrl);
+    const parts = u.pathname.replace(/^\//, '').split('/');
+    const bucket = parts.shift();
+    const key = parts.join('/');
+    if (!bucket || !key) return {};
+    return { bucket, key };
+  } catch {
+    return {};
+  }
+}
+
+function toNodeReadable(body: unknown): Readable | null {
+  if (!body) return null;
+  if (typeof (body as any).pipe === 'function') return body as Readable;
+  // AWS SDK may return a web stream in some runtimes.
+  const maybeWeb = body as any;
+  if (typeof maybeWeb.getReader === 'function') {
+    return Readable.fromWeb(body as any);
+  }
+  return null;
+}
 
 function inferImageExtension(mimeType: string): string | null {
   const mt = mimeType.trim().toLowerCase();
@@ -190,10 +248,12 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
     contentType: file.mimetype,
   });
 
+  const proxyUrl = buildTenantLogoProxyUrl(req, tenant.id, String(Date.now()));
+
   const updated = await prisma.tenant.update({
     where: { id: tenant.id },
-    data: { logoUrl: uploaded.url },
-    select: { id: true, logoUrl: true },
+    data: { logoUrl: proxyUrl, logoObjectKey: uploaded.key },
+    select: { id: true, logoUrl: true, logoObjectKey: true },
   });
 
   const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
@@ -205,7 +265,7 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
         displayName: tenant.name,
         address: tenant.address ?? undefined,
         phone: tenant.phone ?? undefined,
-        logoUrl: uploaded.url,
+        logoUrl: proxyUrl,
       },
       authHeader,
     );
@@ -216,4 +276,34 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
     message: 'Logo tenant berhasil diupload',
     data: { tenantId: updated.id, logoUrl: updated.logoUrl },
   });
+});
+
+export const getTenantLogoPublic = asyncHandler(async (req: Request, res: Response) => {
+  const parsed = tenantIdParamSchema.safeParse(req.params);
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: parsed.data.tenantId },
+    select: { id: true, logoUrl: true, logoObjectKey: true },
+  });
+  if (!tenant) throw new AppError('Tenant tidak ditemukan', 404);
+
+  let key = tenant.logoObjectKey?.trim();
+  if (!key && typeof tenant.logoUrl === 'string') {
+    const parsedKey = tryParseTigrisKeyFromUrl(tenant.logoUrl);
+    if (parsedKey.key) key = parsedKey.key;
+  }
+
+  if (!key) throw new AppError('Logo tenant belum tersedia', 404);
+
+  const obj = await ObjectStorageService.getObject({ key });
+  const stream = toNodeReadable(obj.body);
+  if (!stream) throw new AppError('Tidak bisa membaca object stream', 502);
+
+  res.status(200);
+  res.setHeader('Content-Type', obj.contentType || 'application/octet-stream');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  stream.pipe(res);
 });

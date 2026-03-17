@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { AppError } from '../utils/AppError';
 
 type StorageConfig = {
@@ -50,6 +51,7 @@ function getStorageConfig(): StorageConfig {
 function createS3Client(cfg: StorageConfig): S3Client {
   return new S3Client({
     region: cfg.region,
+    forcePathStyle: true,
     endpoint: cfg.endpoint,
     credentials: {
       accessKeyId: cfg.accessKeyId,
@@ -84,5 +86,24 @@ export class ObjectStorageService {
         : `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com/${input.key}`;
 
     return { url, key: input.key };
+  }
+
+  static async getObject(input: { key: string }): Promise<{ body: unknown; contentType?: string; cacheControl?: string }> {
+    const cfg = getStorageConfig();
+    const s3 = createS3Client(cfg);
+
+    const res = await s3.send(
+      new GetObjectCommand({
+        Bucket: cfg.bucket,
+        Key: input.key,
+      }),
+    );
+
+    return {
+      body: res.Body,
+      contentType: typeof res.ContentType === 'string' ? res.ContentType : undefined,
+      cacheControl:
+        typeof res.CacheControl === 'string' ? res.CacheControl : undefined,
+    };
   }
 }
