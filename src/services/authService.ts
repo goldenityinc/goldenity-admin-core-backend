@@ -23,6 +23,7 @@ type LoginTenantRecord = {
   role: string | null;
   userIsActive: boolean | null;
   tenantIsActive: boolean | null;
+  endDate: Date | null; // <--- DITAMBAHKAN UNTUK SUBSCRIPTION
 };
 
 type ColumnMetadata = {
@@ -39,6 +40,7 @@ type TenantDbCandidate = {
   subscriptionTier: string | null;
   targetDbUrl: string;
   tenantIsActive: boolean | null;
+  endDate: Date | null; // <--- DITAMBAHKAN UNTUK SUBSCRIPTION
 };
 
 type TenantAppUserColumnRow = {
@@ -196,6 +198,16 @@ export class AuthService {
       throw new AppError('Tenant sudah tidak aktif', 403);
     }
 
+    // PENGECEKAN SUBSCRIPTION (Masa Aktif) DITAMBAHKAN DI SINI! 🔥
+    if (resolvedLoginRecord.endDate) {
+      const currentDate = new Date();
+      const expirationDate = new Date(resolvedLoginRecord.endDate);
+      
+      if (currentDate > expirationDate) {
+        throw new AppError('Masa langganan aplikasi Anda telah habis. Silakan hubungi admin untuk perpanjangan.', 403);
+      }
+    }
+
     if (!resolvedLoginRecord.targetDbUrl) {
       throw new AppError('Konfigurasi DB tenant tidak ditemukan untuk login', 500);
     }
@@ -243,10 +255,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Resolves subscription tier for a tenant by querying app_instances directly.
-   * Used as a fallback when subscriptionTier is missing from the login record.
-   */
   static async resolveTierForTenant(tenantId: string): Promise<string | null> {
     try {
       const rows = await prisma.$queryRawUnsafe<Array<{ tier: string }>>(
@@ -333,6 +341,7 @@ export class AuthService {
     const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
     const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+    const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']); // <--- MENARIK KOLOM END DATE
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
     if (
@@ -375,6 +384,9 @@ export class AuthService {
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
+    const endDateSelect = appInstanceEndDateColumn // <--- MENGIRIM END DATE KE HASIL QUERY
+      ? `ai.${quoteIdentifier(appInstanceEndDateColumn)} AS "endDate"`
+      : 'NULL::timestamp AS "endDate"';
     const orderBy = userAppAccessCreatedAtColumn
       ? `ORDER BY uaa.${quoteIdentifier(userAppAccessCreatedAtColumn)} DESC`
       : '';
@@ -387,6 +399,7 @@ export class AuthService {
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
         ${subscriptionTierSelect},
+        ${endDateSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
         ${userRoleSelect},
         ${userIsActiveSelect},
@@ -426,7 +439,6 @@ export class AuthService {
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
-    // Prefer db URL stored directly on tenants; fall back to app_instances (current schema)
     const tenantDbUrlColumn = pickColumn(metadata.tenants, ['db_connection_url', 'dbConnectionUrl']);
     const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
@@ -434,6 +446,7 @@ export class AuthService {
     const appInstanceUpdatedAtColumn = pickColumn(metadata.appInstances, ['updatedAt', 'updated_at']);
     const appInstanceCreatedAtColumn = pickColumn(metadata.appInstances, ['createdAt', 'created_at']);
     const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+    const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']); // <--- MENARIK KOLOM END DATE UNTUK FALLBACK
 
     if (!tenantIdColumn || (!tenantDbUrlColumn && !appInstanceDbUrlColumn)) {
       throw new AppError('Konfigurasi kolom tenant belum lengkap untuk login', 500);
@@ -451,11 +464,13 @@ export class AuthService {
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
+    const endDateSelect = appInstanceEndDateColumn // <--- SELECT END DATE UNTUK FALLBACK
+      ? `ai.${quoteIdentifier(appInstanceEndDateColumn)} AS "endDate"`
+      : 'NULL::timestamp AS "endDate"';
 
     let tenantRows: TenantDbCandidate[];
 
     if (tenantDbUrlColumn) {
-      // Legacy path: DB URL is a column on the tenants table
       tenantRows = await prisma.$queryRawUnsafe<TenantDbCandidate[]>(
         `
         SELECT
@@ -463,6 +478,7 @@ export class AuthService {
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
           NULL::text AS "subscriptionTier",
+          NULL::timestamp AS "endDate",
           COALESCE(t.${quoteIdentifier(tenantDbUrlColumn)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -470,7 +486,6 @@ export class AuthService {
         masterDbUrl,
       );
     } else {
-      // Current schema path: DB URL lives in app_instances.dbConnectionString
       const statusOrderExpression = appInstanceStatusColumn
         ? `CASE ai.${quoteIdentifier(appInstanceStatusColumn)}
             WHEN 'ACTIVE' THEN 0
@@ -492,6 +507,7 @@ export class AuthService {
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
           ${subscriptionTierSelect},
+          ${endDateSelect},
           COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn!)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
         FROM tenants t
@@ -548,6 +564,7 @@ export class AuthService {
           role: tenantUser.role,
           userIsActive: tenantUser.userIsActive,
           tenantIsActive: tenant.tenantIsActive,
+          endDate: tenant.endDate, // <--- RETURN END DATE
         };
       } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
@@ -556,8 +573,6 @@ export class AuthService {
             `[AuthService] Tenant DB fallback skipped (tenantId=${tenant.tenantId}): ${reason}`,
           );
         }
-
-        // Ignore inaccessible tenant DB and continue to next candidate.
       } finally {
         await tenantClient.end().catch(() => undefined);
       }
