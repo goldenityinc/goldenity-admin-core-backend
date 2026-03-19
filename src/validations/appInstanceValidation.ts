@@ -4,6 +4,7 @@ export const createAppInstanceSchema = z.object({
   tenantId: z.string().uuid('tenantId must be a valid UUID'),
   solutionId: z.string().uuid('solutionId must be a valid UUID'),
   tier: z.enum(['Standard', 'Professional', 'Enterprise', 'Custom']),
+  syncMode: z.enum(['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER']).optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),
@@ -18,6 +19,7 @@ export const createAppInstanceSchema = z.object({
 
 export const updateAppInstanceSchema = z.object({
   tier: z.enum(['Standard', 'Professional', 'Enterprise', 'Custom']).optional(),
+  syncMode: z.enum(['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER']).optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),

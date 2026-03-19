@@ -82,6 +82,7 @@ model AppInstance {
   tenantId             String
   solutionId           String
   tier                 SubscriptionTier
+  syncMode             SyncMode           @default(CLOUD_FIRST) @map("sync_mode")
   status               AppInstanceStatus  @default(ACTIVE)
   dbConnectionString   String?
   appUrl               String?
@@ -135,4 +136,10 @@ enum AppRole {
   MANAGER
   STAFF
   VIEWER
+}
+
+enum SyncMode {
+  CLOUD_FIRST
+  LOCAL_FIRST
+  LOCAL_SERVER
 }

@@ -22,6 +22,8 @@ function sanitizeIdentifier(value: string): string {
 
 export class AppInstanceService {
 
+  static readonly SyncModeValues = ['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER'] as const;
+
   static parseEndDateInput(input: string | null | undefined): Date | null | undefined {
     if (input === undefined) return undefined;
     if (input === null) return null;
@@ -47,6 +49,7 @@ export class AppInstanceService {
     tenantId: string;
     solutionId: string;
     tier: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
+    syncMode?: (typeof AppInstanceService.SyncModeValues)[number];
     status?: 'ACTIVE' | 'SUSPENDED';
     dbConnectionString?: string | null;
     appUrl?: string | null;
@@ -86,6 +89,7 @@ export class AppInstanceService {
         tenantId: data.tenantId,
         solutionId: data.solutionId,
         tier: data.tier,
+        ...(data.syncMode !== undefined ? { syncMode: data.syncMode } : {}),
         status: data.status ?? 'ACTIVE',
         dbConnectionString: resolvedDbConnectionString,
         appUrl: data.appUrl,
@@ -154,17 +158,21 @@ export class AppInstanceService {
     id: string,
     data: {
       tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
+      syncMode?: (typeof AppInstanceService.SyncModeValues)[number];
       status?: 'ACTIVE' | 'SUSPENDED';
       dbConnectionString?: string | null;
       appUrl?: string | null;
       endDate?: string | null;
     }
   ) {
+    const { endDate, syncMode, ...restData } = data;
+
     return prisma.appInstance.update({
       where: { id },
       data: {
-        ...data,
-        ...(data.endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(data.endDate) } : {}),
+        ...restData,
+        ...(syncMode !== undefined ? { syncMode } : {}),
+        ...(endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(endDate) } : {}),
       },
       include: {
         tenant: { select: { id: true, name: true, slug: true } },

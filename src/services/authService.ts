@@ -18,6 +18,7 @@ type LoginTenantRecord = {
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
   subscriptionTier: string | null;
+  syncMode: string | null;
   targetDbUrl: string | null;
   storedPassword: string;
   role: string | null;
@@ -38,6 +39,7 @@ type TenantDbCandidate = {
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
   subscriptionTier: string | null;
+  syncMode: string | null;
   targetDbUrl: string;
   tenantIsActive: boolean | null;
   endDate: Date | null; // <--- DITAMBAHKAN UNTUK SUBSCRIPTION
@@ -248,6 +250,7 @@ export class AuthService {
       tenant: {
         slug: resolvedLoginRecord.tenantSlug,
         bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
+        syncMode: resolvedLoginRecord.syncMode ?? 'CLOUD_FIRST',
       },
       subscription: {
         tier: resolvedTier,
@@ -341,6 +344,7 @@ export class AuthService {
     const appInstanceDbUrlColumn = pickColumn(metadata.appInstances, ['dbConnectionString', 'db_connection_string']);
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
     const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+    const appInstanceSyncModeColumn = pickColumn(metadata.appInstances, ['syncMode', 'sync_mode']);
     const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']); // <--- MENARIK KOLOM END DATE
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
@@ -384,6 +388,9 @@ export class AuthService {
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
+    const syncModeSelect = appInstanceSyncModeColumn
+      ? `ai.${quoteIdentifier(appInstanceSyncModeColumn)}::text AS "syncMode"`
+      : 'NULL::text AS "syncMode"';
     const endDateSelect = appInstanceEndDateColumn // <--- MENGIRIM END DATE KE HASIL QUERY
       ? `ai.${quoteIdentifier(appInstanceEndDateColumn)} AS "endDate"`
       : 'NULL::timestamp AS "endDate"';
@@ -399,6 +406,7 @@ export class AuthService {
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
         ${subscriptionTierSelect},
+        ${syncModeSelect},
         ${endDateSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
         ${userRoleSelect},
@@ -446,6 +454,7 @@ export class AuthService {
     const appInstanceUpdatedAtColumn = pickColumn(metadata.appInstances, ['updatedAt', 'updated_at']);
     const appInstanceCreatedAtColumn = pickColumn(metadata.appInstances, ['createdAt', 'created_at']);
     const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+    const appInstanceSyncModeColumn = pickColumn(metadata.appInstances, ['syncMode', 'sync_mode']);
     const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']); // <--- MENARIK KOLOM END DATE UNTUK FALLBACK
 
     if (!tenantIdColumn || (!tenantDbUrlColumn && !appInstanceDbUrlColumn)) {
@@ -464,6 +473,9 @@ export class AuthService {
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
+    const syncModeSelect = appInstanceSyncModeColumn
+      ? `ai.${quoteIdentifier(appInstanceSyncModeColumn)}::text AS "syncMode"`
+      : 'NULL::text AS "syncMode"';
     const endDateSelect = appInstanceEndDateColumn // <--- SELECT END DATE UNTUK FALLBACK
       ? `ai.${quoteIdentifier(appInstanceEndDateColumn)} AS "endDate"`
       : 'NULL::timestamp AS "endDate"';
@@ -478,6 +490,7 @@ export class AuthService {
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
           NULL::text AS "subscriptionTier",
+          NULL::text AS "syncMode",
           NULL::timestamp AS "endDate",
           COALESCE(t.${quoteIdentifier(tenantDbUrlColumn)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
@@ -507,6 +520,7 @@ export class AuthService {
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
           ${subscriptionTierSelect},
+          ${syncModeSelect},
           ${endDateSelect},
           COALESCE(ai.${quoteIdentifier(appInstanceDbUrlColumn!)}, $1) AS "targetDbUrl",
           ${tenantIsActiveSelect}
@@ -559,6 +573,7 @@ export class AuthService {
           tenantSlug: tenant.tenantSlug,
           tenantBridgeApiUrl: tenant.tenantBridgeApiUrl,
           subscriptionTier: tenant.subscriptionTier,
+          syncMode: tenant.syncMode,
           targetDbUrl: tenant.targetDbUrl,
           storedPassword: tenantUser.storedPassword,
           role: tenantUser.role,
