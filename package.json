@@ -13,6 +13,7 @@
     "db:sync-app-instance-db-connection": "node scripts/sync_app_instance_db_connection.js",
     "db:sync-subscription-tier-enum": "node scripts/sync_subscription_tier_enum.js",
     "db:backfill-user-app-accesses": "node scripts/backfill_user_app_accesses.js",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
