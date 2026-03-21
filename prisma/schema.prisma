@@ -12,6 +12,7 @@ model Tenant {
   name           String
   slug           String        @unique
   bridgeApiUrl   String?       @map("bridge_api_url")
+  showInventoryImages Boolean   @default(true) @map("show_inventory_images")
   email          String?       @unique
   phone          String?
   address        String?

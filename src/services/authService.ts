@@ -17,6 +17,7 @@ type LoginTenantRecord = {
   tenantId: string;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
+  tenantShowInventoryImages: boolean | null;
   subscriptionTier: string | null;
   syncMode: string | null;
   targetDbUrl: string | null;
@@ -38,6 +39,7 @@ type TenantDbCandidate = {
   tenantId: string;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
+  tenantShowInventoryImages: boolean | null;
   subscriptionTier: string | null;
   syncMode: string | null;
   targetDbUrl: string;
@@ -250,6 +252,8 @@ export class AuthService {
       tenant: {
         slug: resolvedLoginRecord.tenantSlug,
         bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
+        showInventoryImages:
+          resolvedLoginRecord.tenantShowInventoryImages !== false,
         syncMode: resolvedLoginRecord.syncMode ?? 'CLOUD_FIRST',
       },
       subscription: {
@@ -338,6 +342,10 @@ export class AuthService {
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
     const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
     const tenantBridgeApiUrlColumn = pickColumn(metadata.tenants, ['bridge_api_url', 'bridgeApiUrl']);
+    const tenantShowInventoryImagesColumn = pickColumn(metadata.tenants, [
+      'show_inventory_images',
+      'showInventoryImages',
+    ]);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
     const appInstanceIdColumn = pickColumn(metadata.appInstances, ['id']);
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
@@ -376,6 +384,9 @@ export class AuthService {
     const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
       ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
       : 'NULL::text AS "tenantBridgeApiUrl"';
+    const tenantShowInventoryImagesSelect = tenantShowInventoryImagesColumn
+      ? `t.${quoteIdentifier(tenantShowInventoryImagesColumn)} AS "tenantShowInventoryImages"`
+      : 'NULL::boolean AS "tenantShowInventoryImages"';
     const userAppAccessIsActiveFilter = userAppAccessIsActiveColumn
       ? `AND uaa.${quoteIdentifier(userAppAccessIsActiveColumn)} = TRUE`
       : '';
@@ -405,6 +416,7 @@ export class AuthService {
         ${targetDbUrlSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
+        ${tenantShowInventoryImagesSelect},
         ${subscriptionTierSelect},
         ${syncModeSelect},
         ${endDateSelect},
@@ -444,6 +456,10 @@ export class AuthService {
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
     const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
     const tenantBridgeApiUrlColumn = pickColumn(metadata.tenants, ['bridge_api_url', 'bridgeApiUrl']);
+    const tenantShowInventoryImagesColumn = pickColumn(metadata.tenants, [
+      'show_inventory_images',
+      'showInventoryImages',
+    ]);
     const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
     const masterDbUrl = process.env.DATABASE_URL?.trim() ?? null;
 
@@ -470,6 +486,9 @@ export class AuthService {
     const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
       ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
       : 'NULL::text AS "tenantBridgeApiUrl"';
+    const tenantShowInventoryImagesSelect = tenantShowInventoryImagesColumn
+      ? `t.${quoteIdentifier(tenantShowInventoryImagesColumn)} AS "tenantShowInventoryImages"`
+      : 'NULL::boolean AS "tenantShowInventoryImages"';
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
@@ -489,6 +508,7 @@ export class AuthService {
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
+          ${tenantShowInventoryImagesSelect},
           NULL::text AS "subscriptionTier",
           NULL::text AS "syncMode",
           NULL::timestamp AS "endDate",
@@ -519,6 +539,7 @@ export class AuthService {
           t.${quoteIdentifier(tenantIdColumn)} AS "tenantId",
           ${tenantSlugSelect},
           ${tenantBridgeApiUrlSelect},
+          ${tenantShowInventoryImagesSelect},
           ${subscriptionTierSelect},
           ${syncModeSelect},
           ${endDateSelect},
@@ -572,6 +593,7 @@ export class AuthService {
           tenantId: tenant.tenantId,
           tenantSlug: tenant.tenantSlug,
           tenantBridgeApiUrl: tenant.tenantBridgeApiUrl,
+          tenantShowInventoryImages: tenant.tenantShowInventoryImages,
           subscriptionTier: tenant.subscriptionTier,
           syncMode: tenant.syncMode,
           targetDbUrl: tenant.targetDbUrl,

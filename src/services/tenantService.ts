@@ -13,6 +13,7 @@ export class TenantService {
     adminEmail?: string;
     adminPassword?: string;
     isActive?: boolean;
+    showInventoryImages?: boolean;
   }) {
     const resolvedSlug = data.slug ?? this.generateSlug(data.name);
 
@@ -31,6 +32,7 @@ export class TenantService {
           address: data.address,
           logoUrl: data.logoUrl,
           isActive: data.isActive ?? true,
+          showInventoryImages: data.showInventoryImages ?? true,
         },
       });
 

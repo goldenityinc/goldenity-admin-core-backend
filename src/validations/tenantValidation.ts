@@ -14,6 +14,7 @@ export const createTenantSchema = z.object({
   adminEmail: z.string().email('Invalid admin email').optional(),
   adminPassword: z.string().min(8, 'Admin password must be at least 8 characters').optional(),
   isActive: z.boolean().optional(),
+  showInventoryImages: z.boolean().optional(),
 }).refine(
   (data) => Boolean(data.adminEmail) === Boolean(data.adminPassword),
   {
@@ -28,6 +29,7 @@ export const updateTenantSchema = z.object({
   phone: z.string().min(6, 'Phone must be at least 6 characters').optional().nullable(),
   address: z.string().min(5, 'Address must be at least 5 characters').optional().nullable(),
   isActive: z.boolean().optional(),
+  showInventoryImages: z.boolean().optional(),
 });
 
 export const createUserSchema = z.object({

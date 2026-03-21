@@ -190,6 +190,9 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(bodyParsed.data.phone !== undefined ? { phone: bodyParsed.data.phone } : {}),
       ...(bodyParsed.data.address !== undefined ? { address: bodyParsed.data.address } : {}),
       ...(typeof bodyParsed.data.isActive === 'boolean' ? { isActive: bodyParsed.data.isActive } : {}),
+      ...(typeof bodyParsed.data.showInventoryImages === 'boolean'
+        ? { showInventoryImages: bodyParsed.data.showInventoryImages }
+        : {}),
     },
   });
 
