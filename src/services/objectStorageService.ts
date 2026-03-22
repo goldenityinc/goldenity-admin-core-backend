@@ -5,28 +5,72 @@ import { AppError } from '../utils/AppError';
 type StorageConfig = {
   bucket: string;
   region: string;
-  endpoint?: string;
+  endpoint: string;
   accessKeyId: string;
   secretAccessKey: string;
   publicBaseUrl?: string;
 };
 
+let hasLoggedStorageConfig = false;
+
+function sanitizeEnvValue(raw?: string): string | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+
+  const cleaned = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function firstEnvValue(keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = sanitizeEnvValue(process.env[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function getStorageConfig(): StorageConfig {
-  const bucket =
-    process.env.STORAGE_BUCKET?.trim() ||
-    process.env.STORAGE_BUCKET_NAME?.trim() ||
-    process.env.S3_BUCKET?.trim() ||
-    process.env.S3_BUCKET_NAME?.trim() ||
-    process.env.R2_BUCKET?.trim() ||
-    process.env.BUCKET?.trim() ||
-    process.env.BUCKET_NAME?.trim() ||
-    process.env.AWS_S3_BUCKET?.trim() ||
-    process.env.AWS_BUCKET?.trim();
-  const region = process.env.STORAGE_REGION?.trim() || process.env.S3_REGION?.trim() || 'auto';
-  const endpoint = process.env.STORAGE_ENDPOINT?.trim() || process.env.S3_ENDPOINT?.trim() || undefined;
-  const accessKeyId = process.env.STORAGE_ACCESS_KEY_ID?.trim() || process.env.S3_ACCESS_KEY_ID?.trim();
-  const secretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY?.trim() || process.env.S3_SECRET_ACCESS_KEY?.trim();
-  const publicBaseUrl = process.env.STORAGE_PUBLIC_BASE_URL?.trim() || process.env.S3_PUBLIC_BASE_URL?.trim() || undefined;
+  const bucket = firstEnvValue([
+    'STORAGE_BUCKET',
+    'AWS_S3_BUCKET_NAME',
+    'BUCKET_NAME',
+    'S3_BUCKET',
+    'STORAGE_BUCKET_NAME',
+    'S3_BUCKET_NAME',
+    'R2_BUCKET',
+    'BUCKET',
+    'AWS_S3_BUCKET',
+    'AWS_BUCKET',
+  ]);
+  const region = firstEnvValue(['STORAGE_REGION', 'AWS_REGION', 'S3_REGION']) || 'auto';
+  const endpoint = firstEnvValue([
+    'STORAGE_ENDPOINT',
+    'AWS_S3_ENDPOINT',
+    'S3_ENDPOINT',
+    'AWS_ENDPOINT',
+  ]);
+  const accessKeyId = firstEnvValue([
+    'STORAGE_ACCESS_KEY',
+    'STORAGE_ACCESS_KEY_ID',
+    'AWS_ACCESS_KEY_ID',
+    'S3_ACCESS_KEY_ID',
+    'AWS_S3_ACCESS_KEY_ID',
+  ]);
+  const secretAccessKey = firstEnvValue([
+    'STORAGE_SECRET_KEY',
+    'STORAGE_SECRET_ACCESS_KEY',
+    'AWS_SECRET_ACCESS_KEY',
+    'S3_SECRET_ACCESS_KEY',
+    'AWS_S3_SECRET_ACCESS_KEY',
+  ]);
+  const publicBaseUrl = firstEnvValue([
+    'STORAGE_PUBLIC_BASE_URL',
+    'S3_PUBLIC_BASE_URL',
+    'AWS_S3_PUBLIC_BASE_URL',
+  ]);
 
   if (!bucket) {
     throw new AppError(
@@ -35,7 +79,15 @@ function getStorageConfig(): StorageConfig {
     );
   }
   if (!accessKeyId || !secretAccessKey) {
-    throw new AppError('Storage credential belum dikonfigurasi (STORAGE_ACCESS_KEY_ID/SECRET)', 503);
+    throw new AppError('Storage credential belum dikonfigurasi (STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY)', 503);
+  }
+  if (!endpoint) {
+    throw new AppError('Storage endpoint belum dikonfigurasi. Set STORAGE_ENDPOINT untuk S3-compatible storage.', 503);
+  }
+
+  if (!hasLoggedStorageConfig) {
+    hasLoggedStorageConfig = true;
+    console.log(`[ObjectStorage] bucket="${bucket}" endpoint="${endpoint}" region="${region}"`);
   }
 
   return {
@@ -81,9 +133,7 @@ export class ObjectStorageService {
 
     const url = cfg.publicBaseUrl
       ? joinUrl(cfg.publicBaseUrl, input.key)
-      : cfg.endpoint
-        ? joinUrl(cfg.endpoint, `/${cfg.bucket}/${input.key}`)
-        : `https://${cfg.bucket}.s3.${cfg.region}.amazonaws.com/${input.key}`;
+      : joinUrl(cfg.endpoint, `/${cfg.bucket}/${input.key}`);
 
     return { url, key: input.key };
   }

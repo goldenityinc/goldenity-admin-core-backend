@@ -12,7 +12,48 @@ import {
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
 
+const normalizeCreateUserRole = (
+  rawRole: unknown,
+): 'TENANT_ADMIN' | 'CRM_MANAGER' | 'CRM_STAFF' | 'READ_ONLY' | undefined => {
+  if (typeof rawRole !== 'string') {
+    return undefined;
+  }
+
+  switch (rawRole.trim().toUpperCase()) {
+    case 'TENANT_ADMIN':
+    case 'ADMIN':
+    case 'OWNER':
+      return 'TENANT_ADMIN';
+    case 'CRM_MANAGER':
+    case 'MANAGER':
+      return 'CRM_MANAGER';
+    case 'CRM_STAFF':
+    case 'STAFF':
+    case 'CASHIER':
+    case 'KASIR':
+    case 'USER':
+      return 'CRM_STAFF';
+    case 'READ_ONLY':
+    case 'VIEWER':
+    case 'AUDITOR':
+    case 'PAJAK':
+      return 'READ_ONLY';
+    default:
+      return undefined;
+  }
+};
+
 export const createTenantUser = asyncHandler(async (req: Request, res: Response) => {
+  const incomingRoleRaw = (req.body as { role?: unknown })?.role;
+  const normalizedIncomingRole = normalizeCreateUserRole(incomingRoleRaw);
+  if (
+    typeof incomingRoleRaw === 'string' &&
+    incomingRoleRaw.trim().length > 0 &&
+    !normalizedIncomingRole
+  ) {
+    throw new AppError('Invalid role value in request body', 400);
+  }
+
   const paramParsed = tenantIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
@@ -21,6 +62,7 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
   const bodyParsed = createUserSchema.safeParse({
     ...req.body,
     tenantId: paramParsed.data.tenantId,
+    role: normalizedIncomingRole,
   });
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
@@ -80,8 +122,14 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const incomingRoleRaw = (req.body as { role?: unknown })?.role;
-  const normalizedIncomingRole =
-    typeof incomingRoleRaw === 'string' ? incomingRoleRaw.toUpperCase() : undefined;
+  const normalizedIncomingRole = normalizeCreateUserRole(incomingRoleRaw);
+  if (
+    typeof incomingRoleRaw === 'string' &&
+    incomingRoleRaw.trim().length > 0 &&
+    !normalizedIncomingRole
+  ) {
+    throw new AppError('Invalid role value in request body', 400);
+  }
 
   if (isTenantScopedAdmin) {
     const tenantAdminAllowedRoles = new Set(['CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']);

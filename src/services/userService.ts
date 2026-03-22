@@ -147,7 +147,7 @@ export class UserService {
 
     const passwordHash = await bcrypt.hash(data.password, 10);
 
-    const resolvedRole = ((data.role ?? 'TENANT_ADMIN') as string).toUpperCase();
+    const resolvedRole = ((data.role ?? 'TENANT_ADMIN') as string).toUpperCase() as UserRole;
     const erpConfigured = Boolean(
       process.env.ERP_API_BASE_URL?.trim() ||
       process.env.ERP_API_URL?.trim(),
@@ -161,7 +161,7 @@ export class UserService {
           firebaseUid: null,
           email: data.email ?? null,
           name: data.name,
-          role: (data.role ?? 'TENANT_ADMIN') as UserRole,
+          role: resolvedRole,
           isActive: data.isActive ?? true,
           tenantId,
         },
@@ -183,7 +183,7 @@ export class UserService {
           tenantId,
           data.username,
           passwordHash,
-          data.role ?? 'TENANT_ADMIN',
+          resolvedRole,
           data.isActive ?? true,
         );
 
