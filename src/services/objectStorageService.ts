@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { AppError } from '../utils/AppError';
+import { toProxyUrl } from './imageUrlTransform';
 
 type StorageConfig = {
   bucket: string;
@@ -133,8 +134,14 @@ function createS3Client(cfg: StorageConfig): S3Client {
   });
 }
 
-function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+function getObjectStorageClient(): S3Client | null {
+  try {
+    const cfg = getStorageConfig();
+    return createS3Client(cfg);
+  } catch (error) {
+    console.error('Failed to create S3 client:', error instanceof Error ? error.message : String(error));
+    return null;
+  }
 }
 
 export class ObjectStorageService {
@@ -153,11 +160,10 @@ export class ObjectStorageService {
       }),
     );
 
-    const url = cfg.publicBaseUrl
-      ? joinUrl(cfg.publicBaseUrl, input.key)
-      : joinUrl(cfg.endpoint, `/${cfg.bucket}/${input.key}`);
+    // Return proxy URL for private buckets: /images/[key]
+    const url = toProxyUrl(input.key);
 
-    return { url, key: input.key };
+    return { url: url || '/images/' + input.key, key: input.key };
   }
 
   static async getObject(input: { key: string }): Promise<{ body: unknown; contentType?: string; cacheControl?: string }> {
@@ -180,3 +186,5 @@ export class ObjectStorageService {
     };
   }
 }
+
+export { getObjectStorageClient, getStorageConfig };
