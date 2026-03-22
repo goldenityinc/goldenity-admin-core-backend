@@ -59,7 +59,9 @@ function getStorageConfig(runtimeBucket?: string): StorageConfig {
     'STORAGE_ACCESS_KEY',
     'STORAGE_ACCESS_KEY_ID',
     'AWS_ACCESS_KEY_ID',
+    'AWS_ACCESS_KEY',
     'S3_ACCESS_KEY_ID',
+    'S3_ACCESS_KEY',
     'AWS_S3_ACCESS_KEY_ID',
     'AWS_S3_ACCESS_KEY',
     'ACCESS_KEY',
@@ -68,7 +70,9 @@ function getStorageConfig(runtimeBucket?: string): StorageConfig {
     'STORAGE_SECRET_KEY',
     'STORAGE_SECRET_ACCESS_KEY',
     'AWS_SECRET_ACCESS_KEY',
+    'AWS_SECRET_KEY',
     'S3_SECRET_ACCESS_KEY',
+    'S3_SECRET_KEY',
     'AWS_S3_SECRET_ACCESS_KEY',
     'AWS_S3_SECRET_KEY',
     'SECRET_KEY',
@@ -86,7 +90,10 @@ function getStorageConfig(runtimeBucket?: string): StorageConfig {
     );
   }
   if (!accessKeyId || !secretAccessKey) {
-    throw new AppError('Storage credential belum dikonfigurasi (STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY)', 503);
+    throw new AppError(
+      'Storage credential belum dikonfigurasi. Set STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY (atau AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY).',
+      503,
+    );
   }
   if (!endpoint) {
     throw new AppError('Storage endpoint belum dikonfigurasi. Set STORAGE_ENDPOINT untuk S3-compatible storage.', 503);
