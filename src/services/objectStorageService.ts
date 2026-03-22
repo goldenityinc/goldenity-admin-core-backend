@@ -32,10 +32,11 @@ function firstEnvValue(keys: string[]): string | undefined {
   return undefined;
 }
 
-function getStorageConfig(): StorageConfig {
+function getStorageConfig(runtimeBucket?: string): StorageConfig {
   const bucket = firstEnvValue([
     'STORAGE_BUCKET',
     'AWS_S3_BUCKET_NAME',
+    'AWS_BUCKET_NAME',
     'BUCKET_NAME',
     'S3_BUCKET',
     'STORAGE_BUCKET_NAME',
@@ -44,13 +45,15 @@ function getStorageConfig(): StorageConfig {
     'BUCKET',
     'AWS_S3_BUCKET',
     'AWS_BUCKET',
-  ]);
+  ]) || sanitizeEnvValue(runtimeBucket);
   const region = firstEnvValue(['STORAGE_REGION', 'AWS_REGION', 'S3_REGION']) || 'auto';
   const endpoint = firstEnvValue([
     'STORAGE_ENDPOINT',
     'AWS_S3_ENDPOINT',
     'S3_ENDPOINT',
     'AWS_ENDPOINT',
+    'R2_ENDPOINT',
+    'S3_URL',
   ]);
   const accessKeyId = firstEnvValue([
     'STORAGE_ACCESS_KEY',
@@ -58,6 +61,8 @@ function getStorageConfig(): StorageConfig {
     'AWS_ACCESS_KEY_ID',
     'S3_ACCESS_KEY_ID',
     'AWS_S3_ACCESS_KEY_ID',
+    'AWS_S3_ACCESS_KEY',
+    'ACCESS_KEY',
   ]);
   const secretAccessKey = firstEnvValue([
     'STORAGE_SECRET_KEY',
@@ -65,6 +70,8 @@ function getStorageConfig(): StorageConfig {
     'AWS_SECRET_ACCESS_KEY',
     'S3_SECRET_ACCESS_KEY',
     'AWS_S3_SECRET_ACCESS_KEY',
+    'AWS_S3_SECRET_KEY',
+    'SECRET_KEY',
   ]);
   const publicBaseUrl = firstEnvValue([
     'STORAGE_PUBLIC_BASE_URL',
@@ -119,7 +126,8 @@ function joinUrl(base: string, path: string): string {
 export class ObjectStorageService {
   static async putPublicObject(input: { key: string; body: Buffer; contentType: string }): Promise<{ url: string; key: string }>
   {
-    const cfg = getStorageConfig();
+    const runtimeBucketHint = input.key.split('/')[0];
+    const cfg = getStorageConfig(runtimeBucketHint);
     const s3 = createS3Client(cfg);
 
     await s3.send(
@@ -139,7 +147,8 @@ export class ObjectStorageService {
   }
 
   static async getObject(input: { key: string }): Promise<{ body: unknown; contentType?: string; cacheControl?: string }> {
-    const cfg = getStorageConfig();
+    const runtimeBucketHint = input.key.split('/')[0];
+    const cfg = getStorageConfig(runtimeBucketHint);
     const s3 = createS3Client(cfg);
 
     const res = await s3.send(
