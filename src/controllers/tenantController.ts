@@ -13,6 +13,7 @@ import { ErpProvisionService } from '../services/erpProvisionService';
 import prisma from '../config/database';
 import { ObjectStorageService } from '../services/objectStorageService';
 import { Readable } from 'node:stream';
+import { emitTenantUpdated } from '../services/realtimeEmitter';
 
 function getServicePublicBaseUrl(req?: Request): string {
   const explicit = process.env.PUBLIC_BASE_URL?.trim();
@@ -130,6 +131,11 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
       }
     }
 
+    emitTenantUpdated(req, result.tenant.id, {
+      action: 'CREATED',
+      tenant: result.tenant,
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Tenant created successfully',
@@ -211,6 +217,11 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
     );
   }
 
+  emitTenantUpdated(req, updated.id, {
+    action: 'UPDATED',
+    tenant: updated,
+  });
+
   return res.status(200).json({
     success: true,
     message: 'Tenant updated successfully',
@@ -273,6 +284,14 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
       authHeader,
     );
   }
+
+  emitTenantUpdated(req, tenant.id, {
+    action: 'LOGO_UPDATED',
+    tenant: {
+      id: tenant.id,
+      logoUrl: proxyUrl,
+    },
+  });
 
   return res.status(200).json({
     success: true,

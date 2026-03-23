@@ -1,3 +1,4 @@
+import http from 'http';
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -11,6 +12,7 @@ import userRoutes from './routes/userRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import integrationRoutes from './routes/integrationRoutes';
 import publicRoutes from './routes/publicRoutes';
+import { initializeSocketServer } from './services/socketServer';
 
 // Load environment variables
 dotenv.config();
@@ -18,6 +20,7 @@ dotenv.config();
 // Initialize Express app
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
 
 // Trust X-Forwarded-* headers (Railway/ingress)
 app.set('trust proxy', 1);
@@ -89,8 +92,10 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   }
 });
 
+initializeSocketServer(server);
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);

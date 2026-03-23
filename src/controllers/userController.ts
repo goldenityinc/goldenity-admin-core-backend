@@ -11,6 +11,8 @@ import {
   userIdParamSchema,
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
+import prisma from '../config/database';
+import { emitUserChanged } from '../services/realtimeEmitter';
 
 const normalizeCreateUserRole = (
   rawRole: unknown,
@@ -70,6 +72,10 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
 
   try {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
+
+    emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
+      user: createdUser,
+    });
 
     return res.status(201).json({
       success: true,
@@ -161,6 +167,10 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   try {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
 
+    emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
+      user: createdUser,
+    });
+
     return res.status(201).json({
       success: true,
       message: 'Tenant user created successfully',
@@ -229,6 +239,10 @@ export const updateUserStatus = asyncHandler(async (req: Request, res: Response)
     bodyParsed.data.isActive,
   );
 
+  emitUserChanged(req, updatedUser.tenantId, 'UPDATED', {
+    user: updatedUser,
+  });
+
   return res.status(200).json({
     success: true,
     message: `Status user berhasil diubah menjadi ${bodyParsed.data.isActive ? 'aktif' : 'nonaktif'}`,
@@ -242,7 +256,18 @@ export const deleteUserHard = asyncHandler(async (req: Request, res: Response) =
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid user id', 400);
   }
 
+  const existingUser = await prisma.user.findUnique({
+    where: { id: paramParsed.data.id },
+    select: { id: true, tenantId: true, username: true, email: true },
+  });
+
   await UserService.deleteUserHard(paramParsed.data.id);
+
+  if (existingUser) {
+    emitUserChanged(req, existingUser.tenantId, 'DELETED', {
+      user: existingUser,
+    });
+  }
 
   return res.status(200).json({
     success: true,
@@ -258,6 +283,10 @@ export const syncPosUsers = asyncHandler(async (req: Request, res: Response) => 
 
   if (parsed.data.tenantId) {
     const summary = await UserService.syncTenantUsersToPos(parsed.data.tenantId);
+
+    emitUserChanged(req, parsed.data.tenantId, 'SYNCED', {
+      summary,
+    });
 
     return res.status(200).json({
       success: true,
