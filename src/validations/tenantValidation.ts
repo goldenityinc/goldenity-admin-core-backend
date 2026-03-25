@@ -95,3 +95,10 @@ export const updateUserStatusSchema = z.object({
     invalid_type_error: 'isActive must be a boolean',
   }),
 });
+
+export const updateUserRoleSchema = z.object({
+  role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY'], {
+    required_error: 'role is required',
+    invalid_type_error: 'role must be a valid role',
+  }),
+});

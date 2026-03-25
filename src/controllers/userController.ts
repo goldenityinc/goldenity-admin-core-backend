@@ -7,12 +7,16 @@ import {
   listUsersQuerySchema,
   syncPosUsersSchema,
   tenantIdParamSchema,
+  updateUserRoleSchema,
   updateUserStatusSchema,
   userIdParamSchema,
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
 import prisma from '../config/database';
 import { emitUserChanged } from '../services/realtimeEmitter';
+
+const TENANT_SCOPED_ADMIN_ROLES = new Set(['TENANT_ADMIN', 'ADMIN', 'OWNER']);
+const TENANT_ADMIN_MANAGEABLE_ROLES = new Set(['CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']);
 
 const normalizeCreateUserRole = (
   rawRole: unknown,
@@ -44,6 +48,32 @@ const normalizeCreateUserRole = (
       return undefined;
   }
 };
+
+function getActorRole(req: Request): string {
+  return (req.user?.role ?? '').toString().toUpperCase();
+}
+
+function isTenantScopedAdmin(req: Request): boolean {
+  return TENANT_SCOPED_ADMIN_ROLES.has(getActorRole(req));
+}
+
+function canManageTargetUser(req: Request, target: { tenantId: string; role?: string | null }): boolean {
+  const actorRole = getActorRole(req);
+  if (actorRole === 'SUPER_ADMIN') {
+    return true;
+  }
+
+  if (!TENANT_SCOPED_ADMIN_ROLES.has(actorRole)) {
+    return false;
+  }
+
+  if (!req.user?.tenantId || req.user.tenantId !== target.tenantId) {
+    return false;
+  }
+
+  const normalizedTargetRole = (target.role ?? '').toString().toUpperCase();
+  return TENANT_ADMIN_MANAGEABLE_ROLES.has(normalizedTargetRole);
+}
 
 export const createTenantUser = asyncHandler(async (req: Request, res: Response) => {
   const incomingRoleRaw = (req.body as { role?: unknown })?.role;
@@ -120,10 +150,9 @@ export const getTenantUsers = asyncHandler(async (req: Request, res: Response) =
 export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const actorRole = (req.user?.role ?? '').toString().toUpperCase();
   const isSuperAdmin = actorRole === 'SUPER_ADMIN';
-  const isTenantScopedAdmin =
-    actorRole === 'TENANT_ADMIN' || actorRole === 'ADMIN' || actorRole === 'OWNER';
+  const isTenantScopedAdminUser = isTenantScopedAdmin(req);
 
-  if (!isSuperAdmin && !isTenantScopedAdmin) {
+  if (!isSuperAdmin && !isTenantScopedAdminUser) {
     throw new AppError('You do not have permission to create users', 403);
   }
 
@@ -137,7 +166,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError('Invalid role value in request body', 400);
   }
 
-  if (isTenantScopedAdmin) {
+  if (isTenantScopedAdminUser) {
     const tenantAdminAllowedRoles = new Set(['CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']);
     const targetRole = normalizedIncomingRole ?? 'CRM_STAFF';
 
@@ -189,7 +218,12 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {
-  const queryParsed = listUsersQuerySchema.safeParse(req.query);
+  const queryParsed = listUsersQuerySchema.safeParse({
+    ...req.query,
+    tenantId: isTenantScopedAdmin(req)
+      ? req.user?.tenantId
+      : (req.query as Record<string, unknown>).tenantId,
+  });
   if (!queryParsed.success) {
     throw new AppError(queryParsed.error.issues[0]?.message ?? 'Invalid query params', 400);
   }
@@ -214,6 +248,23 @@ export const resetUserPassword = asyncHandler(async (req: Request, res: Response
     throw new AppError('newPassword must be at least 6 characters', 400);
   }
 
+  const existingUser = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+    },
+  });
+
+  if (!existingUser) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (!canManageTargetUser(req, existingUser)) {
+    throw new AppError('You do not have permission to reset this user password', 403);
+  }
+
   const updatedUser = await UserService.resetUserPassword(id, newPassword);
 
   return res.status(200).json({
@@ -234,6 +285,23 @@ export const updateUserStatus = asyncHandler(async (req: Request, res: Response)
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid status payload', 400);
   }
 
+  const existingUser = await prisma.user.findUnique({
+    where: { id: paramParsed.data.id },
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+    },
+  });
+
+  if (!existingUser) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (!canManageTargetUser(req, existingUser)) {
+    throw new AppError('You do not have permission to update this user status', 403);
+  }
+
   const updatedUser = await UserService.updateUserStatus(
     paramParsed.data.id,
     bodyParsed.data.isActive,
@@ -250,6 +318,69 @@ export const updateUserStatus = asyncHandler(async (req: Request, res: Response)
   });
 });
 
+export const updateUserRole = asyncHandler(async (req: Request, res: Response) => {
+  const paramParsed = userIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid user id', 400);
+  }
+
+  const incomingRoleRaw = (req.body as { role?: unknown })?.role;
+  const normalizedIncomingRole = normalizeCreateUserRole(incomingRoleRaw);
+  if (
+    typeof incomingRoleRaw === 'string' &&
+    incomingRoleRaw.trim().length > 0 &&
+    !normalizedIncomingRole
+  ) {
+    throw new AppError('Invalid role value in request body', 400);
+  }
+
+  const bodyParsed = updateUserRoleSchema.safeParse({
+    role: normalizedIncomingRole,
+  });
+  if (!bodyParsed.success) {
+    throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid role payload', 400);
+  }
+
+  const existingUser = await prisma.user.findUnique({
+    where: { id: paramParsed.data.id },
+    select: {
+      id: true,
+      tenantId: true,
+      role: true,
+    },
+  });
+
+  if (!existingUser) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (!canManageTargetUser(req, existingUser)) {
+    throw new AppError('You do not have permission to update this user role', 403);
+  }
+
+  if (isTenantScopedAdmin(req) && !TENANT_ADMIN_MANAGEABLE_ROLES.has(bodyParsed.data.role)) {
+    throw new AppError(
+      'Admin tenant hanya boleh mengubah role ke CRM_MANAGER, CRM_STAFF, atau READ_ONLY',
+      403,
+    );
+  }
+
+  const updatedUser = await UserService.updateUserRole(
+    paramParsed.data.id,
+    bodyParsed.data.role,
+  );
+
+  emitUserChanged(req, updatedUser.tenantId, 'UPDATED', {
+    user: updatedUser,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Role user berhasil diperbarui',
+    data: updatedUser,
+  });
+});
+
 export const deleteUserHard = asyncHandler(async (req: Request, res: Response) => {
   const paramParsed = userIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
@@ -258,16 +389,22 @@ export const deleteUserHard = asyncHandler(async (req: Request, res: Response) =
 
   const existingUser = await prisma.user.findUnique({
     where: { id: paramParsed.data.id },
-    select: { id: true, tenantId: true, username: true, email: true },
+    select: { id: true, tenantId: true, username: true, email: true, role: true },
   });
+
+  if (!existingUser) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (!canManageTargetUser(req, existingUser)) {
+    throw new AppError('You do not have permission to delete this user', 403);
+  }
 
   await UserService.deleteUserHard(paramParsed.data.id);
 
-  if (existingUser) {
-    emitUserChanged(req, existingUser.tenantId, 'DELETED', {
-      user: existingUser,
-    });
-  }
+  emitUserChanged(req, existingUser.tenantId, 'DELETED', {
+    user: existingUser,
+  });
 
   return res.status(200).json({
     success: true,

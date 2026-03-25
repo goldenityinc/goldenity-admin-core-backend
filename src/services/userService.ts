@@ -347,8 +347,53 @@ export class UserService {
     return updatedUser;
   }
 
-  static async deleteUserHard(userId: string) {
+  static async updateUserRole(userId: string, role: UserRole) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      throw new AppError('Cannot update role for SUPER_ADMIN via this endpoint', 403);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { role },
+      include: {
+        tenant: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    if (updatedUser.username && updatedUser.passwordHash) {
+      const syncResult = await UserService.syncToTenantPosDb(
+        updatedUser.tenantId,
+        updatedUser.username,
+        updatedUser.passwordHash,
+        updatedUser.role,
+        updatedUser.isActive,
+      );
+
+      if (!syncResult.synced) {
+        console.warn(
+          `[UserService] updateUserRole: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${updatedUser.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+        );
+      }
+    }
+
+    return updatedUser;
+  }
+
+  static async deleteUserHard(userId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        tenantId: true,
+        username: true,
+        role: true,
+      },
+    });
     if (!user) {
       throw new AppError('User not found', 404);
     }
@@ -358,6 +403,16 @@ export class UserService {
     }
 
     await prisma.user.delete({ where: { id: userId } });
+
+    if (user.username) {
+      const syncResult = await UserService.deleteFromTenantPosDb(user.tenantId, user.username);
+
+      if (!syncResult.synced) {
+        console.warn(
+          `[UserService] deleteUserHard: hapus user POS gagal (tenantId=${user.tenantId}, username=${user.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+        );
+      }
+    }
 
     return { id: userId };
   }
@@ -495,6 +550,73 @@ export class UserService {
     }
 
     return summaries;
+  }
+
+  static async deleteFromTenantPosDb(
+    tenantId: string,
+    username: string,
+  ): Promise<PosSyncResult> {
+    const tenantDbConnectionString = await UserService.resolveTenantDbConnectionString(tenantId);
+    const masterDbConnectionString = process.env.DATABASE_URL?.trim();
+    const resolvedConnectionString = tenantDbConnectionString ?? masterDbConnectionString;
+
+    if (!resolvedConnectionString) {
+      return { synced: false, reason: 'no_connection_string' };
+    }
+
+    const client = new Client({
+      connectionString: resolvedConnectionString,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    try {
+      await client.connect();
+
+      const tableRows = await client.query<{ table_name: string }>(
+        `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'app_users'
+        LIMIT 1
+        `,
+      );
+
+      if (!tableRows.rowCount) {
+        return { synced: false, reason: 'app_users_missing' };
+      }
+
+      const columnRows = await client.query<{ column_name: string }>(
+        `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'app_users'
+        `,
+      );
+
+      const columns = new Set(columnRows.rows.map((row) => row.column_name));
+      const usernameColumn = columns.has('username') ? 'username' : columns.has('email') ? 'email' : null;
+
+      if (!usernameColumn) {
+        return { synced: false, reason: 'username_column_missing' };
+      }
+
+      await client.query(
+        `DELETE FROM app_users WHERE ${quoteIdentifier(usernameColumn)} = $1`,
+        [username],
+      );
+
+      return { synced: true };
+    } catch (error) {
+      console.error(
+        `[UserService] deleteFromTenantPosDb failed for user '${username}' (tenantId=${tenantId}):`,
+        error,
+      );
+      return { synced: false, reason: 'query_error' };
+    } finally {
+      await client.end().catch(() => undefined);
+    }
   }
 
   private static async upsertPosUser(
