@@ -15,7 +15,6 @@ declare global {
         email?: string;
         tenantId: string;
         role?: string;
-        dbUrl?: string;
       };
     }
   }
@@ -47,7 +46,6 @@ export const verifyToken = (req: Request, _res: Response, next: NextFunction) =>
     req.user = {
       userId: decoded.userId,
       tenantId: decoded.tenantId,
-      dbUrl: decoded.dbUrl,
     };
 
     next();
@@ -102,7 +100,6 @@ export const authMiddleware = async (
           req.user = {
             userId: decoded.userId,
             tenantId: decoded.tenantId,
-            dbUrl: decoded.dbUrl,
             role: decoded.role,
           };
 
@@ -218,4 +215,41 @@ export const tenantMiddleware = (
   }
 
   next();
+};
+
+/**
+ * Middleware untuk memeriksa subscription tier tenant.
+ * SUPER_ADMIN selalu lolos. Tenant lain harus memiliki AppInstance aktif
+ * dengan tier yang termasuk dalam allowedTiers.
+ * Contoh: tierMiddleware('Professional', 'Enterprise')
+ */
+export const tierMiddleware = (...allowedTiers: string[]) => {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user?.tenantId) {
+      return next(new AppError('User not authenticated', 401));
+    }
+
+    // SUPER_ADMIN bypass tier check
+    if (req.user.role === 'SUPER_ADMIN') return next();
+
+    const appInstance = await prisma.appInstance.findFirst({
+      where: { tenantId: req.user.tenantId, status: 'ACTIVE' },
+      select: { tier: true },
+    });
+
+    if (!appInstance) {
+      return next(new AppError('No active subscription found for this tenant', 403));
+    }
+
+    if (!allowedTiers.includes(appInstance.tier as string)) {
+      return next(
+        new AppError(
+          `Fitur ini memerlukan paket ${allowedTiers.join(' atau ')}. Upgrade untuk mengakses.`,
+          403,
+        ),
+      );
+    }
+
+    next();
+  };
 };

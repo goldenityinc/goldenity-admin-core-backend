@@ -12,6 +12,7 @@ import userRoutes from './routes/userRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import integrationRoutes from './routes/integrationRoutes';
 import publicRoutes from './routes/publicRoutes';
+import roleDefinitionRoutes from './routes/roleDefinitionRoutes';
 import { initializeSocketServer } from './services/socketServer';
 
 // Load environment variables
@@ -63,6 +64,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/integrations', integrationRoutes);
+app.use('/api/roles', roleDefinitionRoutes);
 
 
 // 404 Handler - Route not found

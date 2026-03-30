@@ -19,11 +19,6 @@ export const createAppInstance = asyncHandler(async (req: Request, res: Response
 
   try {
     const appInstance = await AppInstanceService.create(bodyParsed.data);
-    const provisioningWarning = (
-      appInstance as typeof appInstance & {
-        provisioningWarning?: { warning?: string; errorDetail?: string };
-      }
-    ).provisioningWarning;
 
     // If ERP subscription changes, sync endDate to ERP so tenant login can be blocked when expired.
     if (appInstance?.solution?.code === 'ERP') {
@@ -42,13 +37,8 @@ export const createAppInstance = asyncHandler(async (req: Request, res: Response
 
     return res.status(201).json({
       success: true,
-      message:
-        provisioningWarning?.warning ||
-        'App instance created successfully',
+      message: 'App instance created successfully',
       data: appInstance,
-      ...(provisioningWarning?.errorDetail
-        ? { errorDetail: provisioningWarning.errorDetail }
-        : {}),
     });
   } catch (error: unknown) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
@@ -99,11 +89,6 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
   }
 
   const updated = await AppInstanceService.update(paramParsed.data.id, bodyParsed.data);
-  const provisioningWarning = (
-    updated as typeof updated & {
-      provisioningWarning?: { warning?: string; errorDetail?: string };
-    }
-  ).provisioningWarning;
 
   if (updated?.solution?.code === 'ERP') {
     const authHeader = req.headers.authorization;
@@ -121,13 +106,8 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
 
   return res.status(200).json({
     success: true,
-    message:
-      provisioningWarning?.warning ||
-      'App instance updated successfully',
+    message: 'App instance updated successfully',
     data: updated,
-    ...(provisioningWarning?.errorDetail
-      ? { errorDetail: provisioningWarning.errorDetail }
-      : {}),
   });
 });
 

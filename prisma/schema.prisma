@@ -26,6 +26,7 @@ model Tenant {
 
   users          User[]
   appInstances   AppInstance[]
+  customRoles    CustomRole[]
 
   @@index([slug])
   @@map("tenants")
@@ -39,8 +40,10 @@ model User {
   email          String?         @unique
   name           String
   role           UserRole        @default(CRM_STAFF)
+  customRoleId   String?         @map("custom_role_id")
   tenantId       String
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customRole     CustomRole?     @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
   isActive       Boolean         @default(true)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -61,6 +64,26 @@ enum UserRole {
   CRM_MANAGER
   CRM_STAFF
   READ_ONLY
+}
+
+/// Custom role definition per-tenant untuk Dynamic RBAC.
+/// permissions berformat JSON: { "penjualan": {"c":true,"r":true,"u":false,"d":false}, ... }
+model CustomRole {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  name         String
+  description  String?
+  isDefault    Boolean  @default(false) @map("is_default")
+  permissions  Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users        User[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("custom_roles")
 }
 
 model Solution {
