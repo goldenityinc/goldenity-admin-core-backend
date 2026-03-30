@@ -1,4 +1,7 @@
 import prisma from '../config/database';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
 
 function generateRandomPassword(length = 12): string {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -21,6 +24,74 @@ function sanitizeIdentifier(value: string): string {
 }
 
 export class AppInstanceService {
+  private static resolveTenantPrismaWorkingDirectory(): string {
+    const configuredDir = process.env.TENANT_PRISMA_PROJECT_DIR?.trim();
+    const candidates = [
+      configuredDir,
+      path.resolve(process.cwd(), '..', 'goldenity-pos-api-bridge'),
+      process.cwd(),
+    ].filter((value): value is string => Boolean(value));
+
+    for (const candidate of candidates) {
+      const schemaPath = path.resolve(candidate, 'prisma', 'schema.prisma');
+      if (!fs.existsSync(schemaPath)) {
+        continue;
+      }
+      return candidate;
+    }
+
+    throw new Error(
+      'Provisioning DB tenant gagal: prisma/schema.prisma tidak ditemukan. Set TENANT_PRISMA_PROJECT_DIR ke path project yang berisi Prisma schema.',
+    );
+  }
+
+  private static async runTenantBootstrapScript(tenantDbUrl: string): Promise<void> {
+    const bootstrapScriptPath = path.resolve(process.cwd(), 'setup_tenant_db.js');
+    if (!fs.existsSync(bootstrapScriptPath)) {
+      return;
+    }
+
+    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [bootstrapScriptPath, tenantDbUrl],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        },
+      );
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', (error) => {
+        reject(error);
+      });
+
+      child.on('close', (code) => {
+        resolve({ code: code ?? 1, stdout, stderr });
+      });
+    });
+
+    if (result.code !== 0) {
+      throw new Error(
+        `Bootstrap schema tenant gagal (exitCode=${result.code}). stderr=${result.stderr.trim()} stdout=${result.stdout.trim()}`,
+      );
+    }
+  }
+
 
   static readonly SyncModeValues = ['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER'] as const;
 
@@ -84,7 +155,7 @@ export class AppInstanceService {
       resolvedDbConnectionString = `postgresql://admin:${randomPassword}@${host}/${databaseName}`;
     }
 
-    return prisma.appInstance.create({
+    const appInstance = await prisma.appInstance.create({
       data: {
         tenantId: data.tenantId,
         solutionId: data.solutionId,
@@ -100,6 +171,19 @@ export class AppInstanceService {
         solution: { select: { id: true, name: true, code: true } },
       },
     });
+
+    try {
+      await AppInstanceService.provisionTenantDatabase({
+        tenantId: data.tenantId,
+        appInstanceId: appInstance.id,
+        dbConnectionString: resolvedDbConnectionString ?? null,
+      });
+    } catch (error) {
+      await prisma.appInstance.delete({ where: { id: appInstance.id } }).catch(() => null);
+      throw error;
+    }
+
+    return appInstance;
   }
 
   static async list(options: {
@@ -165,9 +249,14 @@ export class AppInstanceService {
       endDate?: string | null;
     }
   ) {
+    const current = await prisma.appInstance.findUnique({
+      where: { id },
+      select: { id: true, tenantId: true, dbConnectionString: true },
+    });
+
     const { endDate, syncMode, ...restData } = data;
 
-    return prisma.appInstance.update({
+    const updated = await prisma.appInstance.update({
       where: { id },
       data: {
         ...restData,
@@ -179,11 +268,87 @@ export class AppInstanceService {
         solution: { select: { id: true, name: true, code: true } },
       },
     });
+
+    const nextDbUrl = (updated.dbConnectionString ?? '').trim();
+    const previousDbUrl = (current?.dbConnectionString ?? '').trim();
+    const shouldProvision =
+      nextDbUrl.length > 0 &&
+      data.dbConnectionString !== undefined &&
+      (nextDbUrl !== previousDbUrl || previousDbUrl.length > 0);
+
+    if (shouldProvision) {
+      await AppInstanceService.provisionTenantDatabase({
+        tenantId: updated.tenantId,
+        appInstanceId: updated.id,
+        dbConnectionString: updated.dbConnectionString,
+      });
+    }
+
+    return updated;
   }
 
   static async remove(id: string) {
     return prisma.appInstance.delete({
       where: { id },
     });
+  }
+
+  private static async provisionTenantDatabase(params: {
+    tenantId: string;
+    appInstanceId: string;
+    dbConnectionString: string | null;
+  }): Promise<void> {
+    const tenantDbUrl = (params.dbConnectionString ?? '').trim();
+    if (!tenantDbUrl) {
+      throw new Error(
+        `Provisioning DB tenant gagal: dbConnectionString kosong (tenantId=${params.tenantId}, appInstanceId=${params.appInstanceId}).`,
+      );
+    }
+
+    const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    const prismaProjectDir = AppInstanceService.resolveTenantPrismaWorkingDirectory();
+
+    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(
+        npxCommand,
+        ['prisma', 'db', 'push', '--skip-generate'],
+        {
+          cwd: prismaProjectDir,
+          env: {
+            ...process.env,
+            DATABASE_URL: tenantDbUrl,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        },
+      );
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', (error) => {
+        reject(error);
+      });
+
+      child.on('close', (code) => {
+        resolve({ code: code ?? 1, stdout, stderr });
+      });
+    });
+
+    if (result.code !== 0) {
+      throw new Error(
+        `Provisioning DB tenant gagal (tenantId=${params.tenantId}, appInstanceId=${params.appInstanceId}, cwd=${prismaProjectDir}, exitCode=${result.code}). stderr=${result.stderr.trim()} stdout=${result.stdout.trim()}`,
+      );
+    }
+
+    await AppInstanceService.runTenantBootstrapScript(tenantDbUrl);
   }
 }
