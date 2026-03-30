@@ -3,6 +3,17 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 
+type ProvisioningWarning = {
+  warning: string;
+  errorDetail: string;
+};
+
+type ProvisioningCommandResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+};
+
 function generateRandomPassword(length = 12): string {
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -51,7 +62,7 @@ export class AppInstanceService {
       return;
     }
 
-    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const result = await new Promise<ProvisioningCommandResult>((resolve, reject) => {
       const child = spawn(
         process.execPath,
         [bootstrapScriptPath, tenantDbUrl],
@@ -172,6 +183,8 @@ export class AppInstanceService {
       },
     });
 
+    let provisioningWarning: ProvisioningWarning | null = null;
+
     try {
       await AppInstanceService.provisionTenantDatabase({
         tenantId: data.tenantId,
@@ -179,11 +192,24 @@ export class AppInstanceService {
         dbConnectionString: resolvedDbConnectionString ?? null,
       });
     } catch (error) {
-      await prisma.appInstance.delete({ where: { id: appInstance.id } }).catch(() => null);
-      throw error;
+      const detail = AppInstanceService.extractProvisioningErrorDetail(error);
+      console.error(
+        `[AppInstanceService] Auto-provisioning gagal saat create app instance (tenantId=${data.tenantId}, appInstanceId=${appInstance.id}). message=${detail.message}`,
+      );
+      if (detail.stderr) {
+        console.error(`[AppInstanceService] Auto-provisioning stderr: ${detail.stderr}`);
+      }
+      provisioningWarning = {
+        warning:
+          'App instance created, but auto-provisioning failed. Please trigger sync manually.',
+        errorDetail: detail.stderr || detail.message,
+      };
     }
 
-    return appInstance;
+    return {
+      ...appInstance,
+      ...(provisioningWarning ? { provisioningWarning } : {}),
+    };
   }
 
   static async list(options: {
@@ -269,6 +295,8 @@ export class AppInstanceService {
       },
     });
 
+    let provisioningWarning: ProvisioningWarning | null = null;
+
     const nextDbUrl = (updated.dbConnectionString ?? '').trim();
     const previousDbUrl = (current?.dbConnectionString ?? '').trim();
     const shouldProvision =
@@ -277,14 +305,32 @@ export class AppInstanceService {
       (nextDbUrl !== previousDbUrl || previousDbUrl.length > 0);
 
     if (shouldProvision) {
-      await AppInstanceService.provisionTenantDatabase({
-        tenantId: updated.tenantId,
-        appInstanceId: updated.id,
-        dbConnectionString: updated.dbConnectionString,
-      });
+      try {
+        await AppInstanceService.provisionTenantDatabase({
+          tenantId: updated.tenantId,
+          appInstanceId: updated.id,
+          dbConnectionString: updated.dbConnectionString,
+        });
+      } catch (error) {
+        const detail = AppInstanceService.extractProvisioningErrorDetail(error);
+        console.error(
+          `[AppInstanceService] Auto-provisioning gagal saat update app instance (tenantId=${updated.tenantId}, appInstanceId=${updated.id}). message=${detail.message}`,
+        );
+        if (detail.stderr) {
+          console.error(`[AppInstanceService] Auto-provisioning stderr: ${detail.stderr}`);
+        }
+        provisioningWarning = {
+          warning:
+            'App instance updated, but auto-provisioning failed. Please trigger sync manually.',
+          errorDetail: detail.stderr || detail.message,
+        };
+      }
     }
 
-    return updated;
+    return {
+      ...updated,
+      ...(provisioningWarning ? { provisioningWarning } : {}),
+    };
   }
 
   static async remove(id: string) {
@@ -308,47 +354,71 @@ export class AppInstanceService {
     const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
     const prismaProjectDir = AppInstanceService.resolveTenantPrismaWorkingDirectory();
 
-    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(
-        npxCommand,
-        ['prisma', 'db', 'push', '--skip-generate'],
-        {
-          cwd: prismaProjectDir,
-          env: {
-            ...process.env,
-            DATABASE_URL: tenantDbUrl,
+    try {
+      const result = await new Promise<ProvisioningCommandResult>((resolve, reject) => {
+        const child = spawn(
+          npxCommand,
+          ['prisma', 'db', 'push', '--skip-generate'],
+          {
+            cwd: prismaProjectDir,
+            env: {
+              ...process.env,
+              DATABASE_URL: tenantDbUrl,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+            shell: false,
           },
-          stdio: ['ignore', 'pipe', 'pipe'],
-          shell: false,
-        },
+        );
+
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk.toString();
+        });
+
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk.toString();
+        });
+
+        child.on('error', (error) => {
+          reject(error);
+        });
+
+        child.on('close', (code) => {
+          resolve({ code: code ?? 1, stdout, stderr });
+        });
+      });
+
+      if (result.code !== 0) {
+        const commandError = new Error(
+          `Provisioning DB tenant gagal (tenantId=${params.tenantId}, appInstanceId=${params.appInstanceId}, cwd=${prismaProjectDir}, exitCode=${result.code}).`,
+        ) as Error & { stderr?: string; stdout?: string };
+        commandError.stderr = result.stderr.trim();
+        commandError.stdout = result.stdout.trim();
+        throw commandError;
+      }
+
+      await AppInstanceService.runTenantBootstrapScript(tenantDbUrl);
+    } catch (error) {
+      const detail = AppInstanceService.extractProvisioningErrorDetail(error);
+      console.error(
+        `[AppInstanceService] Gagal menjalankan child_process provisioning tenant (tenantId=${params.tenantId}, appInstanceId=${params.appInstanceId}). message=${detail.message}`,
       );
-
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout.on('data', (chunk) => {
-        stdout += chunk.toString();
-      });
-
-      child.stderr.on('data', (chunk) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('error', (error) => {
-        reject(error);
-      });
-
-      child.on('close', (code) => {
-        resolve({ code: code ?? 1, stdout, stderr });
-      });
-    });
-
-    if (result.code !== 0) {
-      throw new Error(
-        `Provisioning DB tenant gagal (tenantId=${params.tenantId}, appInstanceId=${params.appInstanceId}, cwd=${prismaProjectDir}, exitCode=${result.code}). stderr=${result.stderr.trim()} stdout=${result.stdout.trim()}`,
-      );
+      if (detail.stderr) {
+        console.error(`[AppInstanceService] Child process stderr: ${detail.stderr}`);
+      }
+      throw error;
     }
+  }
 
-    await AppInstanceService.runTenantBootstrapScript(tenantDbUrl);
+  private static extractProvisioningErrorDetail(error: unknown): {
+    message: string;
+    stderr: string;
+  } {
+    const message = error instanceof Error ? error.message : String(error);
+    const candidate = error as { stderr?: unknown } | undefined;
+    const stderr = (candidate?.stderr ?? '').toString().trim();
+    return { message, stderr };
   }
 }
