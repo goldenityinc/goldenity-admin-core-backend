@@ -45,12 +45,19 @@ export const getSubscription = asyncHandler(async (req: Request, res: Response) 
     throw new AppError('Tenant ID tidak ditemukan di token', 400);
   }
 
-  const tier = await AuthService.resolveTierForTenant(tenantId);
+  const subscription = await AuthService.resolveSubscriptionForTenant(tenantId);
+  const tier = subscription?.tier ?? null;
+  const addons = subscription?.addons ?? [];
 
   return res.status(200).json({
     success: true,
+    user: {
+      tier,
+      addons,
+    },
     subscription: {
-      tier: tier ?? null,
+      tier,
+      addons,
     },
   });
 });

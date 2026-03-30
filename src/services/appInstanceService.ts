@@ -28,6 +28,7 @@ export class AppInstanceService {
     tenantId: string;
     solutionId: string;
     tier: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
+    addons?: string[];
     syncMode?: (typeof AppInstanceService.SyncModeValues)[number];
     status?: 'ACTIVE' | 'SUSPENDED';
     dbConnectionString?: string | null;
@@ -39,6 +40,7 @@ export class AppInstanceService {
         tenantId: data.tenantId,
         solutionId: data.solutionId,
         tier: data.tier,
+        addons: data.addons ?? [],
         ...(data.syncMode !== undefined ? { syncMode: data.syncMode } : {}),
         status: data.status ?? 'ACTIVE',
         dbConnectionString: null,
@@ -108,6 +110,7 @@ export class AppInstanceService {
     id: string,
     data: {
       tier?: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
+      addons?: string[];
       syncMode?: (typeof AppInstanceService.SyncModeValues)[number];
       status?: 'ACTIVE' | 'SUSPENDED';
       dbConnectionString?: string | null;

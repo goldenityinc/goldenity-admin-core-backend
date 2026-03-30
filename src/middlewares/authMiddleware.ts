@@ -15,6 +15,8 @@ declare global {
         email?: string;
         tenantId: string;
         role?: string;
+        tier?: string | null;
+        addons?: string[];
       };
     }
   }
@@ -46,6 +48,8 @@ export const verifyToken = (req: Request, _res: Response, next: NextFunction) =>
     req.user = {
       userId: decoded.userId,
       tenantId: decoded.tenantId,
+      tier: decoded.tier,
+      addons: decoded.addons,
     };
 
     next();
@@ -101,6 +105,8 @@ export const authMiddleware = async (
             userId: decoded.userId,
             tenantId: decoded.tenantId,
             role: decoded.role,
+            tier: decoded.tier,
+            addons: decoded.addons,
           };
 
           return next();

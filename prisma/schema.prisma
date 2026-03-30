@@ -106,6 +106,7 @@ model AppInstance {
   tenantId             String
   solutionId           String
   tier                 SubscriptionTier
+  addons               String[]           @default([])
   syncMode             SyncMode           @default(CLOUD_FIRST) @map("sync_mode")
   status               AppInstanceStatus  @default(ACTIVE)
   dbConnectionString   String?

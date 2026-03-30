@@ -5,6 +5,7 @@ import { AppError } from '../utils/AppError';
 import { verifyPassword } from '../utils/password';
 import type { LoginInput } from '../validations/authValidation';
 import type { JwtAuthPayload } from '../types/auth';
+import { normalizeSubscriptionAddons } from '../constants/subscriptionAddons';
 
 type ColumnRow = {
   table_name: string;
@@ -18,6 +19,7 @@ type LoginTenantRecord = {
   tenantBridgeApiUrl: string | null;
   tenantShowInventoryImages: boolean | null;
   subscriptionTier: string | null;
+  subscriptionAddons: string[] | null;
   syncMode: string | null;
   storedPassword: string;
   role: string | null;
@@ -85,10 +87,17 @@ export class AuthService {
     }
 
     const expiresIn = (process.env.JWT_EXPIRES_IN ?? '1d') as SignOptions['expiresIn'];
+    const resolvedSubscription = await this.resolveSubscriptionForTenant(resolvedLoginRecord.tenantId);
+    const tier = resolvedSubscription?.tier ?? resolvedLoginRecord.subscriptionTier ?? null;
+    const addons = normalizeSubscriptionAddons(
+      resolvedSubscription?.addons ?? resolvedLoginRecord.subscriptionAddons ?? [],
+    );
     const payload: JwtAuthPayload = {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role ?? undefined,
+      tier,
+      addons,
     };
 
     const token = jwt.sign(
@@ -99,10 +108,6 @@ export class AuthService {
       }
     );
 
-    const resolvedTier =
-      (await this.resolveTierForTenant(resolvedLoginRecord.tenantId)) ??
-      resolvedLoginRecord.subscriptionTier;
-
     return {
       token,
       tokenType: 'Bearer',
@@ -111,6 +116,8 @@ export class AuthService {
         id: resolvedLoginRecord.userId,
         role: resolvedLoginRecord.role,
         tenantId: resolvedLoginRecord.tenantId,
+        tier,
+        addons,
       },
       tenant: {
         slug: resolvedLoginRecord.tenantSlug,
@@ -120,16 +127,24 @@ export class AuthService {
         syncMode: resolvedLoginRecord.syncMode ?? 'CLOUD_FIRST',
       },
       subscription: {
-        tier: resolvedTier,
+        tier,
+        addons,
       },
     };
   }
 
   static async resolveTierForTenant(tenantId: string): Promise<string | null> {
+    const subscription = await this.resolveSubscriptionForTenant(tenantId);
+    return subscription?.tier ?? null;
+  }
+
+  static async resolveSubscriptionForTenant(tenantId: string): Promise<{ tier: string | null; addons: string[] } | null> {
     try {
-      const rows = await prisma.$queryRawUnsafe<Array<{ tier: string }>>(
+      const rows = await prisma.$queryRawUnsafe<Array<{ tier: string | null; addons: string[] | null }>>(
         `
-        SELECT ai."tier"::text AS tier
+        SELECT
+          ai."tier"::text AS tier,
+          COALESCE(ai."addons", ARRAY[]::text[]) AS addons
         FROM app_instances ai
         LEFT JOIN solutions s ON s.id = ai."solutionId"
         WHERE ai."tenantId" = $1
@@ -145,7 +160,15 @@ export class AuthService {
         `,
         tenantId,
       );
-      return rows[0]?.tier ?? null;
+      const row = rows[0];
+      if (!row) {
+        return null;
+      }
+
+      return {
+        tier: row.tier ?? null,
+        addons: normalizeSubscriptionAddons(row.addons),
+      };
     } catch {
       return null;
     }
@@ -213,6 +236,7 @@ export class AuthService {
     const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
     const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
     const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+    const appInstanceAddonsColumn = pickColumn(metadata.appInstances, ['addons']);
     const appInstanceSyncModeColumn = pickColumn(metadata.appInstances, ['syncMode', 'sync_mode']);
     const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']); // <--- MENARIK KOLOM END DATE
 
@@ -256,6 +280,9 @@ export class AuthService {
     const subscriptionTierSelect = appInstanceTierColumn
       ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS "subscriptionTier"`
       : 'NULL::text AS "subscriptionTier"';
+    const subscriptionAddonsSelect = appInstanceAddonsColumn
+      ? `COALESCE(ai.${quoteIdentifier(appInstanceAddonsColumn)}, ARRAY[]::text[]) AS "subscriptionAddons"`
+      : 'NULL::text[] AS "subscriptionAddons"';
     const syncModeSelect = appInstanceSyncModeColumn
       ? `ai.${quoteIdentifier(appInstanceSyncModeColumn)}::text AS "syncMode"`
       : 'NULL::text AS "syncMode"';
@@ -274,6 +301,7 @@ export class AuthService {
         ${tenantBridgeApiUrlSelect},
         ${tenantShowInventoryImagesSelect},
         ${subscriptionTierSelect},
+        ${subscriptionAddonsSelect},
         ${syncModeSelect},
         ${endDateSelect},
         u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
