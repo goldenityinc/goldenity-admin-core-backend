@@ -75,7 +75,14 @@ export class AuthService {
       throw new AppError('Username tidak terdaftar di perusahaan ini', 401);
     }
 
-    if (!(await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword))) {
+    // Primary check: bcrypt hash compare (current standard).
+    // Fallback: strict plain-text compare for legacy rows that may still store
+    // non-hashed passwords in old schemas.
+    const passwordMatches =
+      (await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword)) ||
+      credentials.password === resolvedLoginRecord.storedPassword;
+
+    if (!passwordMatches) {
       throw new AppError('Username atau password tidak valid', 401);
     }
 
@@ -257,7 +264,10 @@ export class AuthService {
     metadata: ColumnMetadata,
   ): Promise<LoginTenantRecord | null> {
     const usernameColumn = pickColumn(metadata.users, ['username', 'email']);
-    const passwordColumn = pickColumn(metadata.users, ['password', 'password_hash', 'passwordHash']);
+    // Prefer hashed password columns first. Some shared DBs still keep a legacy
+    // `password` column (nullable/plain), and selecting it first can cause
+    // false 401 for newly-created users saved in `password_hash`/`passwordHash`.
+    const passwordColumn = pickColumn(metadata.users, ['password_hash', 'passwordHash', 'password']);
     const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
     const userRoleColumn = pickColumn(metadata.users, ['role']);
     const userIdColumn = pickColumn(metadata.users, ['id']);
