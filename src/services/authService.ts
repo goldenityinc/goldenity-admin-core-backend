@@ -55,12 +55,27 @@ export class AuthService {
     }
 
     const metadata = await this.getColumnMetadata();
+
+    // Step 1: Validasi Kode Perusahaan — pastikan slug tenant benar-benar ada di database.
+    // Ini adalah kunci keamanan multi-tenant: login HARUS gagal jika company code salah.
+    const resolvedTenantId = await this.resolveTenantIdBySlug(credentials.tenantSlug, metadata);
+    if (!resolvedTenantId) {
+      throw new AppError('Kode Perusahaan tidak ditemukan', 401);
+    }
+
+    // Step 2: Cari user yang terdaftar di tenant tersebut (chain query — tenant-scoped lookup).
+    // tenantId di-pass eksplisit sehingga user dari tenant lain tidak bisa ikut ditemukan.
     const resolvedLoginRecord = await this.findLoginRecord(
       credentials.username,
+      resolvedTenantId,
       metadata,
     );
 
-    if (!resolvedLoginRecord || !(await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword))) {
+    if (!resolvedLoginRecord) {
+      throw new AppError('Username tidak terdaftar di perusahaan ini', 401);
+    }
+
+    if (!(await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword))) {
       throw new AppError('Username atau password tidak valid', 401);
     }
 
@@ -211,9 +226,32 @@ export class AuthService {
     );
   }
 
+  // Resolves a tenant's primary key from its slug.
+  // Returns null (not throws) when the slug simply doesn't match any row,
+  // so the caller can return a clean 401 instead of a 500.
+  private static async resolveTenantIdBySlug(
+    slug: string,
+    metadata: ColumnMetadata,
+  ): Promise<string | null> {
+    const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
+    const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
+    if (!tenantIdColumn || !tenantSlugColumn) {
+      throw new AppError(
+        'Konfigurasi kolom tenant (id/slug) tidak ditemukan di database',
+        500,
+      );
+    }
+    const rows = await prisma.$queryRawUnsafe<Array<{ tenantId: string }>>(
+      `SELECT ${quoteIdentifier(tenantIdColumn)} AS "tenantId" FROM tenants WHERE ${quoteIdentifier(tenantSlugColumn)} = $1 LIMIT 1`,
+      slug,
+    );
+    return rows[0]?.tenantId ?? null;
+  }
+
   private static async findLoginRecord(
     username: string,
-    metadata: ColumnMetadata
+    tenantId: string,
+    metadata: ColumnMetadata,
   ): Promise<LoginTenantRecord | null> {
     const usernameColumn = pickColumn(metadata.users, ['username', 'email']);
     const passwordColumn = pickColumn(metadata.users, ['password', 'password_hash', 'passwordHash']);
@@ -316,13 +354,14 @@ export class AuthService {
       JOIN tenants t
         ON t.${quoteIdentifier(tenantIdColumn)} = ai.${quoteIdentifier(appInstanceTenantIdColumn)}
       WHERE u.${quoteIdentifier(usernameColumn)} = $1
+        AND ai.${quoteIdentifier(appInstanceTenantIdColumn)} = $2
         ${userAppAccessIsActiveFilter}
         ${appInstanceIsActiveFilter}
       ${orderBy}
       LIMIT 1
     `;
 
-    const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username);
+    const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username, tenantId);
     return rows[0] ?? null;
   }
 }
