@@ -46,45 +46,122 @@ function pickColumn(columns: Set<string>, candidates: string[]): string | null {
   return candidates.find((candidate) => columns.has(candidate)) ?? null;
 }
 
+function isLoginTraceEnabled(): boolean {
+  const raw = (process.env.LOGIN_TRACE ?? process.env.LOGIN_DIAGNOSTIC_MODE ?? 'true')
+    .toString()
+    .trim()
+    .toLowerCase();
+  return raw !== '0' && raw !== 'false' && raw !== 'off';
+}
+
+function logLoginTrace(stage: string, payload?: Record<string, unknown>): void {
+  if (!isLoginTraceEnabled()) {
+    return;
+  }
+  if (payload) {
+    console.log(`[AuthService.login] ${stage}`, payload);
+    return;
+  }
+  console.log(`[AuthService.login] ${stage}`);
+}
+
 export class AuthService {
   static async login(credentials: LoginInput) {
     const jwtSecret = process.env.JWT_SECRET;
+
+    logLoginTrace('start', {
+      username: credentials.username,
+      tenantSlug: credentials.tenantSlug,
+    });
 
     if (!jwtSecret) {
       throw new AppError('JWT_SECRET is not configured', 500);
     }
 
     const metadata = await this.getColumnMetadata();
+    logLoginTrace('metadata-loaded', {
+      usersColumns: metadata.users.size,
+      tenantsColumns: metadata.tenants.size,
+      userAppAccessesColumns: metadata.userAppAccesses.size,
+      appInstancesColumns: metadata.appInstances.size,
+    });
 
     // Step 1: Validasi Kode Perusahaan — pastikan slug tenant benar-benar ada di database.
     // Ini adalah kunci keamanan multi-tenant: login HARUS gagal jika company code salah.
     const resolvedTenantId = await this.resolveTenantIdBySlug(credentials.tenantSlug, metadata);
     if (!resolvedTenantId) {
+      logLoginTrace('tenant-not-found', {
+        tenantSlug: credentials.tenantSlug,
+      });
       throw new AppError('Kode Perusahaan tidak ditemukan', 401);
     }
+    logLoginTrace('tenant-found', {
+      tenantSlug: credentials.tenantSlug,
+      tenantId: resolvedTenantId,
+    });
 
     // Step 2: Cari user yang terdaftar di tenant tersebut (chain query — tenant-scoped lookup).
     // tenantId di-pass eksplisit sehingga user dari tenant lain tidak bisa ikut ditemukan.
-    const resolvedLoginRecord = await this.findLoginRecord(
+    let resolvedLoginRecord = await this.findLoginRecord(
       credentials.username,
       resolvedTenantId,
       metadata,
     );
 
     if (!resolvedLoginRecord) {
+      logLoginTrace('join-lookup-miss-fallback-to-user-tenant-lookup', {
+        username: credentials.username,
+        tenantId: resolvedTenantId,
+      });
+      // Fallback for newly-provisioned users that may not yet have
+      // user_app_accesses/app_instances linkage rows.
+      resolvedLoginRecord = await this.findTenantUserRecordWithoutAccessJoin(
+        credentials.username,
+        resolvedTenantId,
+        metadata,
+      );
+    }
+
+    if (!resolvedLoginRecord) {
+      logLoginTrace('user-not-found-in-tenant', {
+        username: credentials.username,
+        tenantId: resolvedTenantId,
+      });
       throw new AppError('Username tidak terdaftar di perusahaan ini', 401);
     }
+    logLoginTrace('user-found', {
+      userId: resolvedLoginRecord.userId,
+      tenantId: resolvedLoginRecord.tenantId,
+      role: resolvedLoginRecord.role,
+    });
 
     // Primary check: bcrypt hash compare (current standard).
     // Fallback: strict plain-text compare for legacy rows that may still store
     // non-hashed passwords in old schemas.
-    const passwordMatches =
-      (await verifyPassword(credentials.password, resolvedLoginRecord.storedPassword)) ||
-      credentials.password === resolvedLoginRecord.storedPassword;
+    const bcryptMatch = await verifyPassword(
+      credentials.password,
+      resolvedLoginRecord.storedPassword,
+    );
+    const plainTextMatch = credentials.password === resolvedLoginRecord.storedPassword;
+    const passwordMatches = bcryptMatch || plainTextMatch;
+    logLoginTrace('password-verified', {
+      storedPasswordFormat: resolvedLoginRecord.storedPassword?.startsWith('$2')
+        ? 'bcrypt'
+        : 'legacy-or-plain',
+      bcryptMatch,
+      plainTextMatch,
+      passwordMatches,
+    });
 
     if (!passwordMatches) {
       throw new AppError('Username atau password tidak valid', 401);
     }
+
+    logLoginTrace('active-status', {
+      userIsActive: resolvedLoginRecord.userIsActive,
+      tenantIsActive: resolvedLoginRecord.tenantIsActive,
+      role: resolvedLoginRecord.role,
+    });
 
     if (resolvedLoginRecord.userIsActive === false) {
       throw new AppError(INACTIVE_ACCOUNT_ERROR_MESSAGE, 403);
@@ -129,6 +206,13 @@ export class AuthService {
         expiresIn,
       }
     );
+
+    logLoginTrace('success', {
+      userId: resolvedLoginRecord.userId,
+      tenantId: resolvedLoginRecord.tenantId,
+      role: resolvedLoginRecord.role,
+      tier,
+    });
 
     return {
       token,
@@ -371,6 +455,84 @@ export class AuthService {
         ${userAppAccessIsActiveFilter}
         ${appInstanceIsActiveFilter}
       ${orderBy}
+      LIMIT 1
+    `;
+
+    const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username, tenantId);
+    return rows[0] ?? null;
+  }
+
+  // Fallback lookup that enforces username + tenant ownership directly on `users`
+  // and does not require user_app_accesses/app_instances links to exist yet.
+  private static async findTenantUserRecordWithoutAccessJoin(
+    username: string,
+    tenantId: string,
+    metadata: ColumnMetadata,
+  ): Promise<LoginTenantRecord | null> {
+    const usernameColumn = pickColumn(metadata.users, ['username', 'email']);
+    const passwordColumn = pickColumn(metadata.users, ['password_hash', 'passwordHash', 'password']);
+    const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
+    const userRoleColumn = pickColumn(metadata.users, ['role']);
+    const userIdColumn = pickColumn(metadata.users, ['id']);
+    const userTenantIdColumn = pickColumn(metadata.users, ['tenantId', 'tenant_id']);
+    const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
+    const tenantSlugColumn = pickColumn(metadata.tenants, ['slug']);
+    const tenantBridgeApiUrlColumn = pickColumn(metadata.tenants, ['bridge_api_url', 'bridgeApiUrl']);
+    const tenantShowInventoryImagesColumn = pickColumn(metadata.tenants, [
+      'show_inventory_images',
+      'showInventoryImages',
+    ]);
+    const tenantIsActiveColumn = pickColumn(metadata.tenants, ['isActive', 'is_active']);
+
+    if (
+      !usernameColumn ||
+      !passwordColumn ||
+      !userIdColumn ||
+      !userTenantIdColumn ||
+      !tenantIdColumn
+    ) {
+      return null;
+    }
+
+    const userIsActiveSelect = userIsActiveColumn
+      ? `u.${quoteIdentifier(userIsActiveColumn)} AS "userIsActive"`
+      : 'NULL::boolean AS "userIsActive"';
+    const userRoleSelect = userRoleColumn
+      ? `u.${quoteIdentifier(userRoleColumn)} AS "role"`
+      : 'NULL::text AS "role"';
+    const tenantIsActiveSelect = tenantIsActiveColumn
+      ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
+      : 'NULL::boolean AS "tenantIsActive"';
+    const tenantSlugSelect = tenantSlugColumn
+      ? `t.${quoteIdentifier(tenantSlugColumn)} AS "tenantSlug"`
+      : 'NULL::text AS "tenantSlug"';
+    const tenantBridgeApiUrlSelect = tenantBridgeApiUrlColumn
+      ? `t.${quoteIdentifier(tenantBridgeApiUrlColumn)} AS "tenantBridgeApiUrl"`
+      : 'NULL::text AS "tenantBridgeApiUrl"';
+    const tenantShowInventoryImagesSelect = tenantShowInventoryImagesColumn
+      ? `t.${quoteIdentifier(tenantShowInventoryImagesColumn)} AS "tenantShowInventoryImages"`
+      : 'NULL::boolean AS "tenantShowInventoryImages"';
+
+    const query = `
+      SELECT
+        u.${quoteIdentifier(userIdColumn)} AS "userId",
+        u.${quoteIdentifier(userTenantIdColumn)} AS "tenantId",
+        ${tenantSlugSelect},
+        ${tenantBridgeApiUrlSelect},
+        ${tenantShowInventoryImagesSelect},
+        NULL::text AS "subscriptionTier",
+        NULL::text[] AS "subscriptionAddons",
+        NULL::text AS "syncMode",
+        NULL::timestamp AS "endDate",
+        u.${quoteIdentifier(passwordColumn)} AS "storedPassword",
+        ${userRoleSelect},
+        ${userIsActiveSelect},
+        ${tenantIsActiveSelect}
+      FROM users u
+      JOIN tenants t
+        ON t.${quoteIdentifier(tenantIdColumn)} = u.${quoteIdentifier(userTenantIdColumn)}
+      WHERE u.${quoteIdentifier(usernameColumn)} = $1
+        AND u.${quoteIdentifier(userTenantIdColumn)} = $2
       LIMIT 1
     `;
 
