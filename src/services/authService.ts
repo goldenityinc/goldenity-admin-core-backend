@@ -241,8 +241,11 @@ export class AuthService {
         500,
       );
     }
+    // Use LOWER() on both sides so a user typing "TTP" still matches slug "ttp".
+    // The Zod transform already lowercases the input, but this protects against
+    // any future callers that bypass the schema.
     const rows = await prisma.$queryRawUnsafe<Array<{ tenantId: string }>>(
-      `SELECT ${quoteIdentifier(tenantIdColumn)} AS "tenantId" FROM tenants WHERE ${quoteIdentifier(tenantSlugColumn)} = $1 LIMIT 1`,
+      `SELECT ${quoteIdentifier(tenantIdColumn)} AS "tenantId" FROM tenants WHERE LOWER(${quoteIdentifier(tenantSlugColumn)}) = LOWER($1) LIMIT 1`,
       slug,
     );
     return rows[0]?.tenantId ?? null;

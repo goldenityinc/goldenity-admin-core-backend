@@ -2,6 +2,7 @@
 @bridgeBaseUrl = http://localhost:3002
 @username = REPLACE_USERNAME
 @password = REPLACE_PASSWORD
+@kode_perusahaan = REPLACE_COMPANY_CODE
 
 ### 1) Login ke Core API
 # @name coreLogin
@@ -10,7 +11,8 @@ Content-Type: application/json
 
 {
   "username": "{{username}}",
-  "password": "{{password}}"
+  "password": "{{password}}",
+  "tenantSlug": "{{kode_perusahaan}}"
 }
 
 ### 2) Ambil products dari Bridge API dengan token login Core
