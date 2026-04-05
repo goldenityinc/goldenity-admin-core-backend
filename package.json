@@ -1,6 +1,6 @@
 {
   "name": "goldenity-admin-core-api",
-  "version": "1.0.0",
+  "version": "1.1.5",
   "description": "Backend RESTful API Multi-Tenant untuk Dashboard Admin Goldenity",
   "main": "dist/index.js",
   "scripts": {
@@ -60,3 +60,4 @@
     "typescript": "^5.3.3"
   }
 }
+
