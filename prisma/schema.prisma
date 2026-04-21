@@ -118,12 +118,58 @@ model AppInstance {
   tenant               Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   solution             Solution           @relation(fields: [solutionId], references: [id], onDelete: Restrict)
   userAccesses         UserAppAccess[]
+  modules              AppInstanceModule[]
 
   @@unique([tenantId, solutionId])
   @@index([tenantId])
   @@index([solutionId])
   @@index([status])
   @@map("app_instances")
+}
+
+model ModuleDefinition {
+  id                String                 @id @default(uuid())
+  moduleKey         String                 @unique @map("module_key")
+  displayName       String                 @map("display_name")
+  category          String
+  description       String?
+  isCore            Boolean                @default(false) @map("is_core")
+  status            ModuleDefinitionStatus @default(ACTIVE)
+  dependencies      String[]               @default([])
+  defaultConfig     Json?                  @map("default_config")
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  appInstanceModules AppInstanceModule[]
+
+  @@index([category])
+  @@index([status])
+  @@map("module_definitions")
+}
+
+model AppInstanceModule {
+  id                 String                    @id @default(uuid())
+  appInstanceId      String                    @map("app_instance_id")
+  moduleDefinitionId String                    @map("module_definition_id")
+  isEnabled          Boolean                   @default(true) @map("is_enabled")
+  source             ModuleAssignmentSource    @default(MANUAL_OVERRIDE)
+  billingStatus      String?                   @map("billing_status")
+  activatedAt        DateTime?                 @map("activated_at")
+  expiredAt          DateTime?                 @map("expired_at")
+  config             Json?
+  limits             Json?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  appInstance        AppInstance               @relation(fields: [appInstanceId], references: [id], onDelete: Cascade)
+  moduleDefinition   ModuleDefinition          @relation(fields: [moduleDefinitionId], references: [id], onDelete: Restrict)
+
+  @@unique([appInstanceId, moduleDefinitionId])
+  @@index([appInstanceId])
+  @@index([moduleDefinitionId])
+  @@index([isEnabled])
+  @@index([source])
+  @@map("app_instance_modules")
 }
 
 model UserAppAccess {
@@ -161,6 +207,20 @@ enum AppRole {
   MANAGER
   STAFF
   VIEWER
+}
+
+enum ModuleDefinitionStatus {
+  ACTIVE
+  DEPRECATED
+  ARCHIVED
+}
+
+enum ModuleAssignmentSource {
+  CORE
+  BUNDLE
+  ADDON
+  TRIAL
+  MANUAL_OVERRIDE
 }
 
 enum SyncMode {

@@ -17,6 +17,8 @@ declare global {
         role?: string;
         tier?: string | null;
         addons?: string[];
+        entitlementsRevision?: number;
+        activeModules?: string[];
       };
     }
   }
@@ -48,8 +50,11 @@ export const verifyToken = (req: Request, _res: Response, next: NextFunction) =>
     req.user = {
       userId: decoded.userId,
       tenantId: decoded.tenantId,
+      role: decoded.role,
       tier: decoded.tier,
       addons: decoded.addons,
+      entitlementsRevision: decoded.entitlementsRevision,
+      activeModules: decoded.activeModules,
     };
 
     next();

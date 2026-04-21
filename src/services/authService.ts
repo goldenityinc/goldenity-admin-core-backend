@@ -6,6 +6,7 @@ import { verifyPassword } from '../utils/password';
 import type { LoginInput } from '../validations/authValidation';
 import type { JwtAuthPayload } from '../types/auth';
 import { normalizeSubscriptionAddons } from '../constants/subscriptionAddons';
+import { EntitlementService } from './entitlementService';
 
 type ColumnRow = {
   table_name: string;
@@ -15,6 +16,7 @@ type ColumnRow = {
 type LoginTenantRecord = {
   userId: string;
   tenantId: string;
+  customRoleId: string | null;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
   tenantShowInventoryImages: boolean | null;
@@ -186,17 +188,36 @@ export class AuthService {
     }
 
     const expiresIn = (process.env.JWT_EXPIRES_IN ?? '1d') as SignOptions['expiresIn'];
-    const resolvedSubscription = await this.resolveSubscriptionForTenant(resolvedLoginRecord.tenantId);
-    const tier = resolvedSubscription?.tier ?? resolvedLoginRecord.subscriptionTier ?? null;
-    const addons = normalizeSubscriptionAddons(
-      resolvedSubscription?.addons ?? resolvedLoginRecord.subscriptionAddons ?? [],
+    const resolvedEntitlements = await EntitlementService.resolveForTenant(
+      resolvedLoginRecord.tenantId,
     );
+    const tier =
+      resolvedEntitlements.subscription.tier ??
+      resolvedLoginRecord.subscriptionTier ??
+      null;
+    const addons = normalizeSubscriptionAddons(
+      resolvedEntitlements.subscription.addons ??
+        resolvedLoginRecord.subscriptionAddons ??
+        [],
+    );
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: resolvedLoginRecord.tenantId },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        bridgeApiUrl: true,
+        showInventoryImages: true,
+      },
+    });
     const payload: JwtAuthPayload = {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role ?? undefined,
       tier,
       addons,
+      entitlementsRevision: resolvedEntitlements.entitlements.revision,
+      activeModules: resolvedEntitlements.entitlements.active_modules,
     };
 
     const token = jwt.sign(
@@ -220,21 +241,30 @@ export class AuthService {
       expiresIn,
       user: {
         id: resolvedLoginRecord.userId,
-        role: resolvedLoginRecord.role,
+        username: credentials.username,
+        role: resolvedLoginRecord.role ?? 'CRM_STAFF',
         tenantId: resolvedLoginRecord.tenantId,
-        tier,
-        addons,
+        customRoleId: resolvedLoginRecord.customRoleId,
       },
       tenant: {
-        slug: resolvedLoginRecord.tenantSlug,
-        bridge_api_url: resolvedLoginRecord.tenantBridgeApiUrl,
+        id: resolvedLoginRecord.tenantId,
+        slug: tenant?.slug ?? resolvedLoginRecord.tenantSlug,
+        name: tenant?.name ?? resolvedLoginRecord.tenantSlug ?? resolvedLoginRecord.tenantId,
+        bridgeApiUrl:
+          tenant?.bridgeApiUrl ?? resolvedLoginRecord.tenantBridgeApiUrl,
         showInventoryImages:
-          resolvedLoginRecord.tenantShowInventoryImages !== false,
+          (tenant?.showInventoryImages ??
+            resolvedLoginRecord.tenantShowInventoryImages) !== false,
         syncMode: resolvedLoginRecord.syncMode ?? 'CLOUD_FIRST',
       },
+      entitlements: resolvedEntitlements.entitlements,
       subscription: {
         tier,
         addons,
+        endDate:
+          resolvedEntitlements.subscription.endDate ??
+          resolvedLoginRecord.endDate?.toISOString() ??
+          null,
       },
     };
   }
@@ -354,6 +384,10 @@ export class AuthService {
     const passwordColumn = pickColumn(metadata.users, ['password_hash', 'passwordHash', 'password']);
     const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
     const userRoleColumn = pickColumn(metadata.users, ['role']);
+    const userCustomRoleIdColumn = pickColumn(metadata.users, [
+      'customRoleId',
+      'custom_role_id',
+    ]);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userAppAccessUserIdColumn = pickColumn(metadata.userAppAccesses, ['userId', 'user_id']);
     const userAppAccessAppInstanceIdColumn = pickColumn(metadata.userAppAccesses, ['appInstanceId', 'app_instance_id']);
@@ -394,6 +428,9 @@ export class AuthService {
     const userRoleSelect = userRoleColumn
       ? `u.${quoteIdentifier(userRoleColumn)} AS "role"`
       : 'NULL::text AS "role"';
+    const userCustomRoleIdSelect = userCustomRoleIdColumn
+      ? `u.${quoteIdentifier(userCustomRoleIdColumn)} AS "customRoleId"`
+      : 'NULL::text AS "customRoleId"';
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
@@ -432,6 +469,7 @@ export class AuthService {
       SELECT
         u.${quoteIdentifier(userIdColumn)} AS "userId",
         ai.${quoteIdentifier(appInstanceTenantIdColumn)} AS "tenantId",
+        ${userCustomRoleIdSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
         ${tenantShowInventoryImagesSelect},
@@ -473,6 +511,10 @@ export class AuthService {
     const passwordColumn = pickColumn(metadata.users, ['password_hash', 'passwordHash', 'password']);
     const userIsActiveColumn = pickColumn(metadata.users, ['isActive', 'is_active']);
     const userRoleColumn = pickColumn(metadata.users, ['role']);
+    const userCustomRoleIdColumn = pickColumn(metadata.users, [
+      'customRoleId',
+      'custom_role_id',
+    ]);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userTenantIdColumn = pickColumn(metadata.users, ['tenantId', 'tenant_id']);
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
@@ -500,6 +542,9 @@ export class AuthService {
     const userRoleSelect = userRoleColumn
       ? `u.${quoteIdentifier(userRoleColumn)} AS "role"`
       : 'NULL::text AS "role"';
+    const userCustomRoleIdSelect = userCustomRoleIdColumn
+      ? `u.${quoteIdentifier(userCustomRoleIdColumn)} AS "customRoleId"`
+      : 'NULL::text AS "customRoleId"';
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
@@ -517,6 +562,7 @@ export class AuthService {
       SELECT
         u.${quoteIdentifier(userIdColumn)} AS "userId",
         u.${quoteIdentifier(userTenantIdColumn)} AS "tenantId",
+        ${userCustomRoleIdSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
         ${tenantShowInventoryImagesSelect},
