@@ -9,6 +9,13 @@ type AppInstanceModuleAssignment = {
   limits?: Record<string, unknown>;
 };
 
+export type AppInstanceModuleCatalogItem = {
+  key: string;
+  name: string;
+  description: string | null;
+  status: string;
+};
+
 type AppInstanceWritePayload = {
   tenantId: string;
   solutionId: string;
@@ -135,6 +142,25 @@ export class AppInstanceService {
     }
 
     return [...resolved];
+  }
+
+  static async listModuleCatalog(): Promise<AppInstanceModuleCatalogItem[]> {
+    const items = await prisma.moduleDefinition.findMany({
+      select: {
+        moduleKey: true,
+        displayName: true,
+        description: true,
+        status: true,
+      },
+      orderBy: [{ category: 'asc' }, { displayName: 'asc' }],
+    });
+
+    return items.map((item) => ({
+      key: item.moduleKey,
+      name: item.displayName,
+      description: item.description,
+      status: item.status,
+    }));
   }
 
   static buildModuleAssignments(input: {

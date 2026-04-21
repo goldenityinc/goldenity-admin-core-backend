@@ -72,6 +72,15 @@ export const getAppInstances = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
+export const getAppInstanceModuleCatalog = asyncHandler(async (_req: Request, res: Response) => {
+  const items = await AppInstanceService.listModuleCatalog();
+
+  return res.status(200).json({
+    success: true,
+    data: items,
+  });
+});
+
 export const updateAppInstance = asyncHandler(async (req: Request, res: Response) => {
   const paramParsed = appInstanceIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
