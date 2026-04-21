@@ -217,6 +217,45 @@ export class AccountingPostingService {
     });
   }
 
+  static async ensureSalesPostedForDateRange(
+    tenantId: string,
+    startDate: Date | null,
+    endDate: Date,
+  ) {
+    const salesRecords = await prisma.sales_records.findMany({
+      where: {
+        tenant_id: tenantId,
+        created_at: {
+          ...(startDate ? { gte: startDate } : {}),
+          lte: endDate,
+        },
+        NOT: {
+          payment_status: {
+            in: Array.from(SALES_BLOCKED_STATUSES),
+            mode: 'insensitive',
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+      orderBy: {
+        created_at: 'asc',
+      },
+    });
+
+    for (const salesRecord of salesRecords) {
+      try {
+        await this.postSalesToJournal(salesRecord.id.toString(), tenantId);
+      } catch (error) {
+        if (this.isIgnorableSalesPostingError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   static async postExpenseToJournal(expenseTransactionId: string, tenantId: string) {
     const expenseId = this.parseBigIntId(expenseTransactionId, 'expenseTransactionId');
 
@@ -316,6 +355,45 @@ export class AccountingPostingService {
 
       return this.loadJournalEntry(tx, entry.id);
     });
+  }
+
+  static async ensureExpensesPostedForDateRange(
+    tenantId: string,
+    startDate: Date | null,
+    endDate: Date,
+  ) {
+    const expenses = await prisma.expenses.findMany({
+      where: {
+        tenant_id: tenantId,
+        created_at: {
+          ...(startDate ? { gte: startDate } : {}),
+          lte: endDate,
+        },
+        NOT: {
+          status: {
+            in: Array.from(EXPENSE_BLOCKED_STATUSES),
+            mode: 'insensitive',
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+      orderBy: {
+        created_at: 'asc',
+      },
+    });
+
+    for (const expense of expenses) {
+      try {
+        await this.postExpenseToJournal(expense.id.toString(), tenantId);
+      } catch (error) {
+        if (this.isIgnorableExpensePostingError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
   }
 
   private static async findExistingEntry(
@@ -641,6 +719,33 @@ export class AccountingPostingService {
 
   private static describeSettlementAccountKind(paymentMethod: string | null) {
     return this.inferSettlementKind(paymentMethod) === 'bank' ? 'bank' : 'kas';
+  }
+
+  private static isIgnorableSalesPostingError(error: unknown) {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('tidak boleh diposting') ||
+      message.includes('outstanding balance') ||
+      message.includes('belum final') ||
+      message.includes('tidak memiliki nilai total yang valid') ||
+      message.includes('menghasilkan nilai pendapatan tidak valid')
+    );
+  }
+
+  private static isIgnorableExpensePostingError(error: unknown) {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('tidak boleh diposting') ||
+      message.includes('nominal tidak valid')
+    );
   }
 
   private static normalizeText(value: string | null | undefined) {

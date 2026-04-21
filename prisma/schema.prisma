@@ -32,20 +32,20 @@ model Tenant {
 }
 
 model User {
-  id             String         @id @default(uuid())
-  firebaseUid    String?        @unique
-  email          String?        @unique
+  id             String          @id @default(uuid())
+  firebaseUid    String?         @unique
+  email          String?         @unique
   name           String
-  role           UserRole       @default(CRM_STAFF)
+  role           UserRole        @default(CRM_STAFF)
   tenantId       String
-  isActive       Boolean        @default(true)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   passwordHash   String?
   username       String?
-  customRoleId   String?        @map("custom_role_id")
+  customRoleId   String?         @map("custom_role_id")
   tenant_id      String?
-  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   appAccesses    UserAppAccess[]
   journalEntries JournalEntry[]
 
@@ -78,13 +78,13 @@ model CustomRole {
 }
 
 model Solution {
-  id          String   @id @default(uuid())
-  name        String
-  code        String   @unique
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String        @id @default(uuid())
+  name         String
+  code         String        @unique
+  description  String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   appInstances AppInstance[]
 
   @@map("solutions")
@@ -111,97 +111,6 @@ model AppInstance {
   @@index([tenantId])
   @@index([solutionId])
   @@map("app_instances")
-}
-
-model AccountCategory {
-  id          String              @id @default(uuid())
-  code        AccountCategoryType @unique
-  name        String
-  description String?
-  sortOrder   Int                 @default(0) @map("sort_order")
-  isActive    Boolean             @default(true) @map("is_active")
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-
-  accounts ChartOfAccount[]
-
-  @@map("account_categories")
-}
-
-model ChartOfAccount {
-  id                String               @id @default(uuid())
-  tenantId          String               @map("tenant_id")
-  accountCategoryId String               @map("account_category_id")
-  code              String
-  name              String
-  description       String?
-  normalBalance     AccountNormalBalance @map("normal_balance")
-  isSystem          Boolean              @default(false) @map("is_system")
-  isActive          Boolean              @default(true) @map("is_active")
-  parentAccountId   String?              @map("parent_account_id")
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  category      AccountCategory  @relation(fields: [accountCategoryId], references: [id], onDelete: Restrict)
-  parentAccount ChartOfAccount?  @relation("ChartOfAccountHierarchy", fields: [parentAccountId], references: [id], onDelete: SetNull)
-  childAccounts ChartOfAccount[] @relation("ChartOfAccountHierarchy")
-  journalLines  JournalLine[]
-
-  @@unique([tenantId, code])
-  @@index([tenantId])
-  @@index([accountCategoryId])
-  @@index([parentAccountId])
-  @@index([isActive])
-  @@map("chart_of_accounts")
-}
-
-model JournalEntry {
-  id              String                 @id @default(uuid())
-  tenantId        String                 @map("tenant_id")
-  entryNumber     String                 @map("entry_number")
-  entryDate       DateTime               @map("entry_date")
-  sourceType      JournalEntrySourceType @default(MANUAL) @map("source_type")
-  referenceId     String?                @map("reference_id")
-  referenceNumber String?                @map("reference_number")
-  description     String?
-  totalDebit      Decimal                @map("total_debit") @db.Decimal(18, 2)
-  totalCredit     Decimal                @map("total_credit") @db.Decimal(18, 2)
-  isPosted        Boolean                @default(true) @map("is_posted")
-  createdByUserId String?                @map("created_by_user_id")
-  postedAt        DateTime?              @map("posted_at")
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdByUser User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  lines         JournalLine[]
-
-  @@unique([tenantId, entryNumber])
-  @@index([tenantId, entryDate])
-  @@index([sourceType, referenceId])
-  @@index([createdByUserId])
-  @@map("journal_entries")
-}
-
-model JournalLine {
-  id               String   @id @default(uuid())
-  journalEntryId   String   @map("journal_entry_id")
-  chartOfAccountId String   @map("chart_of_account_id")
-  lineNumber       Int      @map("line_number")
-  description      String?
-  debit            Decimal  @default(0) @db.Decimal(18, 2)
-  credit           Decimal  @default(0) @db.Decimal(18, 2)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  journalEntry JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
-  account      ChartOfAccount @relation(fields: [chartOfAccountId], references: [id], onDelete: Restrict)
-
-  @@unique([journalEntryId, lineNumber])
-  @@index([journalEntryId])
-  @@index([chartOfAccountId])
-  @@map("journal_lines")
 }
 
 model ModuleDefinition {
@@ -532,6 +441,118 @@ model transactions {
   @@index([tenant_id])
 }
 
+model AccountCategory {
+  id          String              @id @default(uuid())
+  code        AccountCategoryType @unique
+  name        String
+  description String?
+  sortOrder   Int                 @default(0) @map("sort_order")
+  isActive    Boolean             @default(true) @map("is_active")
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  accounts ChartOfAccount[]
+
+  @@map("account_categories")
+}
+
+model ChartOfAccount {
+  id                String               @id @default(uuid())
+  tenantId          String               @map("tenant_id")
+  accountCategoryId String               @map("account_category_id")
+  code              String
+  name              String
+  description       String?
+  normalBalance     AccountNormalBalance @map("normal_balance")
+  isSystem          Boolean              @default(false) @map("is_system")
+  isActive          Boolean              @default(true) @map("is_active")
+  parentAccountId   String?              @map("parent_account_id")
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  category      AccountCategory  @relation(fields: [accountCategoryId], references: [id], onDelete: Restrict)
+  parentAccount ChartOfAccount?  @relation("ChartOfAccountHierarchy", fields: [parentAccountId], references: [id], onDelete: SetNull)
+  childAccounts ChartOfAccount[] @relation("ChartOfAccountHierarchy")
+  journalLines  JournalLine[]
+  Tenant        Tenant           @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([accountCategoryId])
+  @@index([parentAccountId])
+  @@index([isActive])
+  @@map("chart_of_accounts")
+}
+
+model JournalEntry {
+  id              String                 @id @default(uuid())
+  tenantId        String                 @map("tenant_id")
+  entryNumber     String                 @map("entry_number")
+  entryDate       DateTime               @map("entry_date")
+  sourceType      JournalEntrySourceType @default(MANUAL) @map("source_type")
+  referenceId     String?                @map("reference_id")
+  referenceNumber String?                @map("reference_number")
+  description     String?
+  totalDebit      Decimal                @map("total_debit") @db.Decimal(18, 2)
+  totalCredit     Decimal                @map("total_credit") @db.Decimal(18, 2)
+  isPosted        Boolean                @default(true) @map("is_posted")
+  createdByUserId String?                @map("created_by_user_id")
+  postedAt        DateTime?              @map("posted_at")
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdByUser User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lines         JournalLine[]
+
+  @@unique([tenantId, entryNumber])
+  @@index([tenantId, entryDate])
+  @@index([sourceType, referenceId])
+  @@index([createdByUserId])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id               String   @id @default(uuid())
+  journalEntryId   String   @map("journal_entry_id")
+  chartOfAccountId String   @map("chart_of_account_id")
+  lineNumber       Int      @map("line_number")
+  description      String?
+  debit            Decimal  @default(0) @db.Decimal(18, 2)
+  credit           Decimal  @default(0) @db.Decimal(18, 2)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  journalEntry JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      ChartOfAccount @relation(fields: [chartOfAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([journalEntryId, lineNumber])
+  @@index([journalEntryId])
+  @@index([chartOfAccountId])
+  @@map("journal_lines")
+}
+
+enum AccountCategoryType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum AccountNormalBalance {
+  DEBIT
+  CREDIT
+}
+
+enum JournalEntrySourceType {
+  POS_SALE
+  EXPENSE
+  MANUAL
+  ADJUSTMENT
+  OPENING_BALANCE
+}
+
 enum UserRole {
   SUPER_ADMIN
   TENANT_ADMIN
@@ -564,27 +585,6 @@ enum ModuleDefinitionStatus {
   ACTIVE
   DEPRECATED
   ARCHIVED
-}
-
-enum AccountCategoryType {
-  ASSET
-  LIABILITY
-  EQUITY
-  REVENUE
-  EXPENSE
-}
-
-enum AccountNormalBalance {
-  DEBIT
-  CREDIT
-}
-
-enum JournalEntrySourceType {
-  POS_SALE
-  EXPENSE
-  MANUAL
-  ADJUSTMENT
-  OPENING_BALANCE
 }
 
 enum ModuleAssignmentSource {

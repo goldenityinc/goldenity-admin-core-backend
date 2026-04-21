@@ -4,6 +4,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import prisma from '../config/database';
+import AccountingPostingService from './accountingPostingService';
 
 type AccountBalanceRow = {
   accountId: string;
@@ -115,6 +116,23 @@ function sortAccounts(lines: ReportAccountLine[]): ReportAccountLine[] {
 }
 
 export class AccountingReportService {
+  private static async ensureLedgerData(
+    tenantId: string,
+    startDate: Date | null,
+    endDate: Date,
+  ) {
+    await AccountingPostingService.ensureSalesPostedForDateRange(
+      tenantId,
+      startDate,
+      endDate,
+    );
+    await AccountingPostingService.ensureExpensesPostedForDateRange(
+      tenantId,
+      startDate,
+      endDate,
+    );
+  }
+
   private static async loadAccountBalances(
     tenantId: string,
     startDate: Date | null,
@@ -213,6 +231,8 @@ export class AccountingReportService {
       throw new Error('startDate tidak boleh lebih besar dari endDate');
     }
 
+    await this.ensureLedgerData(tenantId, rangeStart, rangeEnd);
+
     const rows = await this.loadAccountBalances(
       tenantId,
       rangeStart,
@@ -252,6 +272,8 @@ export class AccountingReportService {
     asOfDate: Date | string,
   ): Promise<BalanceSheetReport> {
     const cutoffDate = normalizeDateBoundary(asOfDate, true);
+
+    await this.ensureLedgerData(tenantId, null, cutoffDate);
 
     const rows = await this.loadAccountBalances(
       tenantId,
