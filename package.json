@@ -20,6 +20,7 @@
     "set:super-admin": "ts-node src/scripts/setSuperAdmin.ts",
     "user:reset-and-sync-pos": "node scripts/reset_and_sync_pos_user.js",
     "seed:solutions": "ts-node src/scripts/seedSolutions.ts",
+    "seed:account-categories": "ts-node src/scripts/seedAccountCategories.ts",
     "seed:modules": "ts-node src/scripts/seedModuleDefinitions.ts",
     "backfill:app-instance-modules": "ts-node src/scripts/backfillAppInstanceModules.ts",
     "smoke:auth": "ts-node src/scripts/smokeTestAuth.ts",
