@@ -12,6 +12,14 @@ const tenantSummarySelect = {
   createdAt: true,
 } as const;
 
+const createTenantSelect = {
+  id: true,
+  name: true,
+  slug: true,
+  isActive: true,
+  createdAt: true,
+} as const;
+
 const firstAdminSelect = {
   id: true,
   email: true,
@@ -47,7 +55,7 @@ export class TenantService {
           phone: data.phone,
           isActive: data.isActive ?? true,
         },
-        select: tenantSummarySelect,
+        select: createTenantSelect,
       });
 
       if (!shouldCreateFirstAdmin) {

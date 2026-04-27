@@ -1,5 +1,18 @@
 import { z } from 'zod';
 
+const optionalTrimmedString = () =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== 'string') {
+        return value;
+      }
+
+      const trimmed = value.trim();
+      return trimmed === '' ? undefined : trimmed;
+    },
+    z.string().optional(),
+  );
+
 export const createTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters'),
   slug: z
@@ -7,12 +20,16 @@ export const createTenantSchema = z.object({
     .min(2, 'Slug must be at least 2 characters')
     .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase letters, numbers, and dashes')
     .optional(),
-  email: z.string().email('Invalid tenant email').optional(),
-  phone: z.string().min(6, 'Phone must be at least 6 characters').optional(),
-  address: z.string().min(5, 'Address must be at least 5 characters').optional(),
-  logoUrl: z.string().url('logoUrl harus berupa URL valid').max(500).optional(),
-  adminEmail: z.string().email('Invalid admin email').optional(),
-  adminPassword: z.string().min(8, 'Admin password must be at least 8 characters').optional(),
+  email: optionalTrimmedString().pipe(z.string().email('Invalid tenant email').optional()),
+  phone: optionalTrimmedString().pipe(z.string().min(6, 'Phone must be at least 6 characters').optional()),
+  address: optionalTrimmedString().pipe(z.string().min(5, 'Address must be at least 5 characters').optional()),
+  logoUrl: optionalTrimmedString().pipe(
+    z.string().url('logoUrl harus berupa URL valid').max(500).optional(),
+  ),
+  adminEmail: optionalTrimmedString().pipe(z.string().email('Invalid admin email').optional()),
+  adminPassword: optionalTrimmedString().pipe(
+    z.string().min(8, 'Admin password must be at least 8 characters').optional(),
+  ),
   isActive: z.boolean().optional(),
   showInventoryImages: z.boolean().optional(),
 }).refine(
