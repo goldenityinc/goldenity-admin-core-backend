@@ -29,6 +29,40 @@ type TenantUrlCandidate = {
   targetDbUrl: string | null;
 };
 
+const tenantSummarySelect = {
+  id: true,
+  name: true,
+  slug: true,
+  email: true,
+  phone: true,
+  isActive: true,
+  createdAt: true,
+} as const;
+
+const userSummarySelect = {
+  id: true,
+  email: true,
+  username: true,
+  name: true,
+  role: true,
+  tenantId: true,
+  isActive: true,
+  firebaseUid: true,
+  createdAt: true,
+  tenant: {
+    select: tenantSummarySelect,
+  },
+} as const;
+
+const userSyncSelect = {
+  id: true,
+  tenantId: true,
+  username: true,
+  passwordHash: true,
+  role: true,
+  isActive: true,
+} as const;
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -139,6 +173,7 @@ export class UserService {
     const tenantId = data.tenantId;
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
+      select: tenantSummarySelect,
     });
 
     if (!tenant) {
@@ -165,15 +200,7 @@ export class UserService {
           isActive: data.isActive ?? true,
           tenantId,
         },
-        include: {
-          tenant: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
+        select: userSummarySelect,
       });
 
       // Best-effort: provision credentials into the tenant's POS database so the
@@ -274,7 +301,10 @@ export class UserService {
   }
 
   static async resetUserPassword(userId: string, newPassword: string) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: userSyncSelect,
+    });
     if (!user) {
       throw new AppError('User not found', 404);
     }
@@ -285,9 +315,7 @@ export class UserService {
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { passwordHash },
-      include: {
-        tenant: { select: { id: true, name: true, slug: true } },
-      },
+      select: userSummarySelect,
     });
 
     // Best-effort: keep the POS tenant DB in sync with the new password hash.
@@ -311,7 +339,10 @@ export class UserService {
   }
 
   static async updateUserStatus(userId: string, isActive: boolean) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: userSyncSelect,
+    });
     if (!user) {
       throw new AppError('User not found', 404);
     }
@@ -323,23 +354,21 @@ export class UserService {
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { isActive },
-      include: {
-        tenant: { select: { id: true, name: true, slug: true } },
-      },
+      select: userSummarySelect,
     });
 
-    if (updatedUser.username && updatedUser.passwordHash) {
+    if (user.username && user.passwordHash) {
       const syncResult = await UserService.syncToTenantPosDb(
         updatedUser.tenantId,
-        updatedUser.username,
-        updatedUser.passwordHash,
+        user.username,
+        user.passwordHash,
         updatedUser.role,
         updatedUser.isActive,
       );
 
       if (!syncResult.synced) {
         console.warn(
-          `[UserService] updateUserStatus: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${updatedUser.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+          `[UserService] updateUserStatus: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${user.username}, reason=${syncResult.reason ?? 'unknown'}).`,
         );
       }
     }
@@ -348,7 +377,10 @@ export class UserService {
   }
 
   static async updateUserRole(userId: string, role: UserRole) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: userSyncSelect,
+    });
     if (!user) {
       throw new AppError('User not found', 404);
     }
@@ -360,23 +392,21 @@ export class UserService {
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { role },
-      include: {
-        tenant: { select: { id: true, name: true, slug: true } },
-      },
+      select: userSummarySelect,
     });
 
-    if (updatedUser.username && updatedUser.passwordHash) {
+    if (user.username && user.passwordHash) {
       const syncResult = await UserService.syncToTenantPosDb(
         updatedUser.tenantId,
-        updatedUser.username,
-        updatedUser.passwordHash,
+        user.username,
+        user.passwordHash,
         updatedUser.role,
         updatedUser.isActive,
       );
 
       if (!syncResult.synced) {
         console.warn(
-          `[UserService] updateUserRole: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${updatedUser.username}, reason=${syncResult.reason ?? 'unknown'}).`,
+          `[UserService] updateUserRole: sync POS gagal (tenantId=${updatedUser.tenantId}, username=${user.username}, reason=${syncResult.reason ?? 'unknown'}).`,
         );
       }
     }
@@ -770,15 +800,7 @@ export class UserService {
         where,
         skip,
         take: options.limit,
-        include: {
-          tenant: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
+        select: userSummarySelect,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.user.count({ where }),
