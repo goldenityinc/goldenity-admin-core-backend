@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon src/index.ts",
-    "build": "tsc",
+    "build": "npx prisma generate && npx prisma migrate deploy && tsc",
     "start": "node scripts/startWithMigrate.js",
     "db:ensure-first-admin-schema": "node scripts/ensure_first_admin_schema.js",
     "db:ensure-pos-user-login-schema": "node scripts/ensure_pos_user_login_schema.js",
