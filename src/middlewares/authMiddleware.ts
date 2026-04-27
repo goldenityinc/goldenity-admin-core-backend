@@ -128,8 +128,17 @@ export const authMiddleware = async (
     // 3. Cari user di database berdasarkan firebase_uid
     const user = await prisma.user.findUnique({
       where: { firebaseUid: uid },
-      include: {
-        tenant: true, // Include tenant info
+      select: {
+        firebaseUid: true,
+        email: true,
+        tenantId: true,
+        role: true,
+        isActive: true,
+        tenant: {
+          select: {
+            isActive: true,
+          },
+        },
       },
     });
 
