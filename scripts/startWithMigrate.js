@@ -24,6 +24,15 @@ function run(command, args) {
   }
 }
 
+function runOptionalNodeScript(relativeScriptPath) {
+  const scriptPath = path.join(__dirname, '..', relativeScriptPath);
+  if (!fs.existsSync(scriptPath)) {
+    return;
+  }
+
+  run('node', [scriptPath]);
+}
+
 function resolvePrismaCommand() {
   const prismaBinName = process.platform === 'win32' ? 'prisma.cmd' : 'prisma';
   const prismaLocalPath = path.join(
@@ -50,6 +59,11 @@ function resolvePrismaCommand() {
 // Apply migrations at runtime (Railway provides DATABASE_URL at runtime).
 const prismaCommand = resolvePrismaCommand();
 run(prismaCommand.command, prismaCommand.args);
+
+// Rehydrate critical catalog data after schema changes. These scripts are idempotent.
+runOptionalNodeScript(path.join('dist', 'scripts', 'seedSolutions.js'));
+runOptionalNodeScript(path.join('dist', 'scripts', 'seedModuleDefinitions.js'));
+runOptionalNodeScript(path.join('dist', 'scripts', 'backfillAppInstanceModules.js'));
 
 // Start the compiled server.
 run('node', ['dist/index.js']);
