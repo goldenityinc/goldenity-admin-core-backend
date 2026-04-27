@@ -60,6 +60,9 @@ function resolvePrismaCommand() {
 const prismaCommand = resolvePrismaCommand();
 run(prismaCommand.command, prismaCommand.args);
 
+// Keep production enum labels aligned with the Prisma schema before writes happen.
+runOptionalNodeScript(path.join('scripts', 'sync_subscription_tier_enum.js'));
+
 // Rehydrate critical catalog data after schema changes. These scripts are idempotent.
 runOptionalNodeScript(path.join('dist', 'scripts', 'seedSolutions.js'));
 runOptionalNodeScript(path.join('dist', 'scripts', 'seedModuleDefinitions.js'));
