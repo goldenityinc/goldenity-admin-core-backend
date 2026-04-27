@@ -600,9 +600,10 @@ enum UserRole {
 }
 
 enum SubscriptionTier {
-  BASIC
-  PRO
-  ENTERPRISE
+  Standard
+  Professional
+  Enterprise
+  Custom
 }
 
 enum AppInstanceStatus {
