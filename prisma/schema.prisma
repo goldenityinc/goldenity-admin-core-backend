@@ -8,27 +8,26 @@ datasource db {
 }
 
 model Tenant {
-  id                  String           @id @default(uuid())
-  name                String
-  slug                String           @unique
-  email               String?
-  phone               String?
-  address             String?
-  isActive            Boolean          @default(true)
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
-  city                String?
-  country             String?
-  bridgeApiUrl        String?          @map("bridge_api_url")
-  logoUrl             String?          @map("logo_url")
-  logoObjectKey       String?          @map("logo_object_key")
-  showInventoryImages Boolean          @default(true) @map("show_inventory_images")
-  users               User[]
-  appInstances        AppInstance[]
-  branches            Branch[]
-  chartOfAccounts     ChartOfAccount[]
-  journalEntries      JournalEntry[]
+  id            String        @id @default(uuid())
+  name          String
+  slug          String        @unique
+  email         String?       @unique
+  phone         String?
+  address       String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  city          String?
+  country       String?
+  bridgeApiUrl  String?       @map("bridge_api_url")
+  logoUrl       String?       @map("logo_url")
+  logoObjectKey String?       @map("logo_object_key")
+  showInventoryImages Boolean  @default(true) @map("show_inventory_images")
+  appInstances  AppInstance[]
+  branches      Branch[]
+  users         User[]
 
+  @@index([slug])
   @@map("tenants")
 }
 
@@ -51,27 +50,25 @@ model Branch {
 }
 
 model User {
-  id             String          @id @default(uuid())
-  firebaseUid    String?         @unique
-  email          String?         @unique
-  name           String
-  role           UserRole        @default(CRM_STAFF)
-  tenantId       String
-  isActive       Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  passwordHash   String?
-  username       String?
-  customRoleId   String?         @map("custom_role_id")
-  tenant_id      String?
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  appAccesses    UserAppAccess[]
-  journalEntries JournalEntry[]
+  id           String          @id @default(uuid())
+  firebaseUid  String?         @unique
+  email        String?         @unique
+  name         String
+  role         UserRole        @default(CRM_STAFF)
+  tenantId     String
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  passwordHash String?
+  username     String?
+  customRoleId String?         @map("custom_role_id")
+  appAccesses  UserAppAccess[]
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([email])
+  @@index([firebaseUid])
   @@index([username])
-  @@index([tenant_id])
   @@map("users")
 }
 
@@ -106,6 +103,7 @@ model Solution {
   updatedAt    DateTime      @updatedAt
   appInstances AppInstance[]
 
+  @@index([code])
   @@map("solutions")
 }
 
@@ -122,13 +120,15 @@ model AppInstance {
   endDate            DateTime?           @map("end_date")
   syncMode           SyncMode            @default(CLOUD_FIRST) @map("sync_mode")
   addons             String[]            @default([])
-  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  solution           Solution            @relation(fields: [solutionId], references: [id], onDelete: Restrict)
   modules            AppInstanceModule[]
+  solution           Solution            @relation(fields: [solutionId], references: [id])
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userAccesses       UserAppAccess[]
 
+  @@unique([tenantId, solutionId])
   @@index([tenantId])
   @@index([solutionId])
+  @@index([status])
   @@map("app_instances")
 }
 
@@ -176,16 +176,15 @@ model AppInstanceModule {
 }
 
 model UserAppAccess {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   userId        String
   appInstanceId String
-  role          AppRole  @default(STAFF)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appInstance AppInstance @relation(fields: [appInstanceId], references: [id], onDelete: Cascade)
+  role          AppRole     @default(STAFF)
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  appInstance   AppInstance @relation(fields: [appInstanceId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, appInstanceId])
   @@index([appInstanceId])
@@ -234,7 +233,7 @@ model customers {
 model daily_cash {
   id         BigInt    @id @default(autoincrement())
   tenant_id  String?
-  amount     Decimal?
+  amount     Decimal?  @db.Decimal
   created_at DateTime? @default(now())
   updated_at DateTime? @default(now())
 
@@ -244,7 +243,7 @@ model daily_cash {
 model expenses {
   id          BigInt    @id @default(autoincrement())
   tenant_id   String?
-  amount      Decimal?
+  amount      Decimal?  @db.Decimal
   notes       String?
   created_at  DateTime? @default(now())
   updated_at  DateTime? @default(now())
@@ -367,13 +366,13 @@ model sales_record_items {
   product_id      String?
   product_name    String?
   qty             Int       @default(1)
-  is_custom_item  Boolean   @default(false)
-  custom_name     String?
   custom_price    Decimal?  @db.Decimal(14, 2)
   note            String?
   is_service      Boolean   @default(false)
   created_at      DateTime? @default(now()) @db.Timestamptz(6)
   updated_at      DateTime? @default(now()) @db.Timestamptz(6)
+  is_custom_item  Boolean   @default(false)
+  custom_name     String?
 
   @@index([sales_record_id], map: "idx_sales_record_items_sales_record_id")
   @@index([tenant_id], map: "idx_sales_record_items_tenant_id")
@@ -382,18 +381,13 @@ model sales_record_items {
 model sales_records {
   id                      BigInt      @id @default(autoincrement())
   tenant_id               String?
-  branch_id               BigInt?
   reference_id            String?
   payment_method          String?
   payment_type            String?
-  order_type              OrderType   @default(WALK_IN)
-  order_status            OrderStatus @default(COMPLETED)
-  pickup_date             DateTime?
-  target_pickup_branch_id BigInt?
-  total_price             Decimal?
-  total_amount            Decimal?
-  remaining_balance       Decimal?
-  outstanding_balance     Decimal?
+  total_price             Decimal?    @db.Decimal
+  total_amount            Decimal?    @db.Decimal
+  remaining_balance       Decimal?    @db.Decimal
+  outstanding_balance     Decimal?    @db.Decimal
   created_at              DateTime?   @default(now())
   updated_at              DateTime?   @default(now())
   receipt_number          String?
@@ -406,8 +400,13 @@ model sales_records {
   total_tax               BigInt?
   total_profit            BigInt?
   amount_paid             Decimal?    @default(0) @db.Decimal
-  branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id], onDelete: SetNull)
-  target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id], onDelete: SetNull)
+  branch_id               BigInt?
+  order_type              OrderType   @default(WALK_IN)
+  order_status            OrderStatus @default(COMPLETED)
+  pickup_date             DateTime?
+  target_pickup_branch_id BigInt?
+  branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id])
+  target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id])
 
   @@index([branch_id])
   @@index([target_pickup_branch_id])
@@ -482,8 +481,7 @@ model AccountCategory {
   isActive    Boolean             @default(true) @map("is_active")
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
-
-  accounts ChartOfAccount[]
+  accounts    ChartOfAccount[]
 
   @@map("account_categories")
 }
@@ -501,12 +499,10 @@ model ChartOfAccount {
   parentAccountId   String?              @map("parent_account_id")
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
-
-  category      AccountCategory  @relation(fields: [accountCategoryId], references: [id], onDelete: Restrict)
-  parentAccount ChartOfAccount?  @relation("ChartOfAccountHierarchy", fields: [parentAccountId], references: [id], onDelete: SetNull)
-  childAccounts ChartOfAccount[] @relation("ChartOfAccountHierarchy")
-  journalLines  JournalLine[]
-  Tenant        Tenant           @relation(fields: [tenantId], references: [id])
+  category          AccountCategory      @relation(fields: [accountCategoryId], references: [id])
+  parentAccount     ChartOfAccount?      @relation("ChartOfAccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts     ChartOfAccount[]     @relation("ChartOfAccountHierarchy")
+  journalLines      JournalLine[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -532,10 +528,7 @@ model JournalEntry {
   postedAt        DateTime?              @map("posted_at")
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
-
-  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdByUser User?         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  lines         JournalLine[]
+  lines           JournalLine[]
 
   @@unique([tenantId, entryNumber])
   @@index([tenantId, entryDate])
@@ -545,18 +538,17 @@ model JournalEntry {
 }
 
 model JournalLine {
-  id               String   @id @default(uuid())
-  journalEntryId   String   @map("journal_entry_id")
-  chartOfAccountId String   @map("chart_of_account_id")
-  lineNumber       Int      @map("line_number")
+  id               String         @id @default(uuid())
+  journalEntryId   String         @map("journal_entry_id")
+  chartOfAccountId String         @map("chart_of_account_id")
+  lineNumber       Int            @map("line_number")
   description      String?
-  debit            Decimal  @default(0) @db.Decimal(18, 2)
-  credit           Decimal  @default(0) @db.Decimal(18, 2)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  journalEntry JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
-  account      ChartOfAccount @relation(fields: [chartOfAccountId], references: [id], onDelete: Restrict)
+  debit            Decimal        @default(0) @db.Decimal(18, 2)
+  credit           Decimal        @default(0) @db.Decimal(18, 2)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  account          ChartOfAccount @relation(fields: [chartOfAccountId], references: [id])
+  journalEntry     JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
 
   @@unique([journalEntryId, lineNumber])
   @@index([journalEntryId])
@@ -608,10 +600,9 @@ enum UserRole {
 }
 
 enum SubscriptionTier {
-  Standard
-  Professional
-  Enterprise
-  Custom
+  BASIC
+  PRO
+  ENTERPRISE
 }
 
 enum AppInstanceStatus {
