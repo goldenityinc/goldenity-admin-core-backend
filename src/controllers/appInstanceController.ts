@@ -7,9 +7,43 @@ import { ErpProvisionService } from '../services/erpProvisionService';
 import {
   appInstanceIdParamSchema,
   createAppInstanceSchema,
+  listAppInstanceModuleCatalogQuerySchema,
   listAppInstancesQuerySchema,
   updateAppInstanceSchema,
 } from '../validations/appInstanceValidation';
+
+type AppInstanceResponsePayload = Awaited<ReturnType<typeof AppInstanceService.create>>;
+
+async function syncErpOrganizationProfile(
+  appInstance: AppInstanceResponsePayload,
+  authHeader: string | undefined,
+): Promise<string | null> {
+  if (appInstance?.solution?.code !== 'ERP' || typeof authHeader !== 'string') {
+    return null;
+  }
+
+  try {
+    await ErpProvisionService.upsertOrganizationProfile(
+      {
+        organizationId: appInstance.tenant.slug,
+        subscriptionStartDate: appInstance.createdAt,
+        subscriptionEndDate: appInstance.endDate ?? null,
+      },
+      authHeader,
+    );
+
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown ERP synchronization error';
+    console.error('ERP organization profile sync failed', {
+      tenantId: appInstance.tenant.id,
+      tenantSlug: appInstance.tenant.slug,
+      appInstanceId: appInstance.id,
+      error: message,
+    });
+    return `ERP profile sync skipped: ${message}`;
+  }
+}
 
 export const createAppInstance = asyncHandler(async (req: Request, res: Response) => {
   const bodyParsed = createAppInstanceSchema.safeParse(req.body);
@@ -19,26 +53,16 @@ export const createAppInstance = asyncHandler(async (req: Request, res: Response
 
   try {
     const appInstance = await AppInstanceService.create(bodyParsed.data);
-
-    // If ERP subscription changes, sync endDate to ERP so tenant login can be blocked when expired.
-    if (appInstance?.solution?.code === 'ERP') {
-      const authHeader = req.headers.authorization;
-      if (typeof authHeader === 'string') {
-        await ErpProvisionService.upsertOrganizationProfile(
-          {
-            organizationId: appInstance.tenant.slug,
-            subscriptionStartDate: appInstance.createdAt,
-            subscriptionEndDate: appInstance.endDate ?? null,
-          },
-          authHeader,
-        );
-      }
-    }
+    const warning = await syncErpOrganizationProfile(
+      appInstance,
+      typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+    );
 
     return res.status(201).json({
       success: true,
       message: 'App instance created successfully',
       data: appInstance,
+      ...(warning ? { warning } : {}),
     });
   } catch (error: unknown) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
@@ -72,8 +96,13 @@ export const getAppInstances = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
-export const getAppInstanceModuleCatalog = asyncHandler(async (_req: Request, res: Response) => {
-  const items = await AppInstanceService.listModuleCatalog();
+export const getAppInstanceModuleCatalog = asyncHandler(async (req: Request, res: Response) => {
+  const queryParsed = listAppInstanceModuleCatalogQuerySchema.safeParse(req.query);
+  if (!queryParsed.success) {
+    throw new AppError(queryParsed.error.issues[0]?.message ?? 'Invalid query params', 400);
+  }
+
+  const items = await AppInstanceService.listModuleCatalog(queryParsed.data);
 
   return res.status(200).json({
     success: true,
@@ -98,25 +127,16 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
   }
 
   const updated = await AppInstanceService.update(paramParsed.data.id, bodyParsed.data);
-
-  if (updated?.solution?.code === 'ERP') {
-    const authHeader = req.headers.authorization;
-    if (typeof authHeader === 'string') {
-      await ErpProvisionService.upsertOrganizationProfile(
-        {
-          organizationId: updated.tenant.slug,
-          subscriptionStartDate: updated.createdAt,
-          subscriptionEndDate: updated.endDate ?? null,
-        },
-        authHeader,
-      );
-    }
-  }
+  const warning = await syncErpOrganizationProfile(
+    updated,
+    typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
+  );
 
   return res.status(200).json({
     success: true,
     message: 'App instance updated successfully',
     data: updated,
+    ...(warning ? { warning } : {}),
   });
 });
 

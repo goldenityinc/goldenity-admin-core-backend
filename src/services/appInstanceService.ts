@@ -16,6 +16,8 @@ export type AppInstanceModuleCatalogItem = {
   status: string;
 };
 
+type SolutionModuleCatalogType = 'POS' | 'ERP' | 'OTHER';
+
 type AppInstanceWritePayload = {
   tenantId: string;
   solutionId: string;
@@ -97,6 +99,31 @@ function attachModuleKeys<T extends { modules?: Array<{ moduleDefinition: { modu
   };
 }
 
+function resolveSolutionModuleCatalogType(input: {
+  code?: string | null;
+  name?: string | null;
+}): SolutionModuleCatalogType {
+  const normalizedCode = input.code?.trim().toUpperCase();
+  if (normalizedCode === 'POS') {
+    return 'POS';
+  }
+
+  if (normalizedCode === 'ERP') {
+    return 'ERP';
+  }
+
+  const normalizedName = input.name?.trim().toUpperCase() ?? '';
+  if (normalizedName.includes('POS')) {
+    return 'POS';
+  }
+
+  if (normalizedName.includes('ERP')) {
+    return 'ERP';
+  }
+
+  return 'OTHER';
+}
+
 export class AppInstanceService {
   static readonly SyncModeValues = ['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER'] as const;
 
@@ -144,7 +171,33 @@ export class AppInstanceService {
     return [...resolved];
   }
 
-  static async listModuleCatalog(): Promise<AppInstanceModuleCatalogItem[]> {
+  static async listModuleCatalog(options?: {
+    solutionId?: string;
+    solutionCode?: string;
+  }): Promise<AppInstanceModuleCatalogItem[]> {
+    if (options?.solutionCode) {
+      const catalogType = resolveSolutionModuleCatalogType({ code: options.solutionCode });
+      if (catalogType !== 'POS') {
+        return [];
+      }
+    }
+
+    if (options?.solutionId) {
+      const solution = await prisma.solution.findUnique({
+        where: { id: options.solutionId },
+        select: { code: true, name: true },
+      });
+
+      if (!solution) {
+        throw new AppError('Solution not found', 404);
+      }
+
+      const catalogType = resolveSolutionModuleCatalogType(solution);
+      if (catalogType !== 'POS') {
+        return [];
+      }
+    }
+
     const items = await prisma.moduleDefinition.findMany({
       select: {
         moduleKey: true,
@@ -164,10 +217,15 @@ export class AppInstanceService {
   }
 
   static buildModuleAssignments(input: {
+    solutionType: SolutionModuleCatalogType;
     tier?: string | null;
     addons?: string[];
     moduleKeys?: string[];
   }): Record<string, AppInstanceModuleAssignment> {
+    if (input.solutionType !== 'POS') {
+      return {};
+    }
+
     const catalog = getPosModuleCatalogMap();
     const assignments = resolveLegacyModuleAssignments({
       tier: input.tier,
@@ -196,6 +254,7 @@ export class AppInstanceService {
     tx: Prisma.TransactionClient,
     appInstanceId: string,
     input: {
+      solutionType: SolutionModuleCatalogType;
       tier?: string | null;
       addons?: string[];
       moduleKeys?: string[];
@@ -266,6 +325,7 @@ export class AppInstanceService {
       });
 
       await AppInstanceService.syncAppInstanceModules(tx, appInstance.id, {
+        solutionType: resolveSolutionModuleCatalogType(appInstance.solution),
         tier: data.tier,
         addons: data.addons,
         moduleKeys: data.moduleKeys,
@@ -337,6 +397,12 @@ export class AppInstanceService {
       select: {
         tier: true,
         addons: true,
+        solution: {
+          select: {
+            code: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -364,6 +430,7 @@ export class AppInstanceService {
       });
 
       await AppInstanceService.syncAppInstanceModules(tx, id, {
+        solutionType: resolveSolutionModuleCatalogType(current.solution),
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
         moduleKeys,

@@ -49,3 +49,8 @@ export const listAppInstancesQuerySchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   tier: z.enum(['Standard', 'Professional', 'Enterprise', 'Custom']).optional(),
 });
+
+export const listAppInstanceModuleCatalogQuerySchema = z.object({
+  solutionId: z.string().uuid().optional(),
+  solutionCode: z.string().trim().min(1).optional(),
+});
