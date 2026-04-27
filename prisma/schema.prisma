@@ -25,10 +25,29 @@ model Tenant {
   showInventoryImages Boolean          @default(true) @map("show_inventory_images")
   users               User[]
   appInstances        AppInstance[]
+  branches            Branch[]
   chartOfAccounts     ChartOfAccount[]
   journalEntries      JournalEntry[]
 
   @@map("tenants")
+}
+
+model Branch {
+  id                 BigInt          @id @default(autoincrement())
+  tenantId           String          @map("tenant_id")
+  name               String
+  address            String?
+  phone              String?
+  isActive           Boolean         @default(true) @map("is_active")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at")
+  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesRecords       sales_records[] @relation("SalesRecordBranch")
+  pickupSalesRecords sales_records[] @relation("SalesRecordTargetPickupBranch")
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@map("branches")
 }
 
 model User {
@@ -348,6 +367,8 @@ model sales_record_items {
   product_id      String?
   product_name    String?
   qty             Int       @default(1)
+  is_custom_item  Boolean   @default(false)
+  custom_name     String?
   custom_price    Decimal?  @db.Decimal(14, 2)
   note            String?
   is_service      Boolean   @default(false)
@@ -359,28 +380,39 @@ model sales_record_items {
 }
 
 model sales_records {
-  id                  BigInt    @id @default(autoincrement())
-  tenant_id           String?
-  reference_id        String?
-  payment_method      String?
-  payment_type        String?
-  total_price         Decimal?
-  total_amount        Decimal?
-  remaining_balance   Decimal?
-  outstanding_balance Decimal?
-  created_at          DateTime? @default(now())
-  updated_at          DateTime? @default(now())
-  receipt_number      String?
-  cashier_id          String?
-  cashier_name        String?
-  payment_status      String?
-  items_json          Json?
-  customer_name       String?
-  total_discount      BigInt?
-  total_tax           BigInt?
-  total_profit        BigInt?
-  amount_paid         Decimal?  @default(0) @db.Decimal
+  id                      BigInt      @id @default(autoincrement())
+  tenant_id               String?
+  branch_id               BigInt?
+  reference_id            String?
+  payment_method          String?
+  payment_type            String?
+  order_type              OrderType   @default(WALK_IN)
+  order_status            OrderStatus @default(COMPLETED)
+  pickup_date             DateTime?
+  target_pickup_branch_id BigInt?
+  total_price             Decimal?
+  total_amount            Decimal?
+  remaining_balance       Decimal?
+  outstanding_balance     Decimal?
+  created_at              DateTime?   @default(now())
+  updated_at              DateTime?   @default(now())
+  receipt_number          String?
+  cashier_id              String?
+  cashier_name            String?
+  payment_status          String?
+  items_json              Json?
+  customer_name           String?
+  total_discount          BigInt?
+  total_tax               BigInt?
+  total_profit            BigInt?
+  amount_paid             Decimal?    @default(0) @db.Decimal
+  branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id], onDelete: SetNull)
+  target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id], onDelete: SetNull)
 
+  @@index([branch_id])
+  @@index([target_pickup_branch_id])
+  @@index([order_type])
+  @@index([order_status])
   @@index([reference_id])
   @@index([tenant_id])
 }
@@ -551,6 +583,20 @@ enum JournalEntrySourceType {
   MANUAL
   ADJUSTMENT
   OPENING_BALANCE
+}
+
+enum OrderType {
+  WALK_IN
+  PRE_ORDER
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  PREPARING
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
 }
 
 enum UserRole {

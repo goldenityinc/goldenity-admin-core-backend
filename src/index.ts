@@ -15,6 +15,8 @@ import publicRoutes from './routes/publicRoutes';
 import roleDefinitionRoutes from './routes/roleDefinitionRoutes';
 import accountingPostingRoutes from './routes/accountingPostingRoutes';
 import accountingReportRoutes from './routes/accountingReportRoutes';
+import branchRoutes from './routes/branchRoutes';
+import salesRoutes from './routes/salesRoutes';
 import { initializeSocketServer } from './services/socketServer';
 
 // Load environment variables
@@ -69,6 +71,8 @@ app.use('/api/integrations', integrationRoutes);
 app.use('/api/roles', roleDefinitionRoutes);
 app.use('/api/internal/accounting', accountingPostingRoutes);
 app.use('/api/v1/accounting/reports', accountingReportRoutes);
+app.use('/api/v1/branches', branchRoutes);
+app.use('/api/v1/sales', salesRoutes);
 
 
 // 404 Handler - Route not found
