@@ -1,0 +1,67 @@
+{
+  "name": "goldenity-admin-core-api",
+  "version": "1.1.5",
+  "description": "Backend RESTful API Multi-Tenant untuk Dashboard Admin Goldenity",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.ts",
+    "build": "npx prisma generate && npx prisma migrate deploy && tsc",
+    "start": "node scripts/startWithMigrate.js",
+    "db:ensure-first-admin-schema": "node scripts/ensure_first_admin_schema.js",
+    "db:ensure-pos-user-login-schema": "node scripts/ensure_pos_user_login_schema.js",
+    "db:ensure-tenant-app-users-auth-schema": "node scripts/ensure_tenant_app_users_auth_schema.js",
+    "db:sync-app-instance-db-connection": "node scripts/sync_app_instance_db_connection.js",
+    "db:sync-subscription-tier-enum": "node scripts/sync_subscription_tier_enum.js",
+    "db:backfill-user-app-accesses": "node scripts/backfill_user_app_accesses.js",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "set:super-admin": "ts-node src/scripts/setSuperAdmin.ts",
+    "user:reset-and-sync-pos": "node scripts/reset_and_sync_pos_user.js",
+    "seed:solutions": "ts-node src/scripts/seedSolutions.ts",
+    "seed:account-categories": "ts-node src/scripts/seedAccountCategories.ts",
+    "seed:modules": "ts-node src/scripts/seedModuleDefinitions.ts",
+    "backfill:app-instance-modules": "ts-node src/scripts/backfillAppInstanceModules.ts",
+    "smoke:auth": "ts-node src/scripts/smokeTestAuth.ts",
+    "provision:tenant": "ts-node src/scripts/provision.ts"
+  },
+  "keywords": [
+    "express",
+    "typescript",
+    "prisma",
+    "multi-tenant",
+    "firebase-auth"
+  ],
+  "author": "Goldenity",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1009.0",
+    "@prisma/client": "^5.20.0",
+    "@types/bcryptjs": "^2.4.6",
+    "axios": "^1.12.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.1.1",
+    "pg": "^8.13.1",
+    "socket.io": "^4.8.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^20.11.24",
+    "@types/pg": "^8.11.11",
+    "nodemon": "^3.1.0",
+    "prisma": "^5.20.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
+
