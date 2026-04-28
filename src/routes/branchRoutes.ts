@@ -6,11 +6,12 @@ import {
   listBranches,
   updateBranch,
 } from '../controllers/branchController';
-import { authMiddleware } from '../middlewares/authMiddleware';
+import { authMiddleware, tenantMiddleware } from '../middlewares/authMiddleware';
 
-const router = Router();
+const router = Router({ mergeParams: true });
 
 router.use(authMiddleware);
+router.use(tenantMiddleware);
 router.get('/', listBranches);
 router.get('/:id', getBranch);
 router.post('/', createBranch);

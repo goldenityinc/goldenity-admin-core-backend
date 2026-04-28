@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createTenant, getTenants, updateTenant, uploadTenantLogo } from '../controllers/tenantController';
 import { createTenantUser, getTenantUsers } from '../controllers/userController';
 import { authMiddleware, roleMiddleware } from '../middlewares/authMiddleware';
+import branchRoutes from './branchRoutes';
 import multer from 'multer';
 
 const upload = multer({
@@ -23,5 +24,6 @@ router.put('/:tenantId', roleMiddleware('SUPER_ADMIN'), updateTenant);
 router.post('/:tenantId/logo', roleMiddleware('SUPER_ADMIN'), upload.single('file'), uploadTenantLogo);
 router.get('/:tenantId/users', roleMiddleware('SUPER_ADMIN'), getTenantUsers);
 router.post('/:tenantId/users', roleMiddleware('SUPER_ADMIN'), createTenantUser);
+router.use('/:tenantId/branches', branchRoutes);
 
 export default router;

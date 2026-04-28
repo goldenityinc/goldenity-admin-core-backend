@@ -10,7 +10,7 @@ import {
 import { serializeForJson } from '../utils/serializeForJson';
 
 function readTenantId(req: Request): string {
-  const tenantId = req.user?.tenantId;
+  const tenantId = req.params.tenantId || req.user?.tenantId;
   if (!tenantId) {
     throw new AppError('Tenant context is required', 401);
   }
