@@ -7,13 +7,14 @@ import {
   listUsersQuerySchema,
   syncPosUsersSchema,
   tenantIdParamSchema,
-  updateUserRoleSchema,
+  updateUserSchema,
   updateUserStatusSchema,
   userIdParamSchema,
 } from '../validations/tenantValidation';
 import { UserService } from '../services/userService';
 import prisma from '../config/database';
 import { emitUserChanged } from '../services/realtimeEmitter';
+import { serializeForJson } from '../utils/serializeForJson';
 
 const TENANT_SCOPED_ADMIN_ROLES = new Set(['TENANT_ADMIN', 'ADMIN', 'OWNER']);
 const TENANT_ADMIN_MANAGEABLE_ROLES = new Set(['CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']);
@@ -95,6 +96,7 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
     ...req.body,
     tenantId: paramParsed.data.tenantId,
     role: normalizedIncomingRole,
+    branchId: (req.body as { branchId?: unknown }).branchId,
   });
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
@@ -102,15 +104,16 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
 
   try {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
+    const serializedUser = serializeForJson(createdUser);
 
     emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
-      user: createdUser,
+      user: serializedUser,
     });
 
     return res.status(201).json({
       success: true,
       message: 'Tenant user created successfully',
-      data: createdUser,
+      data: serializedUser,
     });
   } catch (error: unknown) {
     if (
@@ -142,7 +145,7 @@ export const getTenantUsers = asyncHandler(async (req: Request, res: Response) =
 
   return res.status(200).json({
     success: true,
-    data: result.items,
+    data: serializeForJson(result.items),
     meta: result.meta,
   });
 });
@@ -186,6 +189,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
       ? (req.body as Record<string, unknown>).tenantId
       : req.user?.tenantId,
     role: normalizedIncomingRole,
+    branchId: (req.body as Record<string, unknown>).branchId,
   };
 
   const bodyParsed = createUserSchema.safeParse(bodyForValidation);
@@ -195,15 +199,16 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
+    const serializedUser = serializeForJson(createdUser);
 
     emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
-      user: createdUser,
+      user: serializedUser,
     });
 
     return res.status(201).json({
       success: true,
       message: 'Tenant user created successfully',
-      data: createdUser,
+      data: serializedUser,
     });
   } catch (error: unknown) {
     if (
@@ -232,7 +237,7 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
 
   return res.status(200).json({
     success: true,
-    data: result.items,
+    data: serializeForJson(result.items),
     meta: result.meta,
   });
 });
@@ -270,7 +275,7 @@ export const resetUserPassword = asyncHandler(async (req: Request, res: Response
   return res.status(200).json({
     success: true,
     message: 'Password berhasil direset',
-    data: updatedUser,
+    data: serializeForJson(updatedUser),
   });
 });
 
@@ -306,19 +311,20 @@ export const updateUserStatus = asyncHandler(async (req: Request, res: Response)
     paramParsed.data.id,
     bodyParsed.data.isActive,
   );
+  const serializedUser = serializeForJson(updatedUser);
 
   emitUserChanged(req, updatedUser.tenantId, 'UPDATED', {
-    user: updatedUser,
+    user: serializedUser,
   });
 
   return res.status(200).json({
     success: true,
     message: `Status user berhasil diubah menjadi ${bodyParsed.data.isActive ? 'aktif' : 'nonaktif'}`,
-    data: updatedUser,
+    data: serializedUser,
   });
 });
 
-export const updateUserRole = asyncHandler(async (req: Request, res: Response) => {
+export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   const paramParsed = userIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid user id', 400);
@@ -334,8 +340,9 @@ export const updateUserRole = asyncHandler(async (req: Request, res: Response) =
     throw new AppError('Invalid role value in request body', 400);
   }
 
-  const bodyParsed = updateUserRoleSchema.safeParse({
+  const bodyParsed = updateUserSchema.safeParse({
     role: normalizedIncomingRole,
+    branchId: (req.body as { branchId?: unknown }).branchId,
   });
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid role payload', 400);
@@ -358,26 +365,28 @@ export const updateUserRole = asyncHandler(async (req: Request, res: Response) =
     throw new AppError('You do not have permission to update this user role', 403);
   }
 
-  if (isTenantScopedAdmin(req) && !TENANT_ADMIN_MANAGEABLE_ROLES.has(bodyParsed.data.role)) {
+  if (
+    isTenantScopedAdmin(req) &&
+    bodyParsed.data.role !== undefined &&
+    !TENANT_ADMIN_MANAGEABLE_ROLES.has(bodyParsed.data.role)
+  ) {
     throw new AppError(
       'Admin tenant hanya boleh mengubah role ke CRM_MANAGER, CRM_STAFF, atau READ_ONLY',
       403,
     );
   }
 
-  const updatedUser = await UserService.updateUserRole(
-    paramParsed.data.id,
-    bodyParsed.data.role,
-  );
+  const updatedUser = await UserService.updateUser(paramParsed.data.id, bodyParsed.data);
+  const serializedUser = serializeForJson(updatedUser);
 
   emitUserChanged(req, updatedUser.tenantId, 'UPDATED', {
-    user: updatedUser,
+    user: serializedUser,
   });
 
   return res.status(200).json({
     success: true,
-    message: 'Role user berhasil diperbarui',
-    data: updatedUser,
+    message: 'User berhasil diperbarui',
+    data: serializedUser,
   });
 });
 

@@ -29,6 +29,11 @@ type TenantUrlCandidate = {
   targetDbUrl: string | null;
 };
 
+type UserMutationPayload = {
+  role?: UserRole;
+  branchId?: string | null;
+};
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -67,6 +72,50 @@ function getRoleCandidates(role: string): string[] {
 }
 
 export class UserService {
+  private static async ensureAssignableBranch(tenantId: string, branchId: bigint) {
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: branchId,
+        tenantId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!branch) {
+      throw new AppError('Branch tidak ditemukan atau tidak aktif untuk tenant ini', 400);
+    }
+  }
+
+  private static async resolveUserBranchAssignment(
+    tenantId: string,
+    role: UserRole,
+    branchId: string | null | undefined,
+    existingBranchId?: bigint | null,
+  ): Promise<bigint | null | undefined> {
+    if (role !== UserRole.CRM_STAFF) {
+      if (branchId !== undefined && branchId !== null) {
+        throw new AppError('branchId hanya boleh diisi untuk user role CASHIER/CRM_STAFF', 400);
+      }
+
+      return null;
+    }
+
+    if (branchId === undefined) {
+      return existingBranchId;
+    }
+
+    if (branchId === null) {
+      return null;
+    }
+
+    const resolvedBranchId = BigInt(branchId);
+    await this.ensureAssignableBranch(tenantId, resolvedBranchId);
+    return resolvedBranchId;
+  }
+
   private static async resolveTenantDbConnectionString(
     tenantId: string,
   ): Promise<string | null> {
@@ -134,6 +183,7 @@ export class UserService {
     password: string;
     name: string;
     role?: 'TENANT_ADMIN' | 'CRM_MANAGER' | 'CRM_STAFF' | 'READ_ONLY';
+    branchId?: string | null;
     isActive?: boolean;
   }) {
     const tenantId = data.tenantId;
@@ -148,6 +198,11 @@ export class UserService {
     const passwordHash = await bcrypt.hash(data.password, 10);
 
     const resolvedRole = ((data.role ?? 'TENANT_ADMIN') as string).toUpperCase() as UserRole;
+    const resolvedBranchId = await this.resolveUserBranchAssignment(
+      tenantId,
+      resolvedRole,
+      data.branchId,
+    );
     const erpConfigured = Boolean(
       process.env.ERP_API_BASE_URL?.trim() ||
       process.env.ERP_API_URL?.trim(),
@@ -162,10 +217,18 @@ export class UserService {
           email: data.email ?? null,
           name: data.name,
           role: resolvedRole,
+          branchId: resolvedBranchId,
           isActive: data.isActive ?? true,
           tenantId,
         },
         include: {
+          branch: {
+            select: {
+              id: true,
+              name: true,
+              branchCode: true,
+            },
+          },
           tenant: {
             select: {
               id: true,
@@ -348,6 +411,10 @@ export class UserService {
   }
 
   static async updateUserRole(userId: string, role: UserRole) {
+    return this.updateUser(userId, { role });
+  }
+
+  static async updateUser(userId: string, payload: UserMutationPayload) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new AppError('User not found', 404);
@@ -357,10 +424,28 @@ export class UserService {
       throw new AppError('Cannot update role for SUPER_ADMIN via this endpoint', 403);
     }
 
+    const nextRole = payload.role ?? user.role;
+    const nextBranchId = await this.resolveUserBranchAssignment(
+      user.tenantId,
+      nextRole,
+      payload.branchId,
+      user.branchId,
+    );
+
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { role },
+      data: {
+        role: nextRole,
+        branchId: nextBranchId,
+      },
       include: {
+        branch: {
+          select: {
+            id: true,
+            name: true,
+            branchCode: true,
+          },
+        },
         tenant: { select: { id: true, name: true, slug: true } },
       },
     });
@@ -771,6 +856,13 @@ export class UserService {
         skip,
         take: options.limit,
         include: {
+          branch: {
+            select: {
+              id: true,
+              name: true,
+              branchCode: true,
+            },
+          },
           tenant: {
             select: {
               id: true,

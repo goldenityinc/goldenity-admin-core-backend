@@ -42,6 +42,7 @@ model Branch {
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at")
   tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users              User[]
   salesRecords       sales_records[] @relation("SalesRecordBranch")
   pickupSalesRecords sales_records[] @relation("SalesRecordTargetPickupBranch")
 
@@ -57,6 +58,7 @@ model User {
   name         String
   role         UserRole        @default(CRM_STAFF)
   tenantId     String
+  branchId     BigInt?         @map("branch_id")
   isActive     Boolean         @default(true)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
@@ -64,8 +66,10 @@ model User {
   username     String?
   customRoleId String?         @map("custom_role_id")
   appAccesses  UserAppAccess[]
+  branch       Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
   tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@index([branchId])
   @@index([tenantId])
   @@index([email])
   @@index([firebaseUid])

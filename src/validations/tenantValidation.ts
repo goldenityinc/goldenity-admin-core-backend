@@ -13,6 +13,22 @@ const optionalTrimmedString = () =>
     z.string().optional(),
   );
 
+const optionalNullableBranchIdSchema = z.preprocess(
+  (value) => {
+    if (value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+  },
+  z.union([z.string().regex(/^\d+$/, 'branchId must be a numeric string'), z.null()]).optional(),
+);
+
 export const createTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters'),
   slug: z
@@ -60,6 +76,7 @@ export const createUserSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().min(2, 'User name must be at least 2 characters'),
   role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
+  branchId: optionalNullableBranchIdSchema,
   isActive: z.boolean().optional(),
 })
   .refine((data) => Boolean(data.username || data.email), {
@@ -78,6 +95,17 @@ export const createUserSchema = z.object({
     {
       message: 'Password minimal 8 karakter untuk TENANT_ADMIN (ERP login)',
       path: ['password'],
+    },
+  );
+
+  export const updateUserSchema = z.object({
+    role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
+    branchId: optionalNullableBranchIdSchema,
+  }).refine(
+    (data) => data.role !== undefined || data.branchId !== undefined,
+    {
+      message: 'Minimal salah satu dari role atau branchId harus diisi',
+      path: ['role'],
     },
   );
 

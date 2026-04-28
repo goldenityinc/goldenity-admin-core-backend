@@ -16,6 +16,7 @@ type ColumnRow = {
 type LoginTenantRecord = {
   userId: string;
   tenantId: string;
+  branchId: string | null;
   customRoleId: string | null;
   tenantSlug: string | null;
   tenantBridgeApiUrl: string | null;
@@ -28,6 +29,13 @@ type LoginTenantRecord = {
   userIsActive: boolean | null;
   tenantIsActive: boolean | null;
   endDate: Date | null; // <--- DITAMBAHKAN UNTUK SUBSCRIPTION
+};
+
+type BranchLoginRecord = {
+  id: string;
+  name: string;
+  branchCode: string | null;
+  isActive: boolean;
 };
 
 type ColumnMetadata = {
@@ -74,6 +82,7 @@ export class AuthService {
     logLoginTrace('start', {
       username: credentials.username,
       tenantSlug: credentials.tenantSlug,
+      branchCode: credentials.branchCode,
     });
 
     if (!jwtSecret) {
@@ -173,6 +182,11 @@ export class AuthService {
       throw new AppError('Tenant sudah tidak aktif', 403);
     }
 
+    const resolvedBranch = await this.resolveBranchForLogin(
+      resolvedLoginRecord,
+      credentials.branchCode,
+    );
+
     // PENGECEKAN SUBSCRIPTION (Masa Aktif) DITAMBAHKAN DI SINI! 🔥
     if (resolvedLoginRecord.endDate) {
       const currentDate = new Date();
@@ -214,6 +228,8 @@ export class AuthService {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role ?? undefined,
+      branchId: resolvedBranch?.id ?? resolvedLoginRecord.branchId ?? undefined,
+      branchCode: resolvedBranch?.branchCode ?? undefined,
       tier,
       addons,
       entitlementsRevision: resolvedEntitlements.entitlements.revision,
@@ -232,6 +248,7 @@ export class AuthService {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role,
+      branchId: resolvedBranch?.id ?? resolvedLoginRecord.branchId,
       tier,
     });
 
@@ -244,8 +261,16 @@ export class AuthService {
         username: credentials.username,
         role: resolvedLoginRecord.role ?? 'CRM_STAFF',
         tenantId: resolvedLoginRecord.tenantId,
+        branchId: resolvedLoginRecord.branchId,
         customRoleId: resolvedLoginRecord.customRoleId,
       },
+      branch: resolvedBranch
+        ? {
+            id: resolvedBranch.id,
+            name: resolvedBranch.name,
+            branchCode: resolvedBranch.branchCode,
+          }
+        : null,
       tenant: {
         id: resolvedLoginRecord.tenantId,
         slug: tenant?.slug ?? resolvedLoginRecord.tenantSlug,
@@ -388,6 +413,7 @@ export class AuthService {
       'customRoleId',
       'custom_role_id',
     ]);
+    const userBranchIdColumn = pickColumn(metadata.users, ['branch_id', 'branchId']);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userAppAccessUserIdColumn = pickColumn(metadata.userAppAccesses, ['userId', 'user_id']);
     const userAppAccessAppInstanceIdColumn = pickColumn(metadata.userAppAccesses, ['appInstanceId', 'app_instance_id']);
@@ -431,6 +457,9 @@ export class AuthService {
     const userCustomRoleIdSelect = userCustomRoleIdColumn
       ? `u.${quoteIdentifier(userCustomRoleIdColumn)} AS "customRoleId"`
       : 'NULL::text AS "customRoleId"';
+    const userBranchIdSelect = userBranchIdColumn
+      ? `u.${quoteIdentifier(userBranchIdColumn)}::text AS "branchId"`
+      : 'NULL::text AS "branchId"';
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
@@ -469,6 +498,7 @@ export class AuthService {
       SELECT
         u.${quoteIdentifier(userIdColumn)} AS "userId",
         ai.${quoteIdentifier(appInstanceTenantIdColumn)} AS "tenantId",
+        ${userBranchIdSelect},
         ${userCustomRoleIdSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
@@ -515,6 +545,7 @@ export class AuthService {
       'customRoleId',
       'custom_role_id',
     ]);
+    const userBranchIdColumn = pickColumn(metadata.users, ['branch_id', 'branchId']);
     const userIdColumn = pickColumn(metadata.users, ['id']);
     const userTenantIdColumn = pickColumn(metadata.users, ['tenantId', 'tenant_id']);
     const tenantIdColumn = pickColumn(metadata.tenants, ['id']);
@@ -545,6 +576,9 @@ export class AuthService {
     const userCustomRoleIdSelect = userCustomRoleIdColumn
       ? `u.${quoteIdentifier(userCustomRoleIdColumn)} AS "customRoleId"`
       : 'NULL::text AS "customRoleId"';
+    const userBranchIdSelect = userBranchIdColumn
+      ? `u.${quoteIdentifier(userBranchIdColumn)}::text AS "branchId"`
+      : 'NULL::text AS "branchId"';
     const tenantIsActiveSelect = tenantIsActiveColumn
       ? `t.${quoteIdentifier(tenantIsActiveColumn)} AS "tenantIsActive"`
       : 'NULL::boolean AS "tenantIsActive"';
@@ -562,6 +596,7 @@ export class AuthService {
       SELECT
         u.${quoteIdentifier(userIdColumn)} AS "userId",
         u.${quoteIdentifier(userTenantIdColumn)} AS "tenantId",
+        ${userBranchIdSelect},
         ${userCustomRoleIdSelect},
         ${tenantSlugSelect},
         ${tenantBridgeApiUrlSelect},
@@ -584,5 +619,62 @@ export class AuthService {
 
     const rows = await prisma.$queryRawUnsafe<LoginTenantRecord[]>(query, username, tenantId);
     return rows[0] ?? null;
+  }
+
+  private static async findBranchByCode(
+    tenantId: string,
+    branchCode: string,
+  ): Promise<BranchLoginRecord | null> {
+    const rows = await prisma.$queryRawUnsafe<BranchLoginRecord[]>(
+      `
+      SELECT
+        "id"::text AS "id",
+        "name",
+        "branch_code" AS "branchCode",
+        COALESCE("is_active", TRUE) AS "isActive"
+      FROM "branches"
+      WHERE "tenant_id" = $1
+        AND LOWER(COALESCE("branch_code", '')) = LOWER($2)
+      LIMIT 1
+      `,
+      tenantId,
+      branchCode,
+    );
+
+    return rows[0] ?? null;
+  }
+
+  private static async resolveBranchForLogin(
+    loginRecord: LoginTenantRecord,
+    branchCode?: string,
+  ): Promise<BranchLoginRecord | null> {
+    const normalizedBranchCode = branchCode?.trim();
+
+    if (!loginRecord.branchId && !normalizedBranchCode) {
+      return null;
+    }
+
+    if (loginRecord.branchId && !normalizedBranchCode) {
+      throw new AppError('branchCode wajib diisi untuk user yang terdaftar ke cabang tertentu', 400);
+    }
+
+    if (!normalizedBranchCode) {
+      return null;
+    }
+
+    const branch = await this.findBranchByCode(loginRecord.tenantId, normalizedBranchCode);
+    if (!branch) {
+      throw new AppError('Branch code tidak ditemukan pada tenant ini', 401);
+    }
+
+    if (!branch.isActive) {
+      throw new AppError('Cabang sudah tidak aktif', 403);
+    }
+
+    if (loginRecord.branchId && branch.id !== loginRecord.branchId) {
+      throw new AppError('User tidak terdaftar di branch yang dipilih', 403);
+    }
+
+    return branch;
   }
 }

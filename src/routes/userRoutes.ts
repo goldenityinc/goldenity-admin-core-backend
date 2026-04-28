@@ -5,7 +5,7 @@ import {
 	getUsers,
 	resetUserPassword,
 	syncPosUsers,
-	updateUserRole,
+	updateUser,
 	updateUserStatus,
 } from '../controllers/userController';
 import { authMiddleware, roleMiddleware } from '../middlewares/authMiddleware';
@@ -18,7 +18,7 @@ router.use(authMiddleware);
 router.get('/', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), getUsers);
 router.post('/', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), createUser);
 router.post('/sync-pos', roleMiddleware('SUPER_ADMIN'), syncPosUsers);
-router.patch('/:id', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), updateUserRole);
+router.patch('/:id', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), updateUser);
 router.patch('/:id/reset-password', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), resetUserPassword);
 router.patch('/:id/status', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), updateUserStatus);
 router.delete('/:id', roleMiddleware('SUPER_ADMIN', 'TENANT_ADMIN', 'ADMIN', 'OWNER'), deleteUserHard);
