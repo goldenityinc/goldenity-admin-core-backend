@@ -13,9 +13,10 @@ const router = Router({ mergeParams: true });
 router.use(authMiddleware);
 router.use(tenantMiddleware);
 router.get('/', listBranches);
-router.get('/:id', getBranch);
+router.get('/:branchId', getBranch);
 router.post('/', createBranch);
-router.patch('/:id', updateBranch);
-router.delete('/:id', deleteBranch);
+router.put('/:branchId', updateBranch);
+router.patch('/:branchId', updateBranch);
+router.delete('/:branchId', deleteBranch);
 
 export default router;

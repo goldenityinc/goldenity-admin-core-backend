@@ -54,7 +54,7 @@ export const getBranch = asyncHandler(async (req: Request, res: Response) => {
 
   const branch = await BranchService.getBranchById(
     readTenantId(req),
-    parseBranchId(paramParsed.data.id),
+    parseBranchId(paramParsed.data.branchId),
   );
 
   return res.status(200).json({
@@ -76,7 +76,7 @@ export const updateBranch = asyncHandler(async (req: Request, res: Response) => 
 
   const branch = await BranchService.updateBranch(
     readTenantId(req),
-    parseBranchId(paramParsed.data.id),
+    parseBranchId(paramParsed.data.branchId),
     bodyParsed.data,
   );
 
@@ -93,7 +93,7 @@ export const deleteBranch = asyncHandler(async (req: Request, res: Response) => 
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid branch id', 400);
   }
 
-  await BranchService.deleteBranch(readTenantId(req), parseBranchId(paramParsed.data.id));
+  await BranchService.deleteBranch(readTenantId(req), parseBranchId(paramParsed.data.branchId));
 
   return res.status(200).json({
     success: true,
