@@ -2,30 +2,6 @@ import bcrypt from 'bcryptjs';
 import { UserRole } from '@prisma/client';
 import prisma from '../config/database';
 
-const tenantSummarySelect = {
-  id: true,
-  name: true,
-  slug: true,
-  email: true,
-  phone: true,
-  isActive: true,
-  createdAt: true,
-} as const;
-
-const createTenantSelect = {
-  id: true,
-  name: true,
-  slug: true,
-  isActive: true,
-  createdAt: true,
-} as const;
-
-const firstAdminSelect = {
-  id: true,
-  email: true,
-  role: true,
-} as const;
-
 export class TenantService {
   static async createTenant(data: {
     name: string;
@@ -53,9 +29,11 @@ export class TenantService {
           slug: resolvedSlug,
           email: data.email,
           phone: data.phone,
+          address: data.address,
+          logoUrl: data.logoUrl,
           isActive: data.isActive ?? true,
+          showInventoryImages: data.showInventoryImages ?? true,
         },
-        select: createTenantSelect,
       });
 
       if (!shouldCreateFirstAdmin) {
@@ -72,7 +50,6 @@ export class TenantService {
           firebaseUid: null,
           passwordHash: passwordHash as string,
         },
-        select: firstAdminSelect,
       });
 
       return { tenant, firstAdmin };
@@ -93,7 +70,6 @@ export class TenantService {
   static async getTenantById(tenantId: string) {
     return await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: tenantSummarySelect,
     });
   }
 
@@ -114,7 +90,6 @@ export class TenantService {
         where,
         skip,
         take: options.limit,
-        select: tenantSummarySelect,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.tenant.count({ where }),
