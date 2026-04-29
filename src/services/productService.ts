@@ -1,13 +1,6 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 
-/**
- * NOTE on branch isolation:
- * The `products` table does not have a native `branch_id` column in this schema.
- * For branch-scoped callers, this service limits products to those that are linked
- * to the caller branch through sales records to prevent cross-branch data leakage.
- */
-
 export type ProductListFilters = {
   tenantId: string;
   branchId: bigint | null;
@@ -20,9 +13,8 @@ export type ProductListFilters = {
 
 export class ProductService {
   /**
-   * List products scoped to the requesting user's tenant.
-   * For branch-scoped callers, results are restricted to products that appear
-   * in sales records for the same branch.
+  * List products scoped to the requesting user's tenant.
+  * When branchId is provided, results are isolated to that branch at the product row level.
    */
   static async listProducts(filters: ProductListFilters) {
     const {
@@ -41,6 +33,7 @@ export class ProductService {
 
     const where: Prisma.productsWhereInput = {
       tenant_id: tenantId,
+      ...(branchId !== null ? { branchId } : {}),
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(category ? { category } : {}),
       ...(search
@@ -53,26 +46,6 @@ export class ProductService {
           : {}),
     };
 
-    if (branchId !== null) {
-      const branchScopedIds = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT DISTINCT p.id
-        FROM products p
-        INNER JOIN sales_record_items sri ON sri.product_id = p.id
-        INNER JOIN sales_records sr ON sr.id = sri.sales_record_id
-        WHERE p.tenant_id = ${tenantId}
-          AND sr.tenant_id = ${tenantId}
-          AND sr.branch_id = ${branchId}
-      `;
-
-      const productIds = branchScopedIds
-        .map((row) => (row.id ?? '').toString().trim())
-        .filter((id) => id.length > 0);
-
-      where.id = {
-        in: productIds.length > 0 ? productIds : ['__no_branch_product_match__'],
-      };
-    }
-
     const [products, total] = await Promise.all([
       prisma.products.findMany({
         where,
@@ -81,6 +54,7 @@ export class ProductService {
         take: safeLimit,
         select: {
           id: true,
+          branchId: true,
           tenant_id: true,
           name: true,
           barcode: true,
@@ -123,26 +97,12 @@ export class ProductService {
       where: {
         id: productId,
         tenant_id: tenantId,
+        ...(branchId !== null ? { branchId } : {}),
       },
     });
 
     if (!product) {
       return null;
-    }
-
-    if (branchId !== null) {
-      const accessRows = await prisma.$queryRaw<Array<{ product_id: string }>>`
-        SELECT sri.product_id
-        FROM sales_record_items sri
-        INNER JOIN sales_records sr ON sr.id = sri.sales_record_id
-        WHERE sr.tenant_id = ${tenantId}
-          AND sr.branch_id = ${branchId}
-          AND sri.product_id = ${productId}
-        LIMIT 1
-      `;
-      if (accessRows.length === 0) {
-        return null;
-      }
     }
 
     return product ?? null;

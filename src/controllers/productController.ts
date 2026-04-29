@@ -24,6 +24,41 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function parseQueryBranchId(value: unknown): bigint | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  return BigInt(value);
+}
+
+function resolveProductBranchFilter(req: Request): bigint | null {
+  const user = req.user;
+  if (!user) {
+    throw new AppError('Unauthenticated', 401);
+  }
+
+  const role = (user.role ?? '').trim().toUpperCase();
+
+  if (role === 'TENANT_ADMIN') {
+    return parseQueryBranchId(req.query.branchId);
+  }
+
+  if (role === 'CASHIER' || role === 'CRM_STAFF') {
+    if (!user.branchId) {
+      throw new AppError('Akses ditolak: konteks cabang tidak tersedia pada akun ini', 403);
+    }
+
+    if (!/^\d+$/.test(user.branchId)) {
+      throw new AppError('Branch ID pada token tidak valid', 403);
+    }
+
+    return BigInt(user.branchId);
+  }
+
+  return resolveBranchFilter(req);
+}
+
 /**
  * GET /api/v1/products
  *
@@ -33,7 +68,7 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
  */
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const branchId = resolveBranchFilter(req);
+  const branchId = resolveProductBranchFilter(req);
 
   const isActive = parseOptionalBoolean(req.query.isActive);
   const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -63,7 +98,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
  */
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const branchId = resolveBranchFilter(req);
+  const branchId = resolveProductBranchFilter(req);
 
   const { productId } = req.params;
   if (!productId || typeof productId !== 'string') {

@@ -43,6 +43,7 @@ model Branch {
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at")
   tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products           products[]
   users              User[]
   salesRecords       sales_records[] @relation("SalesRecordBranch")
   pickupSalesRecords sales_records[] @relation("SalesRecordTargetPickupBranch")
@@ -338,6 +339,7 @@ model petty_cash_logs {
 
 model products {
   id             String    @id
+  branchId       BigInt?   @map("branch_id")
   tenant_id      String?
   name           String
   barcode        String?
@@ -352,7 +354,9 @@ model products {
   created_at     DateTime? @default(now())
   updated_at     DateTime? @default(now())
   reference_id   String?
+  branch         Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
+  @@index([branchId])
   @@index([tenant_id])
 }
 
