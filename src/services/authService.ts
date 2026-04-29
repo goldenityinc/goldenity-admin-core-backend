@@ -91,7 +91,6 @@ export class AuthService {
     logLoginTrace('start', {
       username: credentials.username,
       tenantSlug: credentials.tenantSlug,
-      branchCode: credentials.branchCode,
     });
 
     if (!jwtSecret) {
@@ -193,7 +192,6 @@ export class AuthService {
 
     const resolvedBranchContext = await this.resolveBranchForLogin(
       resolvedLoginRecord,
-      credentials.branchCode,
     );
     const resolvedBranch = resolvedBranchContext.branch;
 
@@ -634,9 +632,9 @@ export class AuthService {
     return rows[0] ?? null;
   }
 
-  private static async findBranchByCode(
+  private static async findBranchById(
     tenantId: string,
-    branchCode: string,
+    branchId: string,
   ): Promise<BranchLoginRecord | null> {
     const rows = await prisma.$queryRawUnsafe<BranchLoginRecord[]>(
       `
@@ -647,11 +645,11 @@ export class AuthService {
         COALESCE("is_active", TRUE) AS "isActive"
       FROM "branches"
       WHERE "tenant_id" = $1
-        AND LOWER(COALESCE("branch_code", '')) = LOWER($2)
+        AND "id"::text = $2
       LIMIT 1
       `,
       tenantId,
-      branchCode,
+      branchId,
     );
 
     return rows[0] ?? null;
@@ -659,50 +657,41 @@ export class AuthService {
 
   private static async resolveBranchForLogin(
     loginRecord: LoginTenantRecord,
-    branchCode?: string,
   ): Promise<ResolvedLoginBranchContext> {
-    const normalizedBranchCode = branchCode?.trim();
+    const normalizedBranchId = loginRecord.branchId?.trim();
     const normalizedRole = normalizeRole(loginRecord.role);
     const isTenantAdmin = normalizedRole === 'TENANT_ADMIN';
     const requiresAssignedBranch = normalizedRole === 'CRM_STAFF' || normalizedRole === 'CASHIER';
 
-    if (isTenantAdmin && !normalizedBranchCode) {
+    if (normalizedBranchId) {
+      const branch = await this.findBranchById(loginRecord.tenantId, normalizedBranchId);
+      if (!branch) {
+        throw new AppError('Cabang user tidak ditemukan pada tenant ini', 403);
+      }
+
+      if (!branch.isActive) {
+        throw new AppError('Cabang user sudah tidak aktif', 403);
+      }
+
+      return {
+        branch,
+        isHQ: false,
+      };
+    }
+
+    if (isTenantAdmin) {
       return {
         branch: null,
         isHQ: true,
       };
     }
 
-    if (requiresAssignedBranch && !loginRecord.branchId) {
-      throw new AppError('User role ini wajib terdaftar ke cabang tertentu', 403);
-    }
-
-    if ((loginRecord.branchId || requiresAssignedBranch) && !normalizedBranchCode) {
-      throw new AppError('branchCode wajib diisi untuk user yang terdaftar ke cabang tertentu', 400);
-    }
-
-    if (!normalizedBranchCode) {
-      return {
-        branch: null,
-        isHQ: false,
-      };
-    }
-
-    const branch = await this.findBranchByCode(loginRecord.tenantId, normalizedBranchCode);
-    if (!branch) {
-      throw new AppError('Branch code tidak ditemukan pada tenant ini', 401);
-    }
-
-    if (!branch.isActive) {
-      throw new AppError('Cabang sudah tidak aktif', 403);
-    }
-
-    if (loginRecord.branchId && branch.id !== loginRecord.branchId) {
-      throw new AppError('User tidak terdaftar di branch yang dipilih', 403);
+    if (requiresAssignedBranch) {
+      throw new AppError('Akun belum ditugaskan ke cabang mana pun.', 403);
     }
 
     return {
-      branch,
+      branch: null,
       isHQ: false,
     };
   }

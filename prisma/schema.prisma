@@ -39,6 +39,7 @@ model Branch {
   address            String?
   phone              String?
   isActive           Boolean         @default(true) @map("is_active")
+  isMainBranch       Boolean         @default(false) @map("is_main_branch")
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at")
   tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)

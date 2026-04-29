@@ -38,6 +38,7 @@ type BranchPayload = {
   address?: string | null;
   phone?: string | null;
   isActive?: boolean;
+  isMainBranch?: boolean;
 };
 
 type UpdateBranchPayload = {
@@ -46,6 +47,7 @@ type UpdateBranchPayload = {
   address?: string | null;
   phone?: string | null;
   isActive?: boolean;
+  isMainBranch?: boolean;
 };
 
 type BranchRow = {
@@ -56,6 +58,7 @@ type BranchRow = {
   address: string | null;
   phone: string | null;
   isActive: boolean;
+  isMainBranch: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -74,7 +77,8 @@ export class BranchService {
           "branch_code",
           "address",
           "phone",
-          "is_active"
+          "is_active",
+          "is_main_branch"
         )
         VALUES (
           ${tenantId},
@@ -82,7 +86,8 @@ export class BranchService {
           ${payload.branchCode ?? null},
           ${payload.address ?? null},
           ${payload.phone ?? null},
-          ${payload.isActive ?? true}
+          ${payload.isActive ?? true},
+          ${payload.isMainBranch ?? false}
         )
         RETURNING
           "id",
@@ -92,6 +97,7 @@ export class BranchService {
           "address",
           "phone",
           "is_active" AS "isActive",
+          "is_main_branch" AS "isMainBranch",
           "created_at" AS "createdAt",
           "updated_at" AS "updatedAt"
       `;
@@ -112,6 +118,7 @@ export class BranchService {
         "address",
         "phone",
         "is_active" AS "isActive",
+        "is_main_branch" AS "isMainBranch",
         "created_at" AS "createdAt",
         "updated_at" AS "updatedAt"
       FROM "branches"
@@ -130,6 +137,7 @@ export class BranchService {
         "address",
         "phone",
         "is_active" AS "isActive",
+        "is_main_branch" AS "isMainBranch",
         "created_at" AS "createdAt",
         "updated_at" AS "updatedAt"
       FROM "branches"
@@ -157,6 +165,7 @@ export class BranchService {
           "address" = ${payload.address !== undefined ? payload.address : existing.address},
           "phone" = ${payload.phone !== undefined ? payload.phone : existing.phone},
           "is_active" = ${payload.isActive ?? existing.isActive},
+          "is_main_branch" = ${payload.isMainBranch ?? existing.isMainBranch},
           "updated_at" = CURRENT_TIMESTAMP
         WHERE "id" = ${branchId} AND "tenant_id" = ${tenantId}
         RETURNING
@@ -167,6 +176,7 @@ export class BranchService {
           "address",
           "phone",
           "is_active" AS "isActive",
+          "is_main_branch" AS "isMainBranch",
           "created_at" AS "createdAt",
           "updated_at" AS "updatedAt"
       `;

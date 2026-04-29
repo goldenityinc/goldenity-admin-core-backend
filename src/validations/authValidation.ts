@@ -12,9 +12,6 @@ export const loginSchema = z
     tenantSlug: z.string().trim().min(1).optional(),
     tenant_slug: z.string().trim().min(1).optional(),
     kode_perusahaan: z.string().trim().min(1).optional(),
-    branchCode: z.string().trim().min(1).optional(),
-    branch_code: z.string().trim().min(1).optional(),
-    kode_cabang: z.string().trim().min(1).optional(),
   })
   .transform((data, ctx) => {
     // Priority: camelCase > snake_case > Indonesian legacy key
@@ -29,17 +26,10 @@ export const loginSchema = z
       return z.NEVER;
     }
 
-    const resolvedBranchCode =
-      data.branchCode?.trim() ??
-      data.branch_code?.trim() ??
-      data.kode_cabang?.trim() ??
-      undefined;
-
     return {
       username: data.username,
       password: data.password,
       tenantSlug: resolvedSlug,
-      branchCode: resolvedBranchCode && resolvedBranchCode.length > 0 ? resolvedBranchCode : undefined,
     };
   });
 
