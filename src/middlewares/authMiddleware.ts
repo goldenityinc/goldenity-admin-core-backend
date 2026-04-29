@@ -15,6 +15,9 @@ declare global {
         email?: string;
         tenantId: string;
         role?: string;
+        branchId?: string;
+        branchCode?: string;
+        isHQ?: boolean;
         tier?: string | null;
         addons?: string[];
         entitlementsRevision?: number;
@@ -51,6 +54,9 @@ export const verifyToken = (req: Request, _res: Response, next: NextFunction) =>
       userId: decoded.userId,
       tenantId: decoded.tenantId,
       role: decoded.role,
+      branchId: decoded.branchId,
+      branchCode: decoded.branchCode,
+      isHQ: decoded.isHQ,
       tier: decoded.tier,
       addons: decoded.addons,
       entitlementsRevision: decoded.entitlementsRevision,
@@ -110,6 +116,9 @@ export const authMiddleware = async (
             userId: decoded.userId,
             tenantId: decoded.tenantId,
             role: decoded.role,
+            branchId: decoded.branchId,
+            branchCode: decoded.branchCode,
+            isHQ: decoded.isHQ,
             tier: decoded.tier,
             addons: decoded.addons,
           };

@@ -38,6 +38,11 @@ type BranchLoginRecord = {
   isActive: boolean;
 };
 
+type ResolvedLoginBranchContext = {
+  branch: BranchLoginRecord | null;
+  isHQ: boolean;
+};
+
 type ColumnMetadata = {
   tenants: Set<string>;
   userAppAccesses: Set<string>;
@@ -73,6 +78,10 @@ function logLoginTrace(stage: string, payload?: Record<string, unknown>): void {
     return;
   }
   console.log(`[AuthService.login] ${stage}`);
+}
+
+function normalizeRole(role: string | null | undefined): string {
+  return (role ?? '').trim().toUpperCase();
 }
 
 export class AuthService {
@@ -182,10 +191,11 @@ export class AuthService {
       throw new AppError('Tenant sudah tidak aktif', 403);
     }
 
-    const resolvedBranch = await this.resolveBranchForLogin(
+    const resolvedBranchContext = await this.resolveBranchForLogin(
       resolvedLoginRecord,
       credentials.branchCode,
     );
+    const resolvedBranch = resolvedBranchContext.branch;
 
     // PENGECEKAN SUBSCRIPTION (Masa Aktif) DITAMBAHKAN DI SINI! 🔥
     if (resolvedLoginRecord.endDate) {
@@ -228,8 +238,9 @@ export class AuthService {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role ?? undefined,
-      branchId: resolvedBranch?.id ?? resolvedLoginRecord.branchId ?? undefined,
+      branchId: resolvedBranch?.id ?? undefined,
       branchCode: resolvedBranch?.branchCode ?? undefined,
+      isHQ: resolvedBranchContext.isHQ || undefined,
       tier,
       addons,
       entitlementsRevision: resolvedEntitlements.entitlements.revision,
@@ -248,7 +259,8 @@ export class AuthService {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role,
-      branchId: resolvedBranch?.id ?? resolvedLoginRecord.branchId,
+      branchId: resolvedBranch?.id ?? null,
+      isHQ: resolvedBranchContext.isHQ,
       tier,
     });
 
@@ -261,7 +273,8 @@ export class AuthService {
         username: credentials.username,
         role: resolvedLoginRecord.role ?? 'CRM_STAFF',
         tenantId: resolvedLoginRecord.tenantId,
-        branchId: resolvedLoginRecord.branchId,
+        branchId: resolvedBranch?.id ?? null,
+        isHQ: resolvedBranchContext.isHQ,
         customRoleId: resolvedLoginRecord.customRoleId,
       },
       branch: resolvedBranch
@@ -647,19 +660,32 @@ export class AuthService {
   private static async resolveBranchForLogin(
     loginRecord: LoginTenantRecord,
     branchCode?: string,
-  ): Promise<BranchLoginRecord | null> {
+  ): Promise<ResolvedLoginBranchContext> {
     const normalizedBranchCode = branchCode?.trim();
+    const normalizedRole = normalizeRole(loginRecord.role);
+    const isTenantAdmin = normalizedRole === 'TENANT_ADMIN';
+    const requiresAssignedBranch = normalizedRole === 'CRM_STAFF' || normalizedRole === 'CASHIER';
 
-    if (!loginRecord.branchId && !normalizedBranchCode) {
-      return null;
+    if (isTenantAdmin && !normalizedBranchCode) {
+      return {
+        branch: null,
+        isHQ: true,
+      };
     }
 
-    if (loginRecord.branchId && !normalizedBranchCode) {
+    if (requiresAssignedBranch && !loginRecord.branchId) {
+      throw new AppError('User role ini wajib terdaftar ke cabang tertentu', 403);
+    }
+
+    if ((loginRecord.branchId || requiresAssignedBranch) && !normalizedBranchCode) {
       throw new AppError('branchCode wajib diisi untuk user yang terdaftar ke cabang tertentu', 400);
     }
 
     if (!normalizedBranchCode) {
-      return null;
+      return {
+        branch: null,
+        isHQ: false,
+      };
     }
 
     const branch = await this.findBranchByCode(loginRecord.tenantId, normalizedBranchCode);
@@ -675,6 +701,9 @@ export class AuthService {
       throw new AppError('User tidak terdaftar di branch yang dipilih', 403);
     }
 
-    return branch;
+    return {
+      branch,
+      isHQ: false,
+    };
   }
 }
