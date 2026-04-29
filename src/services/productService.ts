@@ -14,7 +14,7 @@ export type ProductListFilters = {
 export class ProductService {
   /**
   * List products scoped to the requesting user's tenant.
-  * When branchId is provided, results are isolated to that branch at the product row level.
+  * branchId is never allowed to be null in result rows.
    */
   static async listProducts(filters: ProductListFilters) {
     const {
@@ -33,7 +33,7 @@ export class ProductService {
 
     const where: Prisma.productsWhereInput = {
       tenant_id: tenantId,
-      ...(branchId !== null ? { branchId } : {}),
+      ...(branchId !== null ? { branchId } : { branchId: { not: null } }),
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(category ? { category } : {}),
       ...(search
@@ -97,7 +97,7 @@ export class ProductService {
       where: {
         id: productId,
         tenant_id: tenantId,
-        ...(branchId !== null ? { branchId } : {}),
+        ...(branchId !== null ? { branchId } : { branchId: { not: null } }),
       },
     });
 
@@ -106,5 +106,28 @@ export class ProductService {
     }
 
     return product ?? null;
+  }
+
+  static async updateProductBranchId(
+    tenantId: string,
+    productId: string,
+    branchId: bigint,
+  ) {
+    const existing = await prisma.products.findFirst({
+      where: {
+        id: productId,
+        tenant_id: tenantId,
+      },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      return null;
+    }
+
+    return prisma.products.update({
+      where: { id: productId },
+      data: { branchId },
+    });
   }
 }

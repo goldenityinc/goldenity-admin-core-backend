@@ -42,3 +42,7 @@ export const updateProductSchema = createProductSchema.partial().refine(
     message: 'At least one field must be provided',
   },
 );
+
+export const assignProductBranchSchema = z.object({
+  branchId: z.string().regex(/^\d+$/, 'branchId must be a numeric string'),
+});

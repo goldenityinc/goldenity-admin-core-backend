@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
+import { assignProductBranchSchema } from '../validations/productValidation';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -118,5 +119,43 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   return res.status(200).json({
     success: true,
     data: product,
+  });
+});
+
+/**
+ * PATCH /api/v1/products/:id
+ */
+export const updateProductBranch = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const role = (req.user?.role ?? '').trim().toUpperCase();
+
+  if (role !== 'TENANT_ADMIN') {
+    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat mengubah cabang produk', 403);
+  }
+
+  const productId = req.params.id;
+  if (!productId || typeof productId !== 'string') {
+    throw new AppError('Product ID tidak valid', 400);
+  }
+
+  const parsed = assignProductBranchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid payload', 400);
+  }
+
+  const updated = await ProductService.updateProductBranchId(
+    tenantId,
+    productId,
+    BigInt(parsed.data.branchId),
+  );
+
+  if (!updated) {
+    throw new AppError('Produk tidak ditemukan', 404);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Branch produk berhasil diperbarui',
+    data: updated,
   });
 });
