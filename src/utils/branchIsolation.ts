@@ -1,6 +1,12 @@
 import { Request } from 'express';
 import { AppError } from './AppError';
 
+const BRANCH_RESTRICTED_ROLES = new Set(['CASHIER', 'CRM_STAFF']);
+
+function normalizeRole(rawRole: unknown): string {
+  return (rawRole ?? '').toString().trim().toUpperCase();
+}
+
 /**
  * Resolves the branch filter for POS operational data queries.
  *
@@ -19,16 +25,28 @@ export function resolveBranchFilter(req: Request): bigint | null {
     throw new AppError('Unauthenticated', 401);
   }
 
-  if (user.isHQ === true) {
+  const role = normalizeRole(user.role);
+  const isTenantAdminHq = role === 'TENANT_ADMIN' && user.isHQ === true;
+
+  if (isTenantAdminHq) {
     const queryBranchId = req.query.branchId;
     if (queryBranchId && typeof queryBranchId === 'string' && /^\d+$/.test(queryBranchId)) {
       return BigInt(queryBranchId);
     }
-    // HQ with no specific branch param → no restriction
+    // TENANT_ADMIN + HQ boleh lintas cabang.
     return null;
   }
 
-  // Non-HQ user must have branchId in their JWT token
+  const mustRestrictToBranch = BRANCH_RESTRICTED_ROLES.has(role) || user.isHQ !== true;
+  if (!mustRestrictToBranch) {
+    const queryBranchId = req.query.branchId;
+    if (queryBranchId && typeof queryBranchId === 'string' && /^\d+$/.test(queryBranchId)) {
+      return BigInt(queryBranchId);
+    }
+    return null;
+  }
+
+  // Role/caller yang wajib branch scope harus punya branchId di JWT.
   if (!user.branchId) {
     throw new AppError(
       'Akses ditolak: konteks cabang tidak tersedia pada akun ini',

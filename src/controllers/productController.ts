@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
+import { resolveBranchFilter } from '../utils/branchIsolation';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -26,11 +27,13 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
 /**
  * GET /api/v1/products
  *
- * Products are tenant-scoped (no branch_id in schema). All users within
- * the same tenant see the same catalog. Tenant isolation is enforced via JWT.
+ * Branch filter is resolved from JWT/query via resolveBranchFilter.
+ * - CASHIER / CRM_STAFF: wajib branch scope
+ * - TENANT_ADMIN + HQ: boleh lintas cabang
  */
 export const listProducts = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
+  const branchId = resolveBranchFilter(req);
 
   const isActive = parseOptionalBoolean(req.query.isActive);
   const category = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -40,6 +43,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
 
   const result = await ProductService.listProducts({
     tenantId,
+    branchId,
     isActive,
     category,
     search,
@@ -59,13 +63,18 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
  */
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
+  const branchId = resolveBranchFilter(req);
 
   const { productId } = req.params;
   if (!productId || typeof productId !== 'string') {
     throw new AppError('Product ID tidak valid', 400);
   }
 
-  const product = await ProductService.getProductById(tenantId, productId);
+  const product = await ProductService.getProductById(
+    tenantId,
+    productId,
+    branchId,
+  );
 
   if (!product) {
     throw new AppError('Produk tidak ditemukan', 404);
