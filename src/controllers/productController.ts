@@ -4,6 +4,7 @@ import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { assignProductBranchSchema } from '../validations/productValidation';
+import { serializeForJson } from '../utils/serializeForJson';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -89,7 +90,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
 
   return res.status(200).json({
     success: true,
-    data: result.products,
+    data: serializeForJson(result.products),
     pagination: result.pagination,
   });
 });
@@ -118,7 +119,7 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
 
   return res.status(200).json({
     success: true,
-    data: product,
+    data: serializeForJson(product),
   });
 });
 
