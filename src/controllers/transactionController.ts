@@ -43,6 +43,45 @@ function parsePositiveInt(value: unknown, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function parseQueryBranchId(value: unknown): bigint | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  return BigInt(value);
+}
+
+function normalizeRole(rawRole: unknown): string {
+  return (rawRole ?? '').toString().trim().toUpperCase();
+}
+
+function resolveTransactionBranchFilter(req: Request): bigint | null {
+  const user = req.user;
+  if (!user) {
+    throw new AppError('Unauthenticated', 401);
+  }
+
+  const role = normalizeRole(user.role);
+
+  if (role === 'TENANT_ADMIN') {
+    return parseQueryBranchId(req.query.branchId);
+  }
+
+  if (role === 'CASHIER' || role === 'CRM_STAFF') {
+    if (!user.branchId) {
+      throw new AppError('Akses ditolak: konteks cabang tidak tersedia pada akun ini', 403);
+    }
+
+    if (!/^\d+$/.test(user.branchId)) {
+      throw new AppError('Branch ID pada token tidak valid', 403);
+    }
+
+    return BigInt(user.branchId);
+  }
+
+  return resolveBranchFilter(req);
+}
+
 function parseOptionalEnum<T extends string>(
   value: unknown,
   label: string,
@@ -68,7 +107,8 @@ function parseOptionalEnum<T extends string>(
  */
 export const listTransactions = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const branchId = resolveBranchFilter(req);
+  const branchId = resolveTransactionBranchFilter(req);
+  const role = normalizeRole(req.user?.role);
 
   const startDate = parseOptionalDate(req.query.startDate);
   const endDate = parseOptionalDate(req.query.endDate);
@@ -80,6 +120,7 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
   const result = await TransactionService.listTransactions({
     tenantId,
     branchId,
+    requireAssignedBranch: role === 'TENANT_ADMIN' && branchId === null,
     startDate,
     endDate,
     orderStatus,
@@ -103,7 +144,7 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
  */
 export const getTransaction = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const branchId = resolveBranchFilter(req);
+  const branchId = resolveTransactionBranchFilter(req);
 
   const rawId = req.params.id;
   if (!rawId || !/^\d+$/.test(rawId)) {

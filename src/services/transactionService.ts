@@ -8,6 +8,7 @@ export type TransactionListFilters = {
    * bigint = filter to this specific branch only
    */
   branchId: bigint | null;
+  requireAssignedBranch?: boolean;
   startDate?: Date;
   endDate?: Date;
   orderStatus?: OrderStatus;
@@ -16,7 +17,18 @@ export type TransactionListFilters = {
   limit?: number;
 };
 
-type TransactionRecordRow = Awaited<ReturnType<typeof prisma.sales_records.findFirst>> & {
+type TransactionRecordWithBranch = Prisma.sales_recordsGetPayload<{
+  include: {
+    branch: {
+      select: {
+        id: true;
+        name: true;
+      };
+    };
+  };
+}>;
+
+type TransactionRecordRow = TransactionRecordWithBranch & {
   cashierDisplayName?: string | null;
   branchName?: string | null;
 };
@@ -24,7 +36,7 @@ type TransactionRecordRow = Awaited<ReturnType<typeof prisma.sales_records.findF
 export class TransactionService {
   private static async enrichTransactionsWithNames(
     tenantId: string,
-    records: Awaited<ReturnType<typeof prisma.sales_records.findMany>>,
+    records: TransactionRecordWithBranch[],
   ): Promise<TransactionRecordRow[]> {
     if (records.length === 0) {
       return [];
@@ -53,29 +65,6 @@ export class TransactionService {
 
     const userMap = new Map(users.map((user) => [user.id, user.name]));
 
-    const branchIds = Array.from(
-      new Set(
-        records
-          .map((record) => record.branch_id)
-          .filter((value): value is bigint => value !== null),
-      ),
-    );
-
-    const branches = branchIds.length
-      ? await prisma.branch.findMany({
-          where: {
-            tenantId,
-            id: { in: branchIds },
-          },
-          select: {
-            id: true,
-            name: true,
-          },
-        })
-      : [];
-
-    const branchMap = new Map(branches.map((branch) => [branch.id.toString(), branch.name]));
-
     return records.map((record) => {
       const cashierId = record.cashier_id?.trim() || '';
       const cashierDisplayName =
@@ -86,10 +75,7 @@ export class TransactionService {
       return {
         ...record,
         cashierDisplayName,
-        branchName:
-          record.branch_id !== null
-            ? branchMap.get(record.branch_id.toString()) ?? null
-            : null,
+        branchName: record.branch?.name?.trim() || null,
       };
     });
   }
@@ -103,6 +89,7 @@ export class TransactionService {
     const {
       tenantId,
       branchId,
+      requireAssignedBranch = false,
       startDate,
       endDate,
       orderStatus,
@@ -118,6 +105,7 @@ export class TransactionService {
     const where: Prisma.sales_recordsWhereInput = {
       tenant_id: tenantId,
       ...(branchId !== null ? { branch_id: branchId } : {}),
+      ...(branchId === null && requireAssignedBranch ? { branch_id: { not: null } } : {}),
       ...(startDate || endDate
         ? {
             created_at: {
@@ -133,6 +121,14 @@ export class TransactionService {
     const [records, total] = await Promise.all([
       prisma.sales_records.findMany({
         where,
+        include: {
+          branch: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
         orderBy: { created_at: 'desc' },
         skip,
         take: safeLimit,
@@ -167,6 +163,14 @@ export class TransactionService {
         id,
         tenant_id: tenantId,
         ...(branchId !== null ? { branch_id: branchId } : {}),
+      },
+      include: {
+        branch: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
 
