@@ -17,6 +17,24 @@ function resolveTenantId(req: Request): string {
   return tenantId;
 }
 
+function resolveOptionalBranchId(query: Request['query']): bigint | null {
+  const branchIdRaw = readQueryString(query, 'branchId');
+
+  if (!branchIdRaw) {
+    return null;
+  }
+
+  if (branchIdRaw.toLowerCase() === 'semua') {
+    return null;
+  }
+
+  if (!/^\d+$/.test(branchIdRaw)) {
+    throw new AppError('branchId harus berupa angka atau "Semua"', 400);
+  }
+
+  return BigInt(branchIdRaw);
+}
+
 function rethrowAccountingReportError(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2021' || error.code === 'P2022') {
@@ -44,6 +62,7 @@ export const getProfitAndLossReport = asyncHandler(
     const tenantId = resolveTenantId(req);
     const startDate = readQueryString(req.query, 'startDate');
     const endDate = readQueryString(req.query, 'endDate');
+    const branchId = resolveOptionalBranchId(req.query);
 
     if (!startDate || !endDate) {
       throw new AppError('startDate dan endDate wajib diisi', 400);
@@ -54,6 +73,7 @@ export const getProfitAndLossReport = asyncHandler(
         tenantId,
         startDate,
         endDate,
+        branchId,
       );
 
       return res.status(200).json({
@@ -70,6 +90,7 @@ export const getBalanceSheetReport = asyncHandler(
   async (req: Request, res: Response) => {
     const tenantId = resolveTenantId(req);
     const asOfDate = readQueryString(req.query, 'asOfDate');
+    const branchId = resolveOptionalBranchId(req.query);
 
     if (!asOfDate) {
       throw new AppError('asOfDate wajib diisi', 400);
@@ -79,6 +100,7 @@ export const getBalanceSheetReport = asyncHandler(
       const report = await AccountingReportService.getBalanceSheetReport(
         tenantId,
         asOfDate,
+        branchId,
       );
 
       return res.status(200).json({

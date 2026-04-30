@@ -1,6 +1,7 @@
 import {
   AccountCategoryType,
   AccountNormalBalance,
+  JournalEntrySourceType,
   Prisma,
 } from '@prisma/client';
 import prisma from '../config/database';
@@ -31,6 +32,7 @@ type ProfitAndLossReport = {
   tenantId: string;
   startDate: string;
   endDate: string;
+  branchId: string | null;
   revenue: {
     total: number;
     accounts: ReportAccountLine[];
@@ -45,6 +47,7 @@ type ProfitAndLossReport = {
 type BalanceSheetReport = {
   tenantId: string;
   asOfDate: string;
+  branchId: string | null;
   assets: {
     total: number;
     accounts: ReportAccountLine[];
@@ -138,6 +141,7 @@ export class AccountingReportService {
     startDate: Date | null,
     endDate: Date,
     categories: AccountCategoryType[],
+    branchId: bigint | null,
   ): Promise<AccountBalanceRow[]> {
     const lines = await prisma.journalLine.findMany({
       where: {
@@ -148,6 +152,28 @@ export class AccountingReportService {
             ...(startDate ? { gte: startDate } : {}),
             lte: endDate,
           },
+          ...(branchId !== null
+            ? {
+                sourceType: JournalEntrySourceType.POS_SALE,
+                referenceId: {
+                  in: (
+                    await prisma.sales_records.findMany({
+                      where: {
+                        tenant_id: tenantId,
+                        branch_id: branchId,
+                        created_at: {
+                          ...(startDate ? { gte: startDate } : {}),
+                          lte: endDate,
+                        },
+                      },
+                      select: {
+                        id: true,
+                      },
+                    })
+                  ).map((record) => record.id.toString()),
+                },
+              }
+            : {}),
         },
         account: {
           category: {
@@ -223,6 +249,7 @@ export class AccountingReportService {
     tenantId: string,
     startDate: Date | string,
     endDate: Date | string,
+    branchId: bigint | null = null,
   ): Promise<ProfitAndLossReport> {
     const rangeStart = normalizeDateBoundary(startDate, false);
     const rangeEnd = normalizeDateBoundary(endDate, true);
@@ -238,6 +265,7 @@ export class AccountingReportService {
       rangeStart,
       rangeEnd,
       [AccountCategoryType.REVENUE, AccountCategoryType.EXPENSE],
+      branchId,
     );
 
     const revenueAccounts = this.mapReportLines(
@@ -255,6 +283,7 @@ export class AccountingReportService {
       tenantId,
       startDate: rangeStart.toISOString(),
       endDate: rangeEnd.toISOString(),
+      branchId: branchId?.toString() ?? null,
       revenue: {
         total: totalRevenue,
         accounts: revenueAccounts,
@@ -270,6 +299,7 @@ export class AccountingReportService {
   static async getBalanceSheetReport(
     tenantId: string,
     asOfDate: Date | string,
+    branchId: bigint | null = null,
   ): Promise<BalanceSheetReport> {
     const cutoffDate = normalizeDateBoundary(asOfDate, true);
 
@@ -286,6 +316,7 @@ export class AccountingReportService {
         AccountCategoryType.REVENUE,
         AccountCategoryType.EXPENSE,
       ],
+      branchId,
     );
 
     const assetAccounts = this.mapReportLines(
@@ -318,6 +349,7 @@ export class AccountingReportService {
     return {
       tenantId,
       asOfDate: cutoffDate.toISOString(),
+      branchId: branchId?.toString() ?? null,
       assets: {
         total: totalAssets,
         accounts: assetAccounts,

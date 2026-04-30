@@ -16,7 +16,84 @@ export type TransactionListFilters = {
   limit?: number;
 };
 
+type TransactionRecordRow = Awaited<ReturnType<typeof prisma.sales_records.findFirst>> & {
+  cashierDisplayName?: string | null;
+  branchName?: string | null;
+};
+
 export class TransactionService {
+  private static async enrichTransactionsWithNames(
+    tenantId: string,
+    records: Awaited<ReturnType<typeof prisma.sales_records.findMany>>,
+  ): Promise<TransactionRecordRow[]> {
+    if (records.length === 0) {
+      return [];
+    }
+
+    const cashierIds = Array.from(
+      new Set(
+        records
+          .map((record) => record.cashier_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const users = cashierIds.length
+      ? await prisma.user.findMany({
+          where: {
+            tenantId,
+            id: { in: cashierIds },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : [];
+
+    const userMap = new Map(users.map((user) => [user.id, user.name]));
+
+    const branchIds = Array.from(
+      new Set(
+        records
+          .map((record) => record.branch_id)
+          .filter((value): value is bigint => value !== null),
+      ),
+    );
+
+    const branches = branchIds.length
+      ? await prisma.branch.findMany({
+          where: {
+            tenantId,
+            id: { in: branchIds },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : [];
+
+    const branchMap = new Map(branches.map((branch) => [branch.id.toString(), branch.name]));
+
+    return records.map((record) => {
+      const cashierId = record.cashier_id?.trim() || '';
+      const cashierDisplayName =
+        userMap.get(cashierId) ??
+        record.cashier_name?.trim() ??
+        null;
+
+      return {
+        ...record,
+        cashierDisplayName,
+        branchName:
+          record.branch_id !== null
+            ? branchMap.get(record.branch_id.toString()) ?? null
+            : null,
+      };
+    });
+  }
+
   /**
    * List sales records with mandatory branch isolation.
    * Non-HQ callers must always pass a branchId (resolved from JWT via resolveBranchFilter).
@@ -59,39 +136,14 @@ export class TransactionService {
         orderBy: { created_at: 'desc' },
         skip,
         take: safeLimit,
-        select: {
-          id: true,
-          tenant_id: true,
-          branch_id: true,
-          target_pickup_branch_id: true,
-          reference_id: true,
-          receipt_number: true,
-          payment_method: true,
-          payment_type: true,
-          payment_status: true,
-          order_type: true,
-          order_status: true,
-          total_price: true,
-          total_amount: true,
-          amount_paid: true,
-          remaining_balance: true,
-          outstanding_balance: true,
-          total_discount: true,
-          total_tax: true,
-          total_profit: true,
-          cashier_id: true,
-          cashier_name: true,
-          customer_name: true,
-          pickup_date: true,
-          created_at: true,
-          updated_at: true,
-        },
       }),
       prisma.sales_records.count({ where }),
     ]);
 
+    const enrichedRecords = await this.enrichTransactionsWithNames(tenantId, records);
+
     return {
-      records,
+      records: enrichedRecords,
       pagination: {
         total,
         page: safePage,
@@ -118,6 +170,11 @@ export class TransactionService {
       },
     });
 
-    return record ?? null;
+    if (!record) {
+      return null;
+    }
+
+    const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [record]);
+    return enrichedRecord ?? null;
   }
 }
