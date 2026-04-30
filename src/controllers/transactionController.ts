@@ -122,6 +122,7 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
   const result = await TransactionService.listTransactions({
     tenantId,
     branchId,
+    requireScopedBranch: role === 'CASHIER' || role === 'CRM_STAFF',
     requireAssignedBranch: role === 'TENANT_ADMIN' && branchId === null,
     startDate,
     endDate,
@@ -147,13 +148,19 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
 export const getTransaction = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
   const branchId = resolveTransactionBranchFilter(req);
+  const role = normalizeRole(req.user?.role);
 
   const rawId = req.params.id;
   if (!rawId || !/^\d+$/.test(rawId)) {
     throw new AppError('ID transaksi tidak valid', 400);
   }
 
-  const record = await TransactionService.getTransactionById(tenantId, BigInt(rawId), branchId);
+  const record = await TransactionService.getTransactionById(
+    tenantId,
+    BigInt(rawId),
+    branchId,
+    role === 'CASHIER' || role === 'CRM_STAFF',
+  );
 
   if (!record) {
     throw new AppError('Transaksi tidak ditemukan', 404);

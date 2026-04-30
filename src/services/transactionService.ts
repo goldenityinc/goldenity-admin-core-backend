@@ -1,5 +1,6 @@
 import { OrderStatus, OrderType, Prisma } from '@prisma/client';
 import prisma from '../config/database';
+import { AppError } from '../utils/AppError';
 
 export type TransactionListFilters = {
   tenantId: string;
@@ -8,6 +9,7 @@ export type TransactionListFilters = {
    * bigint = filter to this specific branch only
    */
   branchId: bigint | null;
+  requireScopedBranch?: boolean;
   requireAssignedBranch?: boolean;
   startDate?: Date;
   endDate?: Date;
@@ -91,6 +93,7 @@ export class TransactionService {
     const {
       tenantId,
       branchId,
+      requireScopedBranch = false,
       requireAssignedBranch = false,
       startDate,
       endDate,
@@ -103,6 +106,13 @@ export class TransactionService {
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(Math.max(1, limit), 200);
     const skip = (safePage - 1) * safeLimit;
+
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
 
     const where: Prisma.sales_recordsWhereInput = {
       tenant_id: tenantId,
@@ -159,7 +169,15 @@ export class TransactionService {
     tenantId: string,
     id: bigint,
     branchId: bigint | null,
+    requireScopedBranch = false,
   ) {
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
+
     const record = await prisma.sales_records.findFirst({
       where: {
         id,
