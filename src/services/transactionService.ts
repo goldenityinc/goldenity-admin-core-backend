@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { OrderStatus, OrderType, Prisma } from '@prisma/client';
 import prisma from '../config/database';
 
 export type TransactionListFilters = {
@@ -10,8 +10,8 @@ export type TransactionListFilters = {
   branchId: bigint | null;
   startDate?: Date;
   endDate?: Date;
-  orderStatus?: string;
-  orderType?: string;
+  orderStatus?: OrderStatus;
+  orderType?: OrderType;
   page?: number;
   limit?: number;
 };
@@ -49,8 +49,8 @@ export class TransactionService {
             },
           }
         : {}),
-      ...(orderStatus ? { order_status: orderStatus as Prisma.EnumOrderStatusFilter } : {}),
-      ...(orderType ? { order_type: orderType as Prisma.EnumOrderTypeFilter } : {}),
+      ...(orderStatus ? { order_status: orderStatus } : {}),
+      ...(orderType ? { order_type: orderType } : {}),
     };
 
     const [records, total] = await Promise.all([

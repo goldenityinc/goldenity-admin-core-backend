@@ -1,9 +1,24 @@
+import type { OrderStatus, OrderType } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { TransactionService } from '../services/transactionService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { serializeForJson } from '../utils/serializeForJson';
+
+const ORDER_STATUS_VALUES = new Set<OrderStatus>([
+  'PENDING',
+  'PREPARING',
+  'READY_FOR_PICKUP',
+  'COMPLETED',
+  'CANCELLED',
+]);
+
+const ORDER_TYPE_VALUES = new Set<OrderType>([
+  'WALK_IN',
+  'PRE_ORDER',
+  'DELIVERY',
+]);
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -28,6 +43,21 @@ function parsePositiveInt(value: unknown, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function parseOptionalEnum<T extends string>(
+  value: unknown,
+  label: string,
+  allowedValues: Set<T>,
+): T | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+
+  const normalizedValue = value.trim().toUpperCase() as T;
+  if (!allowedValues.has(normalizedValue)) {
+    throw new AppError(`${label} tidak valid: ${value}`, 400);
+  }
+
+  return normalizedValue;
+}
+
 /**
  * GET /api/v1/transactions
  *
@@ -42,8 +72,8 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
 
   const startDate = parseOptionalDate(req.query.startDate);
   const endDate = parseOptionalDate(req.query.endDate);
-  const orderStatus = typeof req.query.orderStatus === 'string' ? req.query.orderStatus : undefined;
-  const orderType = typeof req.query.orderType === 'string' ? req.query.orderType : undefined;
+  const orderStatus = parseOptionalEnum(req.query.orderStatus, 'orderStatus', ORDER_STATUS_VALUES);
+  const orderType = parseOptionalEnum(req.query.orderType, 'orderType', ORDER_TYPE_VALUES);
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 50);
 
@@ -61,7 +91,7 @@ export const listTransactions = asyncHandler(async (req: Request, res: Response)
   return res.status(200).json({
     success: true,
     data: serializeForJson(result.records),
-    pagination: result.pagination,
+    pagination: serializeForJson(result.pagination),
   });
 });
 
