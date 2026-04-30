@@ -30,6 +30,7 @@ type TransactionRecordWithBranch = Prisma.sales_recordsGetPayload<{
 
 type TransactionRecordRow = TransactionRecordWithBranch & {
   cashierDisplayName?: string | null;
+  cashierName?: string | null;
   branchName?: string | null;
 };
 
@@ -75,6 +76,7 @@ export class TransactionService {
       return {
         ...record,
         cashierDisplayName,
+        cashierName: cashierDisplayName,
         branchName: record.branch?.name?.trim() || null,
       };
     });

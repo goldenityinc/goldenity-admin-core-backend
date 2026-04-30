@@ -68,15 +68,17 @@ function resolveTransactionBranchFilter(req: Request): bigint | null {
   }
 
   if (role === 'CASHIER' || role === 'CRM_STAFF') {
-    if (!user.branchId) {
+    const userBranchId = (user.branchId ?? '').toString().trim();
+
+    if (!userBranchId) {
       throw new AppError('Akses ditolak: konteks cabang tidak tersedia pada akun ini', 403);
     }
 
-    if (!/^\d+$/.test(user.branchId)) {
+    if (!/^\d+$/.test(userBranchId)) {
       throw new AppError('Branch ID pada token tidak valid', 403);
     }
 
-    return BigInt(user.branchId);
+    return BigInt(userBranchId);
   }
 
   return resolveBranchFilter(req);
