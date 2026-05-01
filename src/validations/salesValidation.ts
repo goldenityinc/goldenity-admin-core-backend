@@ -45,6 +45,7 @@ export const createSaleSchema = z.object({
   paymentMethod: z.string().trim().min(1).optional().nullable(),
   paymentType: z.string().trim().min(1).optional().nullable(),
   branchId: bigintLikeSchema.optional().nullable(),
+  shiftId: bigintLikeSchema.optional().nullable(),
   orderType: z.enum(['WALK_IN', 'PRE_ORDER', 'DELIVERY']).optional(),
   orderStatus: z.enum(['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'COMPLETED', 'CANCELLED']).optional(),
   pickupDate: z.union([z.coerce.date(), z.string().datetime()]).optional().nullable(),

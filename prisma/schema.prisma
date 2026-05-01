@@ -8,24 +8,24 @@ datasource db {
 }
 
 model Tenant {
-  id            String        @id @default(uuid())
-  name          String
-  slug          String        @unique
-  email         String?       @unique
-  phone         String?
-  address       String?
-  isActive      Boolean       @default(true)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  city          String?
-  country       String?
-  bridgeApiUrl  String?       @map("bridge_api_url")
-  logoUrl       String?       @map("logo_url")
-  logoObjectKey String?       @map("logo_object_key")
-  showInventoryImages Boolean  @default(true) @map("show_inventory_images")
-  appInstances  AppInstance[]
-  branches      Branch[]
-  users         User[]
+  id                  String        @id @default(uuid())
+  name                String
+  slug                String        @unique
+  email               String?       @unique
+  phone               String?
+  address             String?
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  city                String?
+  country             String?
+  bridgeApiUrl        String?       @map("bridge_api_url")
+  logoUrl             String?       @map("logo_url")
+  logoObjectKey       String?       @map("logo_object_key")
+  showInventoryImages Boolean       @default(true) @map("show_inventory_images")
+  appInstances        AppInstance[]
+  branches            Branch[]
+  users               User[]
 
   @@index([slug])
   @@map("tenants")
@@ -45,6 +45,7 @@ model Branch {
   tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   products           products[]
   users              User[]
+  shifts             shifts[]
   salesRecords       sales_records[] @relation("SalesRecordBranch")
   pickupSalesRecords sales_records[] @relation("SalesRecordTargetPickupBranch")
 
@@ -68,6 +69,7 @@ model User {
   username     String?
   customRoleId String?         @map("custom_role_id")
   appAccesses  UserAppAccess[]
+  shifts       shifts[]
   branch       Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
   tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -411,19 +413,52 @@ model sales_records {
   total_profit            BigInt?
   amount_paid             Decimal?    @default(0) @db.Decimal
   branch_id               BigInt?
+  shift_id                BigInt?
   order_type              OrderType   @default(WALK_IN)
   order_status            OrderStatus @default(COMPLETED)
   pickup_date             DateTime?
   target_pickup_branch_id BigInt?
   branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id])
+  shift                   shifts?     @relation(fields: [shift_id], references: [id])
   target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id])
 
   @@index([branch_id])
+  @@index([shift_id])
   @@index([target_pickup_branch_id])
   @@index([order_type])
   @@index([order_status])
   @@index([reference_id])
   @@index([tenant_id])
+}
+
+model shifts {
+  id                  BigInt          @id @default(autoincrement())
+  tenant_id           String
+  branch_id           BigInt
+  user_id             String
+  start_time          DateTime        @default(now())
+  end_time            DateTime?
+  status              ShiftStatus     @default(OPEN)
+  starting_cash       Decimal         @default(0) @db.Decimal(14, 2)
+  expected_cash       Decimal         @default(0) @db.Decimal(14, 2)
+  actual_cash         Decimal?        @db.Decimal(14, 2)
+  difference_cash     Decimal         @default(0) @db.Decimal(14, 2)
+  expected_qris       Decimal         @default(0) @db.Decimal(14, 2)
+  actual_qris         Decimal?        @db.Decimal(14, 2)
+  difference_qris     Decimal         @default(0) @db.Decimal(14, 2)
+  expected_transfer   Decimal         @default(0) @db.Decimal(14, 2)
+  actual_transfer     Decimal?        @db.Decimal(14, 2)
+  difference_transfer Decimal         @default(0) @db.Decimal(14, 2)
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @default(now()) @updatedAt
+  branch              Branch          @relation(fields: [branch_id], references: [id], onDelete: Restrict)
+  user                User            @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  sales_records       sales_records[]
+
+  @@index([tenant_id])
+  @@index([branch_id])
+  @@index([user_id])
+  @@index([tenant_id, branch_id, user_id, status])
 }
 
 model service_orders {
@@ -599,6 +634,11 @@ enum OrderStatus {
   READY_FOR_PICKUP
   COMPLETED
   CANCELLED
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
 }
 
 enum UserRole {

@@ -9,6 +9,11 @@ type BranchLookupRow = {
   id: bigint;
 };
 
+type ShiftLookupRow = {
+  id: bigint;
+  branch_id: bigint;
+};
+
 type SaleRow = {
   id: bigint;
   tenant_id: string | null;
@@ -93,10 +98,12 @@ function normalizeSaleItem(item: SaleItemPayload) {
 export class SalesService {
   static async createSale(tenantId: string, payload: CreateSaleInput) {
     const branchId = toOptionalBigInt(payload.branchId ?? undefined);
+    const shiftId = toOptionalBigInt(payload.shiftId ?? undefined);
     const targetPickupBranchId = toOptionalBigInt(payload.targetPickupBranchId ?? undefined);
 
     await this.ensureBranchOwnership(tenantId, branchId, 'branchId');
     await this.ensureBranchOwnership(tenantId, targetPickupBranchId, 'targetPickupBranchId');
+    await this.ensureShiftOwnership(tenantId, shiftId, branchId);
 
     if (payload.orderType === 'PRE_ORDER' && !targetPickupBranchId && !branchId) {
       throw new AppError('PRE_ORDER wajib memiliki branchId atau targetPickupBranchId', 400);
@@ -109,6 +116,7 @@ export class SalesService {
         INSERT INTO "sales_records" (
           "tenant_id",
           "branch_id",
+          "shift_id",
           "reference_id",
           "payment_method",
           "payment_type",
@@ -134,6 +142,7 @@ export class SalesService {
         VALUES (
           ${tenantId},
           ${branchId},
+          ${shiftId},
           ${payload.referenceId ?? null},
           ${payload.paymentMethod ?? null},
           ${payload.paymentType ?? null},
@@ -227,6 +236,32 @@ export class SalesService {
 
     if (!branch) {
       throw new AppError(`${fieldName} tidak ditemukan untuk tenant aktif`, 400);
+    }
+  }
+
+  private static async ensureShiftOwnership(
+    tenantId: string,
+    shiftId: bigint | null | undefined,
+    branchId: bigint | null | undefined,
+  ) {
+    if (shiftId === undefined || shiftId === null) {
+      return;
+    }
+
+    const rows = await prisma.$queryRaw<ShiftLookupRow[]>`
+      SELECT "id", "branch_id"
+      FROM "shifts"
+      WHERE "id" = ${shiftId} AND "tenant_id" = ${tenantId}
+      LIMIT 1
+    `;
+
+    const shift = rows[0];
+    if (!shift) {
+      throw new AppError('shiftId tidak ditemukan untuk tenant aktif', 400);
+    }
+
+    if (branchId !== undefined && branchId !== null && shift.branch_id !== branchId) {
+      throw new AppError('shiftId tidak sesuai dengan branchId transaksi', 400);
     }
   }
 }
