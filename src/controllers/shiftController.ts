@@ -36,6 +36,63 @@ function readBranchId(req: Request): bigint {
   return BigInt(branchId);
 }
 
+function parseOptionalBigInt(raw: unknown, fieldName: string): bigint | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+
+  const value = raw.toString().trim();
+  if (!value) {
+    return undefined;
+  }
+
+  if (!/^\d+$/.test(value)) {
+    throw new AppError(`${fieldName} harus berupa angka bulat positif`, 400);
+  }
+
+  return BigInt(value);
+}
+
+function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): Date | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+
+  const value = raw.toString().trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const hasExplicitTime = /t|\s\d{2}:\d{2}/i.test(value);
+  const normalized = hasExplicitTime
+    ? value
+    : `${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new AppError(`${fieldName} tidak valid`, 400);
+  }
+  return parsed;
+}
+
+export const getShifts = asyncHandler(async (req: Request, res: Response) => {
+  const branchId = parseOptionalBigInt(req.query.branch_id, 'branch_id');
+  const userId = (req.query.user_id ?? '').toString().trim() || undefined;
+  const startDate = parseOptionalDate(req.query.start_date, 'start_date');
+  const endDate = parseOptionalDate(req.query.end_date, 'end_date', true);
+
+  const shifts = await ShiftService.listShifts({
+    tenantId: readTenantId(req),
+    branchId,
+    userId,
+    startDate,
+    endDate,
+  });
+
+  return res.status(200).json({
+    success: true,
+    data: serializeForJson(shifts),
+  });
+});
 export const openShift = asyncHandler(async (req: Request, res: Response) => {
   const parsed = openShiftSchema.safeParse(req.body);
   if (!parsed.success) {

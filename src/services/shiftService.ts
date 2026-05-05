@@ -19,6 +19,13 @@ type CloseShiftParams = {
   actualTransfer: string | number;
 };
 
+type ListShiftsParams = {
+  tenantId: string;
+  branchId?: bigint;
+  userId?: string;
+  startDate?: Date;
+  endDate?: Date;
+};
 type ExpectedTotalsRow = {
   expected_cash: Prisma.Decimal | null;
   expected_qris: Prisma.Decimal | null;
@@ -56,6 +63,43 @@ function toDecimal(value: Prisma.Decimal | string | number | null | undefined): 
 }
 
 export class ShiftService {
+  static async listShifts(params: ListShiftsParams) {
+    const { tenantId, branchId, userId, startDate, endDate } = params;
+
+    const filters: Prisma.Sql[] = [Prisma.sql`s."tenant_id" = ${tenantId}`];
+    if (branchId !== undefined) {
+      filters.push(Prisma.sql`s."branch_id" = ${branchId}`);
+    }
+    if (userId) {
+      filters.push(Prisma.sql`s."user_id" = ${userId}`);
+    }
+    if (startDate) {
+      filters.push(Prisma.sql`s."start_time" >= ${startDate}`);
+    }
+    if (endDate) {
+      filters.push(Prisma.sql`s."start_time" <= ${endDate}`);
+    }
+
+    return prisma.$queryRaw<Array<ShiftRow & { branch: unknown; user: unknown }>>(Prisma.sql`
+      SELECT
+        s.*,
+        json_build_object(
+          'id', b."id",
+          'name', b."name",
+          'branchCode', b."branch_code"
+        ) AS branch,
+        json_build_object(
+          'id', u."id",
+          'name', u."name",
+          'username', u."username"
+        ) AS "user"
+      FROM "shifts" s
+      INNER JOIN "branches" b ON b."id" = s."branch_id"
+      INNER JOIN "users" u ON u."id" = s."user_id"
+      WHERE ${Prisma.join(filters, ' AND ')}
+      ORDER BY s."start_time" DESC
+    `);
+  }
   static async openShift(params: OpenShiftParams) {
     const { tenantId, branchId, userId, startingCash } = params;
 
