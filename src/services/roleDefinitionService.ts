@@ -1,15 +1,11 @@
 import prisma from '../config/database';
+import { ROLE_PERMISSION_MODULE_KEYS } from '../constants/roleModules';
 
 export type PermissionEntry = { c: boolean; r: boolean; u: boolean; d: boolean };
 export type PermissionsMap = Record<string, PermissionEntry>;
 
 // ─── Daftar semua modul yang dikenal oleh sistem ───────────────────────────
-const ALL_MODULES = [
-  'penjualan', 'inventaris', 'daftar_belanja', 'riwayat',
-  'kas_bon', 'data_pelanggan', 'laporan_keuangan', 'pengeluaran',
-  'data_supplier', 'laporan_pajak', 'pengaturan', 'manajemen_user',
-  'manajemen_kategori',
-] as const;
+const ALL_MODULES = ROLE_PERMISSION_MODULE_KEYS;
 
 const NO_ACCESS: PermissionEntry = { c: false, r: false, u: false, d: false };
 const FULL_ACCESS: PermissionEntry = { c: true, r: true, u: true, d: true };
@@ -37,7 +33,7 @@ export const seedDefaultRoles = async (tenantId: string): Promise<void> => {
     ALL_MODULES.map((m) => [m, { ...NO_ACCESS }]),
   );
   pajakPerms['laporan_pajak'] = { c: false, r: true, u: false, d: false };
-  pajakPerms['penjualan']     = { c: false, r: true, u: false, d: false }; // Dasbor = penjualan view
+  pajakPerms['dasbor']        = { c: false, r: true, u: false, d: false };
 
   const defaults = [
     { name: 'Admin',  permissions: buildFullAccess(), description: 'Akses penuh ke semua fitur' },

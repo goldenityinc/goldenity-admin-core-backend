@@ -39,6 +39,7 @@ type BranchPayload = {
   phone?: string | null;
   isActive?: boolean;
   isMainBranch?: boolean;
+  isBlindCloseEnabled?: boolean;
 };
 
 type UpdateBranchPayload = {
@@ -48,6 +49,7 @@ type UpdateBranchPayload = {
   phone?: string | null;
   isActive?: boolean;
   isMainBranch?: boolean;
+  isBlindCloseEnabled?: boolean;
 };
 
 type BranchRow = {
@@ -59,6 +61,7 @@ type BranchRow = {
   phone: string | null;
   isActive: boolean;
   isMainBranch: boolean;
+  isBlindCloseEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -78,7 +81,8 @@ export class BranchService {
           "address",
           "phone",
           "is_active",
-          "is_main_branch"
+          "is_main_branch",
+          "is_blind_close_enabled"
         )
         VALUES (
           ${tenantId},
@@ -87,7 +91,8 @@ export class BranchService {
           ${payload.address ?? null},
           ${payload.phone ?? null},
           ${payload.isActive ?? true},
-          ${payload.isMainBranch ?? false}
+          ${payload.isMainBranch ?? false},
+          ${payload.isBlindCloseEnabled ?? true}
         )
         RETURNING
           "id",
@@ -98,6 +103,7 @@ export class BranchService {
           "phone",
           "is_active" AS "isActive",
           "is_main_branch" AS "isMainBranch",
+          "is_blind_close_enabled" AS "isBlindCloseEnabled",
           "created_at" AS "createdAt",
           "updated_at" AS "updatedAt"
       `;
@@ -119,6 +125,7 @@ export class BranchService {
         "phone",
         "is_active" AS "isActive",
         "is_main_branch" AS "isMainBranch",
+        "is_blind_close_enabled" AS "isBlindCloseEnabled",
         "created_at" AS "createdAt",
         "updated_at" AS "updatedAt"
       FROM "branches"
@@ -138,6 +145,7 @@ export class BranchService {
         "phone",
         "is_active" AS "isActive",
         "is_main_branch" AS "isMainBranch",
+        "is_blind_close_enabled" AS "isBlindCloseEnabled",
         "created_at" AS "createdAt",
         "updated_at" AS "updatedAt"
       FROM "branches"
@@ -166,6 +174,7 @@ export class BranchService {
           "phone" = ${payload.phone !== undefined ? payload.phone : existing.phone},
           "is_active" = ${payload.isActive ?? existing.isActive},
           "is_main_branch" = ${payload.isMainBranch ?? existing.isMainBranch},
+          "is_blind_close_enabled" = ${payload.isBlindCloseEnabled ?? existing.isBlindCloseEnabled},
           "updated_at" = CURRENT_TIMESTAMP
         WHERE "id" = ${branchId} AND "tenant_id" = ${tenantId}
         RETURNING
@@ -177,6 +186,7 @@ export class BranchService {
           "phone",
           "is_active" AS "isActive",
           "is_main_branch" AS "isMainBranch",
+          "is_blind_close_enabled" AS "isBlindCloseEnabled",
           "created_at" AS "createdAt",
           "updated_at" AS "updatedAt"
       `;

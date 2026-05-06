@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError } from '../utils/AppError';
 import * as svc from '../services/roleDefinitionService';
+import { ROLE_PERMISSION_MODULE_KEYS } from '../constants/roleModules';
 
 // ─── Validation schemas ────────────────────────────────────────────────────
 
@@ -12,7 +13,19 @@ const permissionEntrySchema = z.object({
   d: z.boolean(),
 });
 
-const permissionsSchema = z.record(permissionEntrySchema);
+const permissionsSchema = z
+  .record(permissionEntrySchema)
+  .superRefine((permissions, context) => {
+    for (const key of Object.keys(permissions)) {
+      if (!ROLE_PERMISSION_MODULE_KEYS.includes(key as (typeof ROLE_PERMISSION_MODULE_KEYS)[number])) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `Unknown permissions module key: ${key}`,
+        });
+      }
+    }
+  });
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),

@@ -11,6 +11,7 @@ export const createBranchSchema = z.object({
   phone: z.string().trim().min(6, 'Phone must be at least 6 characters').optional().nullable(),
   isActive: z.boolean().optional(),
   isMainBranch: z.boolean().optional(),
+  isBlindCloseEnabled: z.boolean().optional(),
 });
 
 export const updateBranchSchema = z.object({
@@ -20,6 +21,7 @@ export const updateBranchSchema = z.object({
   phone: z.string().trim().min(6, 'Phone must be at least 6 characters').optional().nullable(),
   isActive: z.boolean().optional(),
   isMainBranch: z.boolean().optional(),
+  isBlindCloseEnabled: z.boolean().optional(),
 }).refine((data) => Object.keys(data).length > 0, {
   message: 'At least one field must be provided',
 });
