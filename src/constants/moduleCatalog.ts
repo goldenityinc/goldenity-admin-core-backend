@@ -56,6 +56,13 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
     },
   },
   {
+    moduleKey: 'module_shift_history',
+    displayName: 'Shift History',
+    category: 'operations',
+    description: 'Riwayat buka tutup shift dan rekap kasir.',
+    dependencies: ['module_sales'],
+  },
+  {
     moduleKey: 'module_settings',
     displayName: 'Settings',
     category: 'core',
@@ -179,13 +186,6 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
       require_device_identity: false,
     },
   },
-  {
-    moduleKey: 'module_service_receipt_printing',
-    displayName: 'Service Receipt Printing',
-    category: 'service',
-    description: 'Cetak tiket atau struk servis.',
-    dependencies: ['module_service_orders', 'module_receipt_printing'],
-  },
 ];
 
 const CORE_MODULE_KEYS = [
@@ -200,6 +200,7 @@ const STANDARD_BUNDLE_MODULE_KEYS = [
   'module_inventory',
   'module_procurement',
   'module_sales_history',
+  'module_shift_history',
 ] as const;
 
 const PROFESSIONAL_BUNDLE_MODULE_KEYS = [
@@ -219,7 +220,6 @@ const PROFESSIONAL_BUNDLE_MODULE_KEYS = [
 
 const SERVICE_NOTE_ADDON_MODULE_KEYS = [
   'module_service_orders',
-  'module_service_receipt_printing',
 ] as const;
 
 function normalizeTier(tier: string | null | undefined): string {
