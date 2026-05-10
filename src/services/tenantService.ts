@@ -5,6 +5,8 @@ import prisma from '../config/database';
 export class TenantService {
   static async createTenant(data: {
     name: string;
+    branchName?: string;
+    firstBranchName?: string;
     slug?: string;
     email?: string;
     phone?: string;
@@ -16,6 +18,8 @@ export class TenantService {
     showInventoryImages?: boolean;
   }) {
     const resolvedSlug = data.slug ?? this.generateSlug(data.name);
+    const firstBranchName = data.firstBranchName ?? data.branchName ?? 'Cabang Utama';
+    const defaultBranchCode = `${resolvedSlug.toUpperCase()}-01`;
 
     const shouldCreateFirstAdmin = Boolean(data.adminEmail && data.adminPassword);
     const passwordHash = shouldCreateFirstAdmin
@@ -33,6 +37,16 @@ export class TenantService {
           logoUrl: data.logoUrl,
           isActive: data.isActive ?? true,
           showInventoryImages: data.showInventoryImages ?? true,
+          branches: {
+            create: [
+              {
+                name: firstBranchName,
+                branchCode: defaultBranchCode,
+                isMainBranch: true,
+                isActive: true,
+              },
+            ],
+          },
         },
       });
 
