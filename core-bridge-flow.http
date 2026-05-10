@@ -4,6 +4,22 @@
 @password = REPLACE_PASSWORD
 @kode_perusahaan = REPLACE_COMPANY_CODE
 
+### 0) Contoh create tenant (dengan cabang awal)
+POST {{coreBaseUrl}}/api/tenants
+Content-Type: application/json
+Authorization: Bearer REPLACE_SUPER_ADMIN_TOKEN
+
+{
+  "name": "PT Goldenity Demo",
+  "slug": "pt-goldenity-demo",
+  "email": "admin@goldenity-demo.com",
+  "phone": "081234567890",
+  "address": "Jakarta",
+  "firstBranchName": "Toko Pusat",
+  "adminEmail": "owner@goldenity-demo.com",
+  "adminPassword": "StrongPass123"
+}
+
 ### 1) Login ke Core API
 # @name coreLogin
 POST {{coreBaseUrl}}/auth/login
