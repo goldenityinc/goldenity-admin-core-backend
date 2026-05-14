@@ -188,55 +188,69 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
   },
 ];
 
-const CORE_MODULE_KEYS = [
-  'module_dashboard',
-  'module_settings',
-  'module_receipt_printing',
-  'module_offline_mode',
-] as const;
-
-const STANDARD_BUNDLE_MODULE_KEYS = [
-  'module_sales',
-  'module_inventory',
-  'module_procurement',
-  'module_sales_history',
-  'module_shift_history',
-] as const;
-
-const PROFESSIONAL_BUNDLE_MODULE_KEYS = [
-  'module_debt_management',
-  'module_customer_management',
-  'module_finance_reports',
-  'module_expense_management',
-  'module_supplier_management',
-  'module_tax_reports',
-  'module_user_management',
-  'module_role_management',
-  'module_custom_rbac',
-  'module_hardware_devices',
-  'module_realtime_sync',
-  'module_category_management',
-] as const;
+const TIER_MODULES = {
+  standard: [
+    'module_sales',
+    'module_sales_history',
+    'module_receipt_printing',
+    'module_hardware_devices',
+    'module_category_management',
+    'module_user_management',
+    'module_dashboard',
+    'module_settings',
+    'module_offline_mode',
+    'module_realtime_sync',
+  ],
+  pro: [
+    'module_inventory',
+    'module_procurement',
+    'module_supplier_management',
+    'module_customer_management',
+    'module_shift_history',
+    'module_expense_management',
+  ],
+  enterprise: [
+    'module_finance_reports',
+    'module_tax_reports',
+    'module_debt_management',
+    'module_service_orders',
+    'module_role_management',
+    'module_custom_rbac',
+  ],
+} as const;
 
 const SERVICE_NOTE_ADDON_MODULE_KEYS = [
   'module_service_orders',
 ] as const;
 
 function normalizeTier(tier: string | null | undefined): string {
-  return (tier ?? '').toString().trim().toLowerCase();
+  const normalized = (tier ?? '').toString().trim().toLowerCase();
+  if (normalized === 'professional') {
+    return 'pro';
+  }
+  return normalized;
 }
 
-function buildUserManagementLimits(
+function buildTenantAccessLimits(
   tier: string,
 ): Record<string, unknown> | undefined {
   if (tier === 'standard') {
-    return { max_users: 1 };
+    return {
+      max_branches: 1,
+      max_users: 3,
+    };
   }
-  if (tier === 'professional') {
-    return { max_users: 10 };
+  if (tier === 'pro') {
+    return {
+      max_branches: 3,
+      max_users: 10,
+    };
   }
   if (tier === 'enterprise') {
-    return { max_users: 50 };
+    return {
+      max_branches: -1,
+      max_users: -1,
+    };
   }
   return undefined;
 }
@@ -244,7 +258,7 @@ function buildUserManagementLimits(
 function buildCustomerManagementLimits(
   tier: string,
 ): Record<string, unknown> | undefined {
-  if (tier === 'professional' || tier === 'enterprise') {
+  if (tier === 'pro' || tier === 'enterprise') {
     return { max_customers: 50000 };
   }
   return undefined;
@@ -256,7 +270,7 @@ function buildReceiptPrintingConfig(
   if (tier === 'standard') {
     return { allow_whatsapp_share: false };
   }
-  if (tier === 'professional' || tier === 'enterprise') {
+  if (tier === 'pro' || tier === 'enterprise') {
     return { allow_whatsapp_share: true };
   }
   return undefined;
@@ -268,7 +282,7 @@ function buildSalesHistoryConfig(
   if (tier === 'standard') {
     return { allow_void_history: false };
   }
-  if (tier === 'professional' || tier === 'enterprise') {
+  if (tier === 'pro' || tier === 'enterprise') {
     return { allow_void_history: true };
   }
   return undefined;
@@ -282,24 +296,26 @@ export function resolveLegacyModuleAssignments(input: {
   const addons = normalizeSubscriptionAddons(input.addons);
   const assignments: Record<string, ResolvedLegacyModuleAssignment> = {};
 
-  for (const moduleKey of CORE_MODULE_KEYS) {
-    assignments[moduleKey] = { source: 'CORE' };
-  }
-
-  if (tier === 'standard' || tier === 'professional' || tier === 'enterprise') {
-    for (const moduleKey of STANDARD_BUNDLE_MODULE_KEYS) {
+  const includeBundle = (moduleKeys: readonly string[]) => {
+    for (const moduleKey of moduleKeys) {
       assignments[moduleKey] = { source: 'BUNDLE' };
     }
+  };
+
+  if (tier === 'standard' || tier === 'pro' || tier === 'enterprise') {
+    includeBundle(TIER_MODULES.standard);
   }
 
-  if (tier === 'professional' || tier === 'enterprise') {
-    for (const moduleKey of PROFESSIONAL_BUNDLE_MODULE_KEYS) {
-      assignments[moduleKey] = { source: 'BUNDLE' };
-    }
+  if (tier === 'pro' || tier === 'enterprise') {
+    includeBundle(TIER_MODULES.pro);
+  }
+
+  if (tier === 'enterprise') {
+    includeBundle(TIER_MODULES.enterprise);
   }
 
   if (assignments.module_user_management) {
-    const limits = buildUserManagementLimits(tier);
+    const limits = buildTenantAccessLimits(tier);
     if (limits) {
       assignments.module_user_management = {
         ...assignments.module_user_management,
