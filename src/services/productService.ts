@@ -57,6 +57,7 @@ export class ProductService {
           branchId: true,
           tenant_id: true,
           name: true,
+          product_type: true,
           barcode: true,
           category: true,
           price: true,

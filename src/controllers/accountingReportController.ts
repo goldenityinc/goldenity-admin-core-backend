@@ -48,7 +48,9 @@ function rethrowAccountingReportError(error: unknown): never {
   if (error instanceof Error) {
     if (
       error.message.includes('Tanggal tidak valid') ||
-      error.message.includes('startDate tidak boleh lebih besar dari endDate')
+      error.message.includes('startDate tidak boleh lebih besar dari endDate') ||
+      error.message.includes('month harus 1-12') ||
+      error.message.includes('year harus valid')
     ) {
       throw new AppError(error.message, 400);
     }
@@ -113,7 +115,48 @@ export const getBalanceSheetReport = asyncHandler(
   },
 );
 
+export const getPayrollReport = asyncHandler(
+  async (req: Request, res: Response) => {
+    const tenantId = resolveTenantId(req);
+    const branchId = resolveOptionalBranchId(req.query);
+    const monthRaw = readQueryString(req.query, 'month');
+    const yearRaw = readQueryString(req.query, 'year');
+
+    if (!monthRaw || !yearRaw) {
+      throw new AppError('month dan year wajib diisi', 400);
+    }
+
+    const month = Number(monthRaw);
+    const year = Number(yearRaw);
+
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new AppError('month harus 1-12', 400);
+    }
+
+    if (!Number.isInteger(year) || year < 2000 || year > 3000) {
+      throw new AppError('year tidak valid', 400);
+    }
+
+    try {
+      const report = await AccountingReportService.getPayrollReport(
+        tenantId,
+        month,
+        year,
+        branchId,
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: report,
+      });
+    } catch (error) {
+      rethrowAccountingReportError(error);
+    }
+  },
+);
+
 export default {
   getProfitAndLossReport,
   getBalanceSheetReport,
+  getPayrollReport,
 };

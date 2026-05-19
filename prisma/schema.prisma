@@ -60,6 +60,9 @@ model User {
   firebaseUid  String?         @unique
   email        String?         @unique
   name         String
+  employeeType String          @default("Kasir") @map("employee_type")
+  baseSalary   Decimal         @default(0) @map("base_salary") @db.Decimal(14, 2)
+  commissionRate Decimal       @default(0) @map("commission_rate") @db.Decimal(14, 2)
   role         UserRole        @default(CRM_STAFF)
   tenantId     String
   branchId     BigInt?         @map("branch_id")
@@ -207,6 +210,9 @@ model app_users {
   username       String
   password       String?
   name           String?
+  employee_type  String?   @default("Kasir")
+  base_salary    Decimal?  @default(0) @db.Decimal(14, 2)
+  commission_rate Decimal? @default(0) @db.Decimal(14, 2)
   role           String?
   custom_role_id String?
   is_active      Boolean?  @default(true)
@@ -345,6 +351,7 @@ model products {
   branchId       BigInt?   @map("branch_id")
   tenant_id      String?
   name           String
+  product_type   String    @default("Barang")
   barcode        String?
   category       String?
   price          Float?    @default(0)
@@ -406,6 +413,9 @@ model sales_records {
   receipt_number          String?
   cashier_id              String?
   cashier_name            String?
+  mechanic_id             String?
+  mechanic_name           String?
+  mechanic_commission     Decimal?    @default(0) @db.Decimal(14, 2)
   payment_status          String?
   items_json              Json?
   customer_name           String?
@@ -510,10 +520,13 @@ model suppliers {
 }
 
 model transactions {
-  id         BigInt    @id @default(autoincrement())
-  tenant_id  String?
-  created_at DateTime? @default(now())
-  updated_at DateTime? @default(now())
+  id                  BigInt    @id @default(autoincrement())
+  tenant_id           String?
+  mechanic_id         String?
+  mechanic_name       String?
+  mechanic_commission Decimal?  @default(0) @db.Decimal(14, 2)
+  created_at          DateTime? @default(now())
+  updated_at          DateTime? @default(now())
 
   @@index([tenant_id])
 }

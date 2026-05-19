@@ -97,6 +97,9 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
     tenantId: paramParsed.data.tenantId,
     role: normalizedIncomingRole,
     branchId: (req.body as { branchId?: unknown }).branchId,
+    employeeType: (req.body as { employeeType?: unknown }).employeeType,
+    baseSalary: (req.body as { baseSalary?: unknown }).baseSalary,
+    commissionRate: (req.body as { commissionRate?: unknown }).commissionRate,
   });
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
@@ -190,6 +193,9 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
       : req.user?.tenantId,
     role: normalizedIncomingRole,
     branchId: (req.body as Record<string, unknown>).branchId,
+    employeeType: (req.body as Record<string, unknown>).employeeType,
+    baseSalary: (req.body as Record<string, unknown>).baseSalary,
+    commissionRate: (req.body as Record<string, unknown>).commissionRate,
   };
 
   const bodyParsed = createUserSchema.safeParse(bodyForValidation);
@@ -343,6 +349,9 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   const bodyParsed = updateUserSchema.safeParse({
     role: normalizedIncomingRole,
     branchId: (req.body as { branchId?: unknown }).branchId,
+    employeeType: (req.body as { employeeType?: unknown }).employeeType,
+    baseSalary: (req.body as { baseSalary?: unknown }).baseSalary,
+    commissionRate: (req.body as { commissionRate?: unknown }).commissionRate,
   });
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid role payload', 400);

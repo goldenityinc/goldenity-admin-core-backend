@@ -64,6 +64,9 @@ async function ensureAppUsersAuthSchema(client) {
       password TEXT,
       role TEXT,
       is_active BOOLEAN DEFAULT TRUE,
+      employee_type TEXT DEFAULT 'Kasir',
+      base_salary DECIMAL(14, 2) DEFAULT 0,
+      commission_rate DECIMAL(14, 2) DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
@@ -72,25 +75,37 @@ async function ensureAppUsersAuthSchema(client) {
   await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password TEXT');
   await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role TEXT');
   await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE');
+  await client.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS employee_type TEXT DEFAULT 'Kasir'");
+  await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS base_salary DECIMAL(14, 2) DEFAULT 0');
+  await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS commission_rate DECIMAL(14, 2) DEFAULT 0');
   await client.query('CREATE INDEX IF NOT EXISTS app_users_username_idx ON app_users(username)');
 }
 
-async function upsertTenantAppUser(client, username, passwordHash, role, isActive) {
+async function upsertTenantAppUser(
+  client,
+  username,
+  passwordHash,
+  role,
+  isActive,
+  employeeType,
+  baseSalary,
+  commissionRate,
+) {
   await ensureAppUsersAuthSchema(client);
 
   const existing = await client.query('SELECT id FROM app_users WHERE username = $1 LIMIT 1', [username]);
 
   if (existing.rowCount > 0) {
     await client.query(
-      'UPDATE app_users SET password = $1, role = $2, is_active = $3 WHERE username = $4',
-      [passwordHash, role, !!isActive, username],
+      'UPDATE app_users SET password = $1, role = $2, is_active = $3, employee_type = $4, base_salary = $5, commission_rate = $6 WHERE username = $7',
+      [passwordHash, role, !!isActive, employeeType || 'Kasir', Number(baseSalary || 0), Number(commissionRate || 0), username],
     );
     return;
   }
 
   await client.query(
-    'INSERT INTO app_users (username, password, role, is_active) VALUES ($1, $2, $3, $4)',
-    [username, passwordHash, role, !!isActive],
+    'INSERT INTO app_users (username, password, role, is_active, employee_type, base_salary, commission_rate) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [username, passwordHash, role, !!isActive, employeeType || 'Kasir', Number(baseSalary || 0), Number(commissionRate || 0)],
   );
 }
 
@@ -114,6 +129,9 @@ async function run() {
     const userResult = await masterClient.query(
       `
       SELECT id, username, "tenantId", role::text AS role, "isActive"
+      , "employee_type" AS "employeeType"
+      , "base_salary" AS "baseSalary"
+      , "commission_rate" AS "commissionRate"
       FROM users
       WHERE lower(username) = lower($1)
         AND role::text <> 'SUPER_ADMIN'
@@ -142,7 +160,16 @@ async function run() {
     await tenantClient.connect();
 
     try {
-      await upsertTenantAppUser(tenantClient, user.username, passwordHash, user.role || 'ADMIN', user.isActive);
+      await upsertTenantAppUser(
+        tenantClient,
+        user.username,
+        passwordHash,
+        user.role || 'ADMIN',
+        user.isActive,
+        user.employeeType,
+        user.baseSalary,
+        user.commissionRate,
+      );
     } finally {
       await tenantClient.end().catch(() => undefined);
     }

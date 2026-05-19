@@ -186,6 +186,27 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
       require_device_identity: false,
     },
   },
+  {
+    moduleKey: 'module_workshop_service',
+    displayName: 'Workshop/Service',
+    category: 'service',
+    description: 'Operasional bengkel, mekanik, dan komisi jasa.',
+    dependencies: ['module_service_orders', 'module_sales'],
+    defaultConfig: {
+      enable_mechanic_assignment: true,
+      enable_service_products: true,
+    },
+  },
+  {
+    moduleKey: 'module_hr_payroll',
+    displayName: 'HR & Payroll',
+    category: 'admin',
+    description: 'Data karyawan, gaji pokok, komisi, dan laporan payroll.',
+    dependencies: ['module_user_management'],
+    defaultConfig: {
+      payroll_cycle: 'monthly',
+    },
+  },
 ];
 
 const TIER_MODULES = {
@@ -216,11 +237,23 @@ const TIER_MODULES = {
     'module_service_orders',
     'module_role_management',
     'module_custom_rbac',
+    'module_workshop_service',
+    'module_hr_payroll',
   ],
 } as const;
 
 const SERVICE_NOTE_ADDON_MODULE_KEYS = [
   'module_service_orders',
+  'module_workshop_service',
+] as const;
+
+const WORKSHOP_SERVICE_ADDON_MODULE_KEYS = [
+  'module_service_orders',
+  'module_workshop_service',
+] as const;
+
+const HR_PAYROLL_ADDON_MODULE_KEYS = [
+  'module_hr_payroll',
 ] as const;
 
 function normalizeTier(tier: string | null | undefined): string {
@@ -374,6 +407,22 @@ export function resolveLegacyModuleAssignments(input: {
                   require_device_identity: false,
                 }
               : undefined,
+      };
+    }
+  }
+
+  if (addons.includes('workshop_service')) {
+    for (const moduleKey of WORKSHOP_SERVICE_ADDON_MODULE_KEYS) {
+      assignments[moduleKey] = {
+        source: 'ADDON',
+      };
+    }
+  }
+
+  if (addons.includes('hr_payroll')) {
+    for (const moduleKey of HR_PAYROLL_ADDON_MODULE_KEYS) {
+      assignments[moduleKey] = {
+        source: 'ADDON',
       };
     }
   }

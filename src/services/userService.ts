@@ -32,6 +32,9 @@ type TenantUrlCandidate = {
 type UserMutationPayload = {
   role?: UserRole;
   branchId?: string | null;
+  employeeType?: string;
+  baseSalary?: number;
+  commissionRate?: number;
 };
 
 function quoteIdentifier(identifier: string): string {
@@ -182,6 +185,9 @@ export class UserService {
     email?: string;
     password: string;
     name: string;
+    employeeType?: string;
+    baseSalary?: number;
+    commissionRate?: number;
     role?: 'TENANT_ADMIN' | 'CRM_MANAGER' | 'CRM_STAFF' | 'READ_ONLY';
     branchId?: string | null;
     isActive?: boolean;
@@ -216,6 +222,9 @@ export class UserService {
           firebaseUid: null,
           email: data.email ?? null,
           name: data.name,
+          employeeType: data.employeeType ?? 'Kasir',
+          baseSalary: data.baseSalary ?? 0,
+          commissionRate: data.commissionRate ?? 0,
           role: resolvedRole,
           branchId: resolvedBranchId,
           isActive: data.isActive ?? true,
@@ -248,6 +257,9 @@ export class UserService {
           passwordHash,
           resolvedRole,
           data.isActive ?? true,
+          data.employeeType ?? 'Kasir',
+          data.baseSalary ?? 0,
+          data.commissionRate ?? 0,
         );
 
         if (!syncResult.synced) {
@@ -361,6 +373,9 @@ export class UserService {
         passwordHash,
         updatedUser.role,
         updatedUser.isActive,
+        updatedUser.employeeType,
+        Number(updatedUser.baseSalary),
+        Number(updatedUser.commissionRate),
       );
 
       if (!syncResult.synced) {
@@ -398,6 +413,9 @@ export class UserService {
         updatedUser.passwordHash,
         updatedUser.role,
         updatedUser.isActive,
+        updatedUser.employeeType,
+        Number(updatedUser.baseSalary),
+        Number(updatedUser.commissionRate),
       );
 
       if (!syncResult.synced) {
@@ -437,6 +455,9 @@ export class UserService {
       data: {
         role: nextRole,
         branchId: nextBranchId,
+        ...(payload.employeeType !== undefined ? { employeeType: payload.employeeType } : {}),
+        ...(payload.baseSalary !== undefined ? { baseSalary: payload.baseSalary } : {}),
+        ...(payload.commissionRate !== undefined ? { commissionRate: payload.commissionRate } : {}),
       },
       include: {
         branch: {
@@ -457,6 +478,9 @@ export class UserService {
         updatedUser.passwordHash,
         updatedUser.role,
         updatedUser.isActive,
+        updatedUser.employeeType,
+        Number(updatedUser.baseSalary),
+        Number(updatedUser.commissionRate),
       );
 
       if (!syncResult.synced) {
@@ -512,6 +536,9 @@ export class UserService {
     passwordHash: string,
     role: string,
     isActive: boolean,
+    employeeType: string,
+    baseSalary: number,
+    commissionRate: number,
   ): Promise<PosSyncResult> {
     const tenantDbConnectionString = await UserService.resolveTenantDbConnectionString(tenantId);
     const masterDbConnectionString = process.env.DATABASE_URL?.trim();
@@ -552,6 +579,9 @@ export class UserService {
         passwordHash,
         roleCandidates,
         isActive,
+        employeeType,
+        baseSalary,
+        commissionRate,
       });
 
       return { synced: true };
@@ -578,6 +608,9 @@ export class UserService {
         passwordHash: true,
         role: true,
         isActive: true,
+        employeeType: true,
+        baseSalary: true,
+        commissionRate: true,
       },
     });
 
@@ -599,6 +632,9 @@ export class UserService {
         passwordHash,
         user.role,
         user.isActive,
+        user.employeeType,
+        Number(user.baseSalary),
+        Number(user.commissionRate),
       );
 
       if (result.synced) {
@@ -711,6 +747,9 @@ export class UserService {
       passwordHash: string;
       roleCandidates: string[];
       isActive: boolean;
+      employeeType: string;
+      baseSalary: number;
+      commissionRate: number;
     },
   ): Promise<void> {
     await UserService.ensureTenantAppUsersAuthSchema(client);
@@ -729,6 +768,9 @@ export class UserService {
     const passwordColumn = columns.has('password') ? 'password' : null;
     const roleColumn = columns.has('role') ? 'role' : null;
     const isActiveColumn = columns.has('is_active') ? 'is_active' : columns.has('isActive') ? 'isActive' : null;
+    const employeeTypeColumn = columns.has('employee_type') ? 'employee_type' : columns.has('employeeType') ? 'employeeType' : null;
+    const baseSalaryColumn = columns.has('base_salary') ? 'base_salary' : columns.has('baseSalary') ? 'baseSalary' : null;
+    const commissionRateColumn = columns.has('commission_rate') ? 'commission_rate' : columns.has('commissionRate') ? 'commissionRate' : null;
 
     if (!usernameColumn || !passwordColumn) {
       throw new Error('app_users tidak memiliki kolom username/password yang dibutuhkan untuk sync');
@@ -740,19 +782,49 @@ export class UserService {
     );
 
     const updateBaseSet = [`${quoteIdentifier(passwordColumn)} = $1`];
-    const updateValues: Array<string | boolean> = [payload.passwordHash];
+    const updateValues: Array<string | boolean | number> = [payload.passwordHash];
 
     if (isActiveColumn) {
       updateBaseSet.push(`${quoteIdentifier(isActiveColumn)} = $2`);
       updateValues.push(payload.isActive);
     }
 
+    if (employeeTypeColumn) {
+      updateBaseSet.push(`${quoteIdentifier(employeeTypeColumn)} = $${updateValues.length + 1}`);
+      updateValues.push(payload.employeeType);
+    }
+
+    if (baseSalaryColumn) {
+      updateBaseSet.push(`${quoteIdentifier(baseSalaryColumn)} = $${updateValues.length + 1}`);
+      updateValues.push(payload.baseSalary);
+    }
+
+    if (commissionRateColumn) {
+      updateBaseSet.push(`${quoteIdentifier(commissionRateColumn)} = $${updateValues.length + 1}`);
+      updateValues.push(payload.commissionRate);
+    }
+
     const insertColumns = [quoteIdentifier(usernameColumn), quoteIdentifier(passwordColumn)];
-    const insertValues: Array<string | boolean> = [payload.username, payload.passwordHash];
+    const insertValues: Array<string | boolean | number> = [payload.username, payload.passwordHash];
 
     if (isActiveColumn) {
       insertColumns.push(quoteIdentifier(isActiveColumn));
       insertValues.push(payload.isActive);
+    }
+
+    if (employeeTypeColumn) {
+      insertColumns.push(quoteIdentifier(employeeTypeColumn));
+      insertValues.push(payload.employeeType);
+    }
+
+    if (baseSalaryColumn) {
+      insertColumns.push(quoteIdentifier(baseSalaryColumn));
+      insertValues.push(payload.baseSalary);
+    }
+
+    if (commissionRateColumn) {
+      insertColumns.push(quoteIdentifier(commissionRateColumn));
+      insertValues.push(payload.commissionRate);
     }
 
     const roleCandidates = roleColumn ? payload.roleCandidates : [''];
@@ -816,6 +888,9 @@ export class UserService {
         password TEXT,
         role TEXT,
         is_active BOOLEAN DEFAULT TRUE,
+        employee_type TEXT DEFAULT 'Kasir',
+        base_salary DECIMAL(14, 2) DEFAULT 0,
+        commission_rate DECIMAL(14, 2) DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
@@ -824,6 +899,9 @@ export class UserService {
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password TEXT');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role TEXT');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE');
+    await client.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS employee_type TEXT DEFAULT 'Kasir'");
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS base_salary DECIMAL(14, 2) DEFAULT 0');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS commission_rate DECIMAL(14, 2) DEFAULT 0');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
     await client.query('CREATE INDEX IF NOT EXISTS app_users_username_idx ON app_users(username)');
   }

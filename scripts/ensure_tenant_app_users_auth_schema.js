@@ -15,6 +15,9 @@ async function applyAppUsersAuthSchema(connectionString, tenantId) {
         password TEXT,
         role TEXT,
         is_active BOOLEAN DEFAULT TRUE,
+        employee_type TEXT DEFAULT 'Kasir',
+        base_salary DECIMAL(14, 2) DEFAULT 0,
+        commission_rate DECIMAL(14, 2) DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
@@ -23,6 +26,9 @@ async function applyAppUsersAuthSchema(connectionString, tenantId) {
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password TEXT');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS role TEXT');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE');
+    await client.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS employee_type TEXT DEFAULT 'Kasir'");
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS base_salary DECIMAL(14, 2) DEFAULT 0');
+    await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS commission_rate DECIMAL(14, 2) DEFAULT 0');
     await client.query('ALTER TABLE app_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
     await client.query('CREATE INDEX IF NOT EXISTS app_users_username_idx ON app_users(username)');
 

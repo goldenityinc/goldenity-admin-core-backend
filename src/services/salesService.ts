@@ -34,6 +34,9 @@ type SaleRow = {
   receipt_number: string | null;
   cashier_id: string | null;
   cashier_name: string | null;
+  mechanic_id: string | null;
+  mechanic_name: string | null;
+  mechanic_commission: Prisma.Decimal | null;
   payment_status: string | null;
   items_json: Prisma.JsonValue | null;
   customer_name: string | null;
@@ -131,6 +134,9 @@ export class SalesService {
           "receipt_number",
           "cashier_id",
           "cashier_name",
+          "mechanic_id",
+          "mechanic_name",
+          "mechanic_commission",
           "payment_status",
           "items_json",
           "customer_name",
@@ -157,6 +163,9 @@ export class SalesService {
           ${payload.receiptNumber ?? null},
           ${payload.cashierId ?? null},
           ${payload.cashierName ?? null},
+          ${payload.mechanicId ?? null},
+          ${payload.mechanicName ?? null},
+          ${toOptionalDecimal(payload.mechanicCommission ?? undefined)},
           ${payload.paymentStatus ?? null},
           ${JSON.stringify(normalizedItems.map((item) => ({
             productId: item.product_id,

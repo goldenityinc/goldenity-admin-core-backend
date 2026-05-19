@@ -13,6 +13,25 @@ const optionalTrimmedString = () =>
     z.string().optional(),
   );
 
+const optionalDecimalInput = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '') {
+        return undefined;
+      }
+      return Number(trimmed);
+    }
+
+    return value;
+  },
+  z.number().min(0, 'Nilai tidak boleh negatif').optional(),
+);
+
 const optionalNullableBranchIdSchema = z.preprocess(
   (value) => {
     if (value === null) {
@@ -81,6 +100,11 @@ export const createUserSchema = z.object({
   email: z.string().email('Invalid user email').optional(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().min(2, 'User name must be at least 2 characters'),
+  employeeType: optionalTrimmedString().pipe(
+    z.string().min(2, 'employeeType must be at least 2 characters').optional(),
+  ),
+  baseSalary: optionalDecimalInput,
+  commissionRate: optionalDecimalInput,
   role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
   branchId: optionalNullableBranchIdSchema,
   isActive: z.boolean().optional(),
@@ -104,13 +128,23 @@ export const createUserSchema = z.object({
     },
   );
 
-  export const updateUserSchema = z.object({
-    role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
-    branchId: optionalNullableBranchIdSchema,
-  }).refine(
-    (data) => data.role !== undefined || data.branchId !== undefined,
+export const updateUserSchema = z.object({
+  role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
+  branchId: optionalNullableBranchIdSchema,
+  employeeType: optionalTrimmedString().pipe(
+    z.string().min(2, 'employeeType must be at least 2 characters').optional(),
+  ),
+  baseSalary: optionalDecimalInput,
+  commissionRate: optionalDecimalInput,
+}).refine(
+    (data) =>
+      data.role !== undefined ||
+      data.branchId !== undefined ||
+      data.employeeType !== undefined ||
+      data.baseSalary !== undefined ||
+      data.commissionRate !== undefined,
     {
-      message: 'Minimal salah satu dari role atau branchId harus diisi',
+      message: 'Minimal satu field harus diisi',
       path: ['role'],
     },
   );

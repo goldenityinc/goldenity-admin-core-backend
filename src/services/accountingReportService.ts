@@ -66,6 +66,35 @@ type BalanceSheetReport = {
   balanceDelta: number;
 };
 
+type PayrollEmployeeLine = {
+  userId: string;
+  name: string;
+  employeeType: string;
+  baseSalary: number;
+};
+
+type PayrollMechanicCommissionLine = {
+  mechanicId: string | null;
+  mechanicName: string;
+  commission: number;
+};
+
+type PayrollReport = {
+  tenantId: string;
+  month: number;
+  year: number;
+  branchId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  totals: {
+    baseSalary: number;
+    mechanicCommission: number;
+    payrollTotal: number;
+  };
+  employees: PayrollEmployeeLine[];
+  mechanicCommissions: PayrollMechanicCommissionLine[];
+};
+
 const ZERO = new Prisma.Decimal(0);
 const BALANCE_TOLERANCE = 0.005;
 
@@ -366,6 +395,115 @@ export class AccountingReportService {
       },
       isBalanced: Math.abs(balanceDelta) <= BALANCE_TOLERANCE,
       balanceDelta,
+    };
+  }
+
+  static async getPayrollReport(
+    tenantId: string,
+    month: number,
+    year: number,
+    branchId: bigint | null = null,
+  ): Promise<PayrollReport> {
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new Error('month harus 1-12');
+    }
+
+    if (!Number.isInteger(year) || year < 2000 || year > 3000) {
+      throw new Error('year harus valid');
+    }
+
+    const periodStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const periodEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    const [employees, mechanicRows] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          tenantId,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          employeeType: true,
+          baseSalary: true,
+        },
+        orderBy: {
+          name: 'asc',
+        },
+      }),
+      prisma.sales_records.findMany({
+        where: {
+          tenant_id: tenantId,
+          ...(branchId !== null ? { branch_id: branchId } : {}),
+          created_at: {
+            gte: periodStart,
+            lte: periodEnd,
+          },
+        },
+        select: {
+          mechanic_id: true,
+          mechanic_name: true,
+          mechanic_commission: true,
+        },
+      }),
+    ]);
+
+    const employeeLines = employees.map((employee) => ({
+      userId: employee.id,
+      name: employee.name,
+      employeeType: employee.employeeType,
+      baseSalary: roundCurrency(toDecimal(employee.baseSalary).toNumber()),
+    }));
+
+    const commissionMap = new Map<string, PayrollMechanicCommissionLine>();
+
+    for (const row of mechanicRows) {
+      const commissionValue = roundCurrency(toDecimal(row.mechanic_commission).toNumber());
+      if (commissionValue <= 0) {
+        continue;
+      }
+
+      const mechanicId = row.mechanic_id?.trim() || null;
+      const mechanicName = row.mechanic_name?.trim() || 'Unknown Mechanic';
+      const key = `${mechanicId ?? 'null'}:${mechanicName}`;
+      const existing = commissionMap.get(key);
+
+      if (!existing) {
+        commissionMap.set(key, {
+          mechanicId,
+          mechanicName,
+          commission: commissionValue,
+        });
+      } else {
+        existing.commission = roundCurrency(existing.commission + commissionValue);
+      }
+    }
+
+    const mechanicCommissions = Array.from(commissionMap.values()).sort((a, b) =>
+      a.mechanicName.localeCompare(b.mechanicName),
+    );
+
+    const totalBaseSalary = roundCurrency(
+      employeeLines.reduce((sum, line) => sum + line.baseSalary, 0),
+    );
+    const totalMechanicCommission = roundCurrency(
+      mechanicCommissions.reduce((sum, line) => sum + line.commission, 0),
+    );
+
+    return {
+      tenantId,
+      month,
+      year,
+      branchId: branchId?.toString() ?? null,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      totals: {
+        baseSalary: totalBaseSalary,
+        mechanicCommission: totalMechanicCommission,
+        payrollTotal: roundCurrency(totalBaseSalary + totalMechanicCommission),
+      },
+      employees: employeeLines,
+      mechanicCommissions,
     };
   }
 }
