@@ -90,14 +90,20 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
 
   try {
     const result = await TenantService.createTenant(parsed.data);
+    const normalizedSolution = (parsed.data.solution ?? '').toString().trim().toUpperCase();
 
     const erpConfigured = Boolean(
       process.env.ERP_API_BASE_URL?.trim() ||
       process.env.ERP_API_URL?.trim(),
     );
     const authHeader = req.headers.authorization;
+    const shouldProvisionErp =
+      erpConfigured &&
+      (normalizedSolution === 'ERP' || normalizedSolution === 'BOTH');
+    let erpStatus: 'success' | 'failed_or_skipped' = 'failed_or_skipped';
+    let erpWarning: string | null = null;
 
-    if (erpConfigured) {
+    if (shouldProvisionErp) {
       try {
         // Default: provision ERP org + mapping + seed baseline features, then ensure tenant admin exists in ERP.
         // Subscription upgrades can later update features via /api/integrations/erp/provision.
@@ -125,10 +131,20 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
             authHeader,
           );
         }
+        erpStatus = 'success';
       } catch (e) {
-        await prisma.tenant.delete({ where: { id: result.tenant.id } });
-        throw e;
+        const reason = e instanceof Error ? e.message : String(e);
+        console.error('[createTenant] ERP provisioning failed, tenant creation will continue', {
+          tenantId: result.tenant.id,
+          reason,
+        });
+        erpStatus = 'failed_or_skipped';
+        erpWarning = reason;
       }
+    } else if (!erpConfigured) {
+      erpWarning = 'ERP integration is not configured';
+    } else {
+      erpWarning = 'ERP provisioning skipped for non-ERP solution';
     }
 
     emitTenantUpdated(req, result.tenant.id, {
@@ -140,6 +156,8 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
       success: true,
       message: 'Tenant created successfully',
       data: result.tenant,
+      erp_status: erpStatus,
+      ...(erpWarning ? { erp_warning: erpWarning } : {}),
       firstAdmin: result.firstAdmin
         ? {
             ...result.firstAdmin,

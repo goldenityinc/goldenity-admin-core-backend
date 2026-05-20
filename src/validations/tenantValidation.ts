@@ -50,6 +50,8 @@ const optionalNullableBranchIdSchema = z.preprocess(
 
 export const createTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters'),
+  solution: optionalTrimmedString().pipe(z.string().optional()),
+  subscriptionType: optionalTrimmedString().pipe(z.string().optional()),
   branchName: optionalTrimmedString().pipe(
     z.string().min(2, 'Branch name must be at least 2 characters').optional(),
   ),
