@@ -35,8 +35,15 @@ app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors({
-  origin: '*',
-  credentials: false,
+  origin: [
+    'http://localhost:5173', // Local Super Admin
+    'http://localhost:3000', // Local POS / Web
+    'https://goldenity-super-admin.vercel.app', // Production Super Admin
+    process.env.FRONTEND_URL || '',
+    process.env.POS_URL || '',
+  ].filter(Boolean) as string[],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
