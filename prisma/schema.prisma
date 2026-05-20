@@ -404,8 +404,10 @@ model sales_records {
   reference_id            String?
   payment_method          String?
   payment_type            String?
+  transaction_type        String?     @default("DIRECT")
   total_price             Decimal?    @db.Decimal
   total_amount            Decimal?    @db.Decimal
+  dp_amount               Decimal?    @default(0) @db.Decimal(14, 2)
   remaining_balance       Decimal?    @db.Decimal
   outstanding_balance     Decimal?    @db.Decimal
   created_at              DateTime?   @default(now())
@@ -427,6 +429,7 @@ model sales_records {
   shift_id                BigInt?
   order_type              OrderType   @default(WALK_IN)
   order_status            OrderStatus @default(COMPLETED)
+  po_status               String?
   pickup_date             DateTime?
   target_pickup_branch_id BigInt?
   branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id])

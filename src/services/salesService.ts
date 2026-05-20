@@ -21,8 +21,11 @@ type SaleRow = {
   reference_id: string | null;
   payment_method: string | null;
   payment_type: string | null;
+  transaction_type: string | null;
   order_type: string;
   order_status: string;
+  po_status: string | null;
+  dp_amount: Prisma.Decimal | null;
   pickup_date: Date | null;
   target_pickup_branch_id: bigint | null;
   total_price: Prisma.Decimal | null;
@@ -123,8 +126,11 @@ export class SalesService {
           "reference_id",
           "payment_method",
           "payment_type",
+          "transaction_type",
           "order_type",
           "order_status",
+          "po_status",
+          "dp_amount",
           "pickup_date",
           "target_pickup_branch_id",
           "total_price",
@@ -152,8 +158,13 @@ export class SalesService {
           ${payload.referenceId ?? null},
           ${payload.paymentMethod ?? null},
           ${payload.paymentType ?? null},
+          ${payload.transactionType ?? 'DIRECT'},
           ${payload.orderType ?? 'WALK_IN'}::"OrderType",
           ${payload.orderStatus ?? 'COMPLETED'}::"OrderStatus",
+          ${payload.poStatus ?? null},
+          ${payload.dpAmount === undefined || payload.dpAmount === null
+            ? new Prisma.Decimal(0)
+            : toOptionalDecimal(payload.dpAmount) },
           ${toOptionalDate(payload.pickupDate ?? undefined)},
           ${targetPickupBranchId},
           ${toOptionalDecimal(payload.totalPrice ?? undefined)},
