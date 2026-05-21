@@ -65,6 +65,22 @@ type SaleItemRow = {
   updated_at: Date | null;
 };
 
+export type PreOrderListFilters = {
+  tenantId: string;
+  branchId: bigint | null;
+  requireScopedBranch?: boolean;
+  requireAssignedBranch?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+export type PreOrderSummaryFilters = {
+  tenantId: string;
+  branchId: bigint | null;
+  requireScopedBranch?: boolean;
+  requireAssignedBranch?: boolean;
+};
+
 function toOptionalBigInt(value: string | number | null | undefined): bigint | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -234,6 +250,136 @@ export class SalesService {
 
       return { sale, items };
     });
+  }
+
+  static async listPreOrders(filters: PreOrderListFilters) {
+    const {
+      tenantId,
+      branchId,
+      requireScopedBranch = false,
+      requireAssignedBranch = false,
+      page = 1,
+      limit = 50,
+    } = filters;
+
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 200);
+    const skip = (safePage - 1) * safeLimit;
+
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
+
+    const where: Prisma.sales_recordsWhereInput = {
+      tenant_id: tenantId,
+      transaction_type: 'PRE_ORDER',
+      ...(branchId !== null ? { branch_id: branchId } : {}),
+      ...(branchId === null && requireAssignedBranch ? { branch_id: { not: null } } : {}),
+    };
+
+    const [records, total] = await Promise.all([
+      prisma.sales_records.findMany({
+        where,
+        select: {
+          id: true,
+          tenant_id: true,
+          branch_id: true,
+          reference_id: true,
+          transaction_type: true,
+          order_type: true,
+          order_status: true,
+          po_status: true,
+          dp_amount: true,
+          pickup_date: true,
+          target_pickup_branch_id: true,
+          total_amount: true,
+          remaining_balance: true,
+          payment_status: true,
+          customer_name: true,
+          cashier_id: true,
+          cashier_name: true,
+          created_at: true,
+          updated_at: true,
+          branch: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          target_pickup_branch: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: {
+          created_at: 'desc',
+        },
+        skip,
+        take: safeLimit,
+      }),
+      prisma.sales_records.count({ where }),
+    ]);
+
+    return {
+      records,
+      pagination: {
+        total,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  static async getPreOrderSummary(filters: PreOrderSummaryFilters) {
+    const {
+      tenantId,
+      branchId,
+      requireScopedBranch = false,
+      requireAssignedBranch = false,
+    } = filters;
+
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
+
+    const activeWhere: Prisma.sales_recordsWhereInput = {
+      tenant_id: tenantId,
+      transaction_type: 'PRE_ORDER',
+      ...(branchId !== null ? { branch_id: branchId } : {}),
+      ...(branchId === null && requireAssignedBranch ? { branch_id: { not: null } } : {}),
+      OR: [
+        { po_status: null },
+        {
+          po_status: {
+            notIn: ['COMPLETED', 'CANCELLED', 'VOID', 'PICKED_UP'],
+          },
+        },
+      ],
+    };
+
+    const aggregate = await prisma.sales_records.aggregate({
+      where: activeWhere,
+      _count: {
+        _all: true,
+      },
+      _sum: {
+        dp_amount: true,
+      },
+    });
+
+    return {
+      totalActivePreOrders: aggregate._count._all,
+      totalDpHeld: aggregate._sum.dp_amount ?? new Prisma.Decimal(0),
+    };
   }
 
   private static async ensureBranchOwnership(

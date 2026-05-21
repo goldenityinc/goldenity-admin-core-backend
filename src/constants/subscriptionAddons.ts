@@ -1,4 +1,4 @@
-export const SUBSCRIPTION_ADDON_VALUES = ['service_note', 'workshop_service', 'hr_payroll'] as const;
+export const SUBSCRIPTION_ADDON_VALUES = ['service_note', 'workshop_service', 'hr_payroll', 'pre_order'] as const;
 
 export type SubscriptionAddon = (typeof SUBSCRIPTION_ADDON_VALUES)[number];
 

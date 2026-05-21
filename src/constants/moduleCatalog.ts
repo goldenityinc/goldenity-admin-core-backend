@@ -198,6 +198,17 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
     },
   },
   {
+    moduleKey: 'module_pre_order',
+    displayName: 'Modul Pre-Order & DP',
+    category: 'operations',
+    description: 'Kelola transaksi pre-order, uang muka (DP), dan status pickup.',
+    dependencies: ['module_sales'],
+    defaultConfig: {
+      enable_dp_tracking: true,
+      enable_pickup_workflow: true,
+    },
+  },
+  {
     moduleKey: 'module_hr_payroll',
     displayName: 'HR & Payroll',
     category: 'admin',
@@ -254,6 +265,10 @@ const WORKSHOP_SERVICE_ADDON_MODULE_KEYS = [
 
 const HR_PAYROLL_ADDON_MODULE_KEYS = [
   'module_hr_payroll',
+] as const;
+
+const PRE_ORDER_ADDON_MODULE_KEYS = [
+  'module_pre_order',
 ] as const;
 
 function normalizeTier(tier: string | null | undefined): string {
@@ -423,6 +438,21 @@ export function resolveLegacyModuleAssignments(input: {
     for (const moduleKey of HR_PAYROLL_ADDON_MODULE_KEYS) {
       assignments[moduleKey] = {
         source: 'ADDON',
+      };
+    }
+  }
+
+  if (addons.includes('pre_order')) {
+    for (const moduleKey of PRE_ORDER_ADDON_MODULE_KEYS) {
+      assignments[moduleKey] = {
+        source: 'ADDON',
+        config:
+          moduleKey === 'module_pre_order'
+            ? {
+                enable_dp_tracking: true,
+                enable_pickup_workflow: true,
+              }
+            : undefined,
       };
     }
   }
