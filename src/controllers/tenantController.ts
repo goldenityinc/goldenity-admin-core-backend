@@ -223,16 +223,23 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
   const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
   const authHeader = req.headers.authorization;
   if (erpConfigured && typeof authHeader === 'string') {
-    await ErpProvisionService.upsertOrganizationProfile(
-      {
-        organizationId: updated.slug,
-        displayName: updated.name,
-        address: updated.address ?? undefined,
-        phone: updated.phone ?? undefined,
-        logoUrl: updated.logoUrl ?? undefined,
-      },
-      authHeader,
-    );
+    try {
+      await ErpProvisionService.upsertOrganizationProfile(
+        {
+          organizationId: updated.slug,
+          displayName: updated.name,
+          address: updated.address ?? undefined,
+          phone: updated.phone ?? undefined,
+          logoUrl: updated.logoUrl ?? undefined,
+        },
+        authHeader,
+      );
+    } catch (e) {
+      console.error(
+        '[updateTenant] ERP profile sync failed, tenant update will continue.',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   emitTenantUpdated(req, updated.id, {
@@ -291,16 +298,23 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
   const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
   const authHeader = req.headers.authorization;
   if (erpConfigured && typeof authHeader === 'string') {
-    await ErpProvisionService.upsertOrganizationProfile(
-      {
-        organizationId: tenant.slug,
-        displayName: tenant.name,
-        address: tenant.address ?? undefined,
-        phone: tenant.phone ?? undefined,
-        logoUrl: proxyUrl,
-      },
-      authHeader,
-    );
+    try {
+      await ErpProvisionService.upsertOrganizationProfile(
+        {
+          organizationId: tenant.slug,
+          displayName: tenant.name,
+          address: tenant.address ?? undefined,
+          phone: tenant.phone ?? undefined,
+          logoUrl: proxyUrl,
+        },
+        authHeader,
+      );
+    } catch (e) {
+      console.error(
+        '[uploadTenantLogo] ERP profile sync failed, logo upload will continue.',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   emitTenantUpdated(req, tenant.id, {

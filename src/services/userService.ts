@@ -294,9 +294,12 @@ export class UserService {
             undefined,
           );
         } catch (e) {
-          // Avoid partial state where CRM user exists but ERP tenant admin failed.
-          await prisma.user.delete({ where: { id: createdUser.id } });
-          throw e;
+          // ERP sync failure is non-fatal: user already exists in local DB.
+          // Do not delete the user or block the response — just log and continue.
+          console.error(
+            `[UserService] createTenantUser: ERP provisioning failed (tenantId=${tenantId}, email=${data.email}). User creation will continue.`,
+            e instanceof Error ? e.message : String(e),
+          );
         }
       }
 
