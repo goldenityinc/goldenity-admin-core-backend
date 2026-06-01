@@ -201,4 +201,69 @@ export class TransactionService {
     const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [record]);
     return enrichedRecord ?? null;
   }
+
+  /**
+   * Cancel/Void a transaction by updating its status to CANCELLED.
+   * This should be called AFTER inventory has been restored.
+   * Returns the updated transaction record.
+   */
+  static async cancelTransaction(
+    tenantId: string,
+    id: bigint,
+    branchId: bigint | null,
+    requireScopedBranch = false,
+  ) {
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
+
+    // Verify transaction exists and belongs to this tenant/branch
+    const existingRecord = await prisma.sales_records.findFirst({
+      where: {
+        id,
+        tenant_id: tenantId,
+        ...(branchId !== null ? { branch_id: branchId } : {}),
+      },
+    });
+
+    if (!existingRecord) {
+      throw new AppError('Transaction tidak ditemukan', 404);
+    }
+
+    // Prevent double-cancellation
+    if (existingRecord.order_status === 'CANCELLED') {
+      throw new AppError('Transaksi sudah dibatalkan sebelumnya', 400);
+    }
+
+    console.log(
+      `[TransactionService.cancelTransaction] Cancelling transaction ID=${id}, TenantId=${tenantId}. Old Status=${existingRecord.order_status}`
+    );
+
+    // Update status to CANCELLED and return updated record
+    const updatedRecord = await prisma.sales_records.update({
+      where: { id },
+      data: {
+        order_status: 'CANCELLED',
+        updated_at: new Date(),
+      },
+      include: {
+        branch: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    console.log(
+      `[TransactionService.cancelTransaction] Transaction cancelled successfully. New Status=${updatedRecord.order_status}`
+    );
+
+    const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [updatedRecord]);
+    return enrichedRecord ?? updatedRecord;
+  }
 }

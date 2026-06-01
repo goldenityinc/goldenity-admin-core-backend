@@ -248,6 +248,10 @@ export class UserService {
         },
       });
 
+      console.log(
+        `[UserService.createTenantUser] User created with tenant isolation. User ID: ${createdUser.id}, TenantId: ${createdUser.tenantId}, Username: ${createdUser.username}, Role: ${createdUser.role}`
+      );
+
       // Best-effort: provision credentials into the tenant's POS database so the
       // user can immediately authenticate via /auth/login on the POS app.
       if (data.username) {
@@ -931,41 +935,49 @@ export class UserService {
         : {}),
     };
 
-    const [items, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        skip,
-        take: options.limit,
-        include: {
-          branch: {
-            select: {
-              id: true,
-              name: true,
-              branchCode: true,
+    try {
+      const [items, total] = await Promise.all([
+        prisma.user.findMany({
+          where,
+          skip,
+          take: options.limit,
+          include: {
+            branch: {
+              select: {
+                id: true,
+                name: true,
+                branchCode: true,
+              },
+            },
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
             },
           },
-          tenant: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.user.count({ where }),
-    ]);
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.user.count({ where }),
+      ]);
 
-    return {
-      items,
-      meta: {
-        page: options.page,
-        limit: options.limit,
-        total,
-        totalPages: Math.max(1, Math.ceil(total / options.limit)),
-      },
-    };
+      return {
+        items,
+        meta: {
+          page: options.page,
+          limit: options.limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / options.limit)),
+        },
+      };
+    } catch (error) {
+      console.error(
+        `[UserService.listUsers] Database query failed. Filters: ${JSON.stringify(where)}`,
+        error
+      );
+      throw error;
+    }
   }
 
   static async listUsersByTenant(

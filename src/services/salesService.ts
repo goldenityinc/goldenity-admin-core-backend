@@ -105,11 +105,18 @@ function normalizeSaleItem(item: SaleItemPayload) {
     ? (item.customName ?? '').trim()
     : (item.productName?.trim() || null);
 
+  // Custom price priority: frontend override > master product price
+  // For custom items, default to 0 if not provided. For services/products, accept null (no override).
+  const resolvedCustomPrice = 
+    customPrice !== undefined && customPrice !== null 
+      ? customPrice  // Always use provided custom price (both custom items and services)
+      : (item.isCustomItem ? new Prisma.Decimal(0) : null);  // Default only for custom items
+
   return {
     product_id: item.isCustomItem ? null : item.productId ?? null,
     product_name: normalizedProductName,
     qty: item.qty,
-    custom_price: item.isCustomItem ? customPrice ?? new Prisma.Decimal(0) : customPrice,
+    custom_price: resolvedCustomPrice,
     note: item.note ?? null,
     is_service: item.isService ?? false,
     is_custom_item: item.isCustomItem ?? false,
@@ -132,6 +139,21 @@ export class SalesService {
     }
 
     const normalizedItems = payload.items.map(normalizeSaleItem);
+
+    // Log items with custom prices for debugging
+    const itemsWithCustomPrices = normalizedItems.filter(
+      (item) => item.custom_price !== null && item.custom_price !== undefined
+    );
+    if (itemsWithCustomPrices.length > 0) {
+      console.log(
+        `[SalesService.createSale] Sale with ${itemsWithCustomPrices.length} items with custom prices:`,
+        itemsWithCustomPrices.map((item) => ({
+          productName: item.product_name,
+          customPrice: item.custom_price?.toString(),
+          isService: item.is_service,
+        }))
+      );
+    }
 
     return prisma.$transaction(async (tx) => {
       const saleRows = await tx.$queryRaw<SaleRow[]>`
@@ -245,7 +267,13 @@ export class SalesService {
           RETURNING *
         `;
 
-        items.push(itemRows[0]);
+        const insertedItem = itemRows[0];
+        if (insertedItem.custom_price && insertedItem.is_service) {
+          console.log(
+            `[SalesService.createSale] Service item saved with custom price: ${insertedItem.product_name} = ${insertedItem.custom_price}`
+          );
+        }
+        items.push(insertedItem);
       }
 
       return { sale, items };

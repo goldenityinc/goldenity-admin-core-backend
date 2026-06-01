@@ -28,16 +28,26 @@ function normalizeRole(rawRole: unknown): string {
 export const createSale = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createSaleSchema.safeParse(req.body);
   if (!parsed.success) {
+    console.error('[createSale] Validation failed:', parsed.error.issues);
     throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid sale payload', 400);
   }
 
-  const result = await SalesService.createSale(readTenantId(req), parsed.data);
+  try {
+    const result = await SalesService.createSale(readTenantId(req), parsed.data);
 
-  return res.status(201).json({
-    success: true,
-    message: 'Sale created successfully',
-    data: serializeForJson(result),
-  });
+    console.log(
+      `[createSale] Sale created successfully. ID=${result.sale.id}, Items=${result.items.length}, Tenant=${readTenantId(req)}`
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Sale created successfully',
+      data: serializeForJson(result),
+    });
+  } catch (error) {
+    console.error('[createSale] Error creating sale:', error);
+    throw error;
+  }
 });
 
 export const listPreOrders = asyncHandler(async (req: Request, res: Response) => {

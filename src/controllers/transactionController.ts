@@ -171,3 +171,52 @@ export const getTransaction = asyncHandler(async (req: Request, res: Response) =
     data: serializeForJson(record),
   });
 });
+
+/**
+ * PATCH /api/v1/transactions/:id/cancel
+ *
+ * Cancel/Void a transaction. This endpoint MUST be called AFTER inventory
+ * has been successfully restored. It updates the transaction status to CANCELLED
+ * so the frontend can reflect the correct state.
+ *
+ * Branch isolation enforced: only managers/HQ users can cancel transactions.
+ */
+export const cancelTransaction = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const branchId = resolveTransactionBranchFilter(req);
+  const role = normalizeRole(req.user?.role);
+
+  const rawId = req.params.id;
+  if (!rawId || !/^\d+$/.test(rawId)) {
+    throw new AppError('ID transaksi tidak valid', 400);
+  }
+
+  // Only TENANT_ADMIN and above can cancel transactions
+  if (role !== 'TENANT_ADMIN' && role !== 'ADMIN' && role !== 'SUPER_ADMIN' && role !== 'OWNER') {
+    throw new AppError(
+      'Anda tidak memiliki izin untuk membatalkan transaksi',
+      403
+    );
+  }
+
+  try {
+    const cancelledRecord = await TransactionService.cancelTransaction(
+      tenantId,
+      BigInt(rawId),
+      branchId,
+      role === 'CASHIER' || role === 'CRM_STAFF',
+    );
+
+    console.log(`[cancelTransaction] Transaction ${rawId} cancelled successfully for tenant ${tenantId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Transaksi berhasil dibatalkan. Status diubah menjadi CANCELLED.',
+      data: serializeForJson(cancelledRecord),
+    });
+  } catch (error) {
+    console.error(`[cancelTransaction] Error cancelling transaction ${rawId}:`, error);
+    throw error;
+  }
+});
+

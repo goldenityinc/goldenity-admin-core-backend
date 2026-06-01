@@ -89,6 +89,7 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
 
   const paramParsed = tenantIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
+    console.error(`[createTenantUser] Param validation failed:`, paramParsed.error.issues);
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
   }
 
@@ -102,12 +103,15 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
     commissionRate: (req.body as { commissionRate?: unknown }).commissionRate,
   });
   if (!bodyParsed.success) {
+    console.error(`[createTenantUser] Body validation failed for tenant ${paramParsed.data.tenantId}:`, bodyParsed.error.issues);
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
   }
 
   try {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
     const serializedUser = serializeForJson(createdUser);
+
+    console.log(`[createTenantUser] User created successfully. Tenant: ${bodyParsed.data.tenantId}, User: ${createdUser.id}, Username: ${createdUser.username}`);
 
     emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
       user: serializedUser,
@@ -119,6 +123,7 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
       data: serializedUser,
     });
   } catch (error: unknown) {
+    console.error(`[createTenantUser] Error creating user for tenant ${paramParsed.data.tenantId}:`, error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
@@ -133,6 +138,7 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
 export const getTenantUsers = asyncHandler(async (req: Request, res: Response) => {
   const paramParsed = tenantIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
+    console.error(`[getTenantUsers] Param validation failed:`, paramParsed.error.issues);
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
   }
 
@@ -141,16 +147,23 @@ export const getTenantUsers = asyncHandler(async (req: Request, res: Response) =
     tenantId: paramParsed.data.tenantId,
   });
   if (!queryParsed.success) {
+    console.error(`[getTenantUsers] Query validation failed for tenant ${paramParsed.data.tenantId}:`, queryParsed.error.issues);
     throw new AppError(queryParsed.error.issues[0]?.message ?? 'Invalid query params', 400);
   }
 
-  const result = await UserService.listUsers(queryParsed.data);
+  try {
+    const result = await UserService.listUsers(queryParsed.data);
+    console.log(`[getTenantUsers] Found ${result.items.length} users for tenant ${paramParsed.data.tenantId}`);
 
-  return res.status(200).json({
-    success: true,
-    data: serializeForJson(result.items),
-    meta: result.meta,
-  });
+    return res.status(200).json({
+      success: true,
+      data: serializeForJson(result.items),
+      meta: result.meta,
+    });
+  } catch (error) {
+    console.error(`[getTenantUsers] Error fetching users for tenant ${paramParsed.data.tenantId}:`, error);
+    throw error;
+  }
 });
 
 export const createUser = asyncHandler(async (req: Request, res: Response) => {
@@ -159,6 +172,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const isTenantScopedAdminUser = isTenantScopedAdmin(req);
 
   if (!isSuperAdmin && !isTenantScopedAdminUser) {
+    console.warn(`[createUser] Unauthorized user attempted to create user. User: ${req.user?.id}, Role: ${actorRole}`);
     throw new AppError('You do not have permission to create users', 403);
   }
 
@@ -200,6 +214,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 
   const bodyParsed = createUserSchema.safeParse(bodyForValidation);
   if (!bodyParsed.success) {
+    console.error(`[createUser] Body validation failed for tenant ${bodyForValidation.tenantId}:`, bodyParsed.error.issues);
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid user payload', 400);
   }
 
@@ -207,9 +222,29 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
     const createdUser = await UserService.createTenantUser(bodyParsed.data);
     const serializedUser = serializeForJson(createdUser);
 
+    console.log(`[createUser] User created successfully. Tenant: ${bodyParsed.data.tenantId}, User: ${createdUser.id}, Username: ${createdUser.username}`);
+
     emitUserChanged(req, bodyParsed.data.tenantId, 'CREATED', {
       user: serializedUser,
     });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Tenant user created successfully',
+      data: serializedUser,
+    });
+  } catch (error: unknown) {
+    console.error(`[createUser] Error creating user for tenant ${bodyParsed.data.tenantId}:`, error);
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new AppError('User with the same username already exists in this tenant', 409);
+    }
+
+    throw error;
+  }
+});
 
     return res.status(201).json({
       success: true,
@@ -229,23 +264,42 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {
+  const actorRole = (req.user?.role ?? '').toString().toUpperCase();
+  const isSuperAdmin = actorRole === 'SUPER_ADMIN';
+
+  // Non-admin users (CRM_STAFF, CRM_MANAGER) are scoped to their own tenant
+  const tenantId = isSuperAdmin
+    ? (req.query as Record<string, unknown>).tenantId
+    : req.user?.tenantId;
+
+  if (!isSuperAdmin && !tenantId) {
+    console.error(
+      `[getUsers] Non-admin user attempted to list users without tenant context. User: ${req.user?.id}, Role: ${req.user?.role}`
+    );
+    throw new AppError('tenantId is required for non-admin users', 400);
+  }
+
   const queryParsed = listUsersQuerySchema.safeParse({
     ...req.query,
-    tenantId: isTenantScopedAdmin(req)
-      ? req.user?.tenantId
-      : (req.query as Record<string, unknown>).tenantId,
+    tenantId,
   });
   if (!queryParsed.success) {
+    console.error(`[getUsers] Query validation failed:`, queryParsed.error.issues);
     throw new AppError(queryParsed.error.issues[0]?.message ?? 'Invalid query params', 400);
   }
 
-  const result = await UserService.listUsers(queryParsed.data);
+  try {
+    const result = await UserService.listUsers(queryParsed.data);
 
-  return res.status(200).json({
-    success: true,
-    data: serializeForJson(result.items),
-    meta: result.meta,
-  });
+    return res.status(200).json({
+      success: true,
+      data: serializeForJson(result.items),
+      meta: result.meta,
+    });
+  } catch (error) {
+    console.error(`[getUsers] Error fetching users for tenant ${tenantId}:`, error);
+    throw error;
+  }
 });
 
 export const resetUserPassword = asyncHandler(async (req: Request, res: Response) => {
