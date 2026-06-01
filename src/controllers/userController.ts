@@ -54,6 +54,10 @@ function getActorRole(req: Request): string {
   return (req.user?.role ?? '').toString().toUpperCase();
 }
 
+function getActorIdentifier(req: Request): string {
+  return (req.user?.uid ?? req.user?.userId ?? req.user?.email ?? 'unknown').toString();
+}
+
 function isTenantScopedAdmin(req: Request): boolean {
   return TENANT_SCOPED_ADMIN_ROLES.has(getActorRole(req));
 }
@@ -172,7 +176,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const isTenantScopedAdminUser = isTenantScopedAdmin(req);
 
   if (!isSuperAdmin && !isTenantScopedAdminUser) {
-    console.warn(`[createUser] Unauthorized user attempted to create user. User: ${req.user?.id}, Role: ${actorRole}`);
+    console.warn(`[createUser] Unauthorized user attempted to create user. User: ${getActorIdentifier(req)}, Role: ${actorRole}`);
     throw new AppError('You do not have permission to create users', 403);
   }
 
@@ -246,23 +250,6 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   }
 });
 
-    return res.status(201).json({
-      success: true,
-      message: 'Tenant user created successfully',
-      data: serializedUser,
-    });
-  } catch (error: unknown) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
-      throw new AppError('User with the same username already exists in this tenant', 409);
-    }
-
-    throw error;
-  }
-});
-
 export const getUsers = asyncHandler(async (req: Request, res: Response) => {
   const actorRole = (req.user?.role ?? '').toString().toUpperCase();
   const isSuperAdmin = actorRole === 'SUPER_ADMIN';
@@ -274,7 +261,7 @@ export const getUsers = asyncHandler(async (req: Request, res: Response) => {
 
   if (!isSuperAdmin && !tenantId) {
     console.error(
-      `[getUsers] Non-admin user attempted to list users without tenant context. User: ${req.user?.id}, Role: ${req.user?.role}`
+      `[getUsers] Non-admin user attempted to list users without tenant context. User: ${getActorIdentifier(req)}, Role: ${req.user?.role}`
     );
     throw new AppError('tenantId is required for non-admin users', 400);
   }

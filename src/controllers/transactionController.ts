@@ -204,7 +204,7 @@ export const cancelTransaction = asyncHandler(async (req: Request, res: Response
       tenantId,
       BigInt(rawId),
       branchId,
-      role === 'CASHIER' || role === 'CRM_STAFF',
+      false,
     );
 
     console.log(`[cancelTransaction] Transaction ${rawId} cancelled successfully for tenant ${tenantId}`);
