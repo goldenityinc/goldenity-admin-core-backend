@@ -2,6 +2,64 @@ import { OrderStatus, OrderType, Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 
+const transactionRecordSelect = Prisma.validator<Prisma.sales_recordsSelect>()({
+  id: true,
+  tenant_id: true,
+  branch_id: true,
+  shift_id: true,
+  reference_id: true,
+  payment_method: true,
+  payment_type: true,
+  transaction_type: true,
+  order_type: true,
+  order_status: true,
+  po_status: true,
+  dp_amount: true,
+  pickup_date: true,
+  target_pickup_branch_id: true,
+  total_price: true,
+  total_amount: true,
+  remaining_balance: true,
+  outstanding_balance: true,
+  created_at: true,
+  updated_at: true,
+  receipt_number: true,
+  cashier_id: true,
+  cashier_name: true,
+  mechanic_id: true,
+  mechanic_name: true,
+  mechanic_commission: true,
+  payment_status: true,
+  items_json: true,
+  customer_name: true,
+  total_discount: true,
+  total_tax: true,
+  total_profit: true,
+  amount_paid: true,
+  branch: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+});
+
+const transactionItemSelect = Prisma.validator<Prisma.sales_record_itemsSelect>()({
+  id: true,
+  sales_record_id: true,
+  product_id: true,
+  product_name: true,
+  qty: true,
+  custom_price: true,
+  note: true,
+  item_note: true,
+  is_service: true,
+  is_custom_item: true,
+  custom_name: true,
+  created_at: true,
+  updated_at: true,
+});
+
 export type TransactionListFilters = {
   tenantId: string;
   /**
@@ -20,14 +78,11 @@ export type TransactionListFilters = {
 };
 
 type TransactionRecordWithBranch = Prisma.sales_recordsGetPayload<{
-  include: {
-    branch: {
-      select: {
-        id: true;
-        name: true;
-      };
-    };
-  };
+  select: typeof transactionRecordSelect;
+}>;
+
+type TransactionItemRow = Prisma.sales_record_itemsGetPayload<{
+  select: typeof transactionItemSelect;
 }>;
 
 type TransactionRecordRow = TransactionRecordWithBranch & {
@@ -36,7 +91,88 @@ type TransactionRecordRow = TransactionRecordWithBranch & {
   branchName?: string | null;
 };
 
+type TransactionRecordResponse = TransactionRecordRow & {
+  status: OrderStatus;
+  items: Array<
+    TransactionItemRow & {
+      product_type: string | null;
+    }
+  >;
+};
+
 export class TransactionService {
+  private static async attachTransactionItems(
+    tenantId: string,
+    records: TransactionRecordRow[],
+  ): Promise<TransactionRecordResponse[]> {
+    if (records.length === 0) {
+      return [];
+    }
+
+    const recordIds = records.map((record) => record.id);
+
+    const items = await prisma.sales_record_items.findMany({
+      where: {
+        tenant_id: tenantId,
+        sales_record_id: {
+          in: recordIds,
+        },
+      },
+      select: transactionItemSelect,
+      orderBy: [
+        { sales_record_id: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    const productIds = Array.from(
+      new Set(
+        items
+          .map((item) => item.product_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const products = productIds.length
+      ? await prisma.products.findMany({
+          where: {
+            tenant_id: tenantId,
+            id: {
+              in: productIds,
+            },
+          },
+          select: {
+            id: true,
+            product_type: true,
+          },
+        })
+      : [];
+
+    const productTypeMap = new Map(products.map((product) => [product.id, product.product_type]));
+
+    const itemsByTransactionId = new Map<string, TransactionRecordResponse['items']>();
+
+    for (const item of items) {
+      const saleIdKey = item.sales_record_id.toString();
+      const mappedItems = itemsByTransactionId.get(saleIdKey) ?? [];
+
+      mappedItems.push({
+        ...item,
+        // Product type is sourced from products table; item flags come directly from sales_record_items.
+        product_type: item.product_id ? productTypeMap.get(item.product_id) ?? null : null,
+        is_service: item.is_service,
+      });
+
+      itemsByTransactionId.set(saleIdKey, mappedItems);
+    }
+
+    return records.map((record) => ({
+      ...record,
+      status: record.order_status,
+      items: itemsByTransactionId.get(record.id.toString()) ?? [],
+    }));
+  }
+
   private static async enrichTransactionsWithNames(
     tenantId: string,
     records: TransactionRecordWithBranch[],
@@ -133,14 +269,7 @@ export class TransactionService {
     const [records, total] = await Promise.all([
       prisma.sales_records.findMany({
         where,
-        include: {
-          branch: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
+        select: transactionRecordSelect,
         orderBy: { created_at: 'desc' },
         skip,
         take: safeLimit,
@@ -149,9 +278,10 @@ export class TransactionService {
     ]);
 
     const enrichedRecords = await this.enrichTransactionsWithNames(tenantId, records);
+    const recordsWithItems = await this.attachTransactionItems(tenantId, enrichedRecords);
 
     return {
-      records: enrichedRecords,
+      records: recordsWithItems,
       pagination: {
         total,
         page: safePage,
@@ -184,14 +314,7 @@ export class TransactionService {
         tenant_id: tenantId,
         ...(branchId !== null ? { branch_id: branchId } : {}),
       },
-      include: {
-        branch: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
+      select: transactionRecordSelect,
     });
 
     if (!record) {
@@ -199,7 +322,12 @@ export class TransactionService {
     }
 
     const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [record]);
-    return enrichedRecord ?? null;
+    const [recordWithItems] = await this.attachTransactionItems(
+      tenantId,
+      enrichedRecord ? [enrichedRecord] : [],
+    );
+
+    return recordWithItems ?? null;
   }
 
   /**
@@ -249,14 +377,7 @@ export class TransactionService {
         order_status: 'CANCELLED',
         updated_at: new Date(),
       },
-      include: {
-        branch: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
+      select: transactionRecordSelect,
     });
 
     console.log(
@@ -264,6 +385,11 @@ export class TransactionService {
     );
 
     const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [updatedRecord]);
-    return enrichedRecord ?? updatedRecord;
+    const [recordWithItems] = await this.attachTransactionItems(
+      tenantId,
+      enrichedRecord ? [enrichedRecord] : [],
+    );
+
+    return recordWithItems ?? updatedRecord;
   }
 }
