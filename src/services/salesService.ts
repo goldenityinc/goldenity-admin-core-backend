@@ -68,22 +68,6 @@ type SaleItemRow = {
   employee_id: string | null;
 };
 
-type SaleItemRow = {
-  id: bigint;
-  tenant_id: string | null;
-  sales_record_id: bigint;
-  product_id: string | null;
-  product_name: string | null;
-  qty: number;
-  is_custom_item: boolean;
-  custom_name: string | null;
-  custom_price: Prisma.Decimal | null;
-  note: string | null;
-  is_service: boolean;
-  created_at: Date | null;
-  updated_at: Date | null;
-};
-
 export type PreOrderListFilters = {
   tenantId: string;
   branchId: bigint | null;

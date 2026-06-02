@@ -12,6 +12,8 @@ const saleItemSchema = z.object({
   isCustomItem: z.boolean().optional().default(false),
   customName: z.string().trim().min(1).optional().nullable(),
   customPrice: decimalLikeSchema.optional().nullable(),
+  mechanicId: z.string().trim().min(1).optional().nullable(),
+  employeeId: z.string().trim().min(1).optional().nullable(),
 }).superRefine((item, ctx) => {
   if (item.isCustomItem) {
     if (!item.customName) {
