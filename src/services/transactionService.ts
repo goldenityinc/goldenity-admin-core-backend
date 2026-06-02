@@ -95,6 +95,10 @@ type TransactionRecordRow = TransactionRecordWithBranch & {
 
 type TransactionRecordResponse = TransactionRecordRow & {
   status: OrderStatus;
+  order_status: OrderStatus;
+  transaction_status: OrderStatus;
+  is_void: boolean;
+  isVoid: boolean;
   items: Array<
     TransactionItemRow & {
       product_type: string | null;
@@ -171,6 +175,10 @@ export class TransactionService {
     return records.map((record) => ({
       ...record,
       status: record.order_status,
+      order_status: record.order_status,
+      transaction_status: record.order_status,
+      is_void: record.order_status === 'CANCELLED',
+      isVoid: record.order_status === 'CANCELLED',
       items: itemsByTransactionId.get(record.id.toString()) ?? [],
     }));
   }
