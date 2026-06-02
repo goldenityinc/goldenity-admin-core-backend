@@ -20,6 +20,7 @@ import salesRoutes from './routes/salesRoutes';
 import transactionRoutes from './routes/transactionRoutes';
 import productRoutes from './routes/productRoutes';
 import shiftRoutes from './routes/shiftRoutes';
+import expenseRoutes from './routes/expenseRoutes';
 import { initializeSocketServer } from './services/socketServer';
 
 // Load environment variables
@@ -86,6 +87,7 @@ app.use('/api/v1/sales', salesRoutes);
 app.use('/api/v1/transactions', transactionRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/shifts', shiftRoutes);
+app.use('/api/v1/expenses', expenseRoutes);
 
 
 // 404 Handler - Route not found

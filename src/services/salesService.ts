@@ -56,6 +56,25 @@ type SaleItemRow = {
   product_id: string | null;
   product_name: string | null;
   qty: number;
+  custom_price: Prisma.Decimal | null;
+  note: string | null;
+  item_note: string | null;
+  is_service: boolean;
+  created_at: Date | null;
+  updated_at: Date | null;
+  is_custom_item: boolean;
+  custom_name: string | null;
+  mechanic_id: string | null;
+  employee_id: string | null;
+};
+
+type SaleItemRow = {
+  id: bigint;
+  tenant_id: string | null;
+  sales_record_id: bigint;
+  product_id: string | null;
+  product_name: string | null;
+  qty: number;
   is_custom_item: boolean;
   custom_name: string | null;
   custom_price: Prisma.Decimal | null;
@@ -112,6 +131,9 @@ function normalizeSaleItem(item: SaleItemPayload) {
       ? customPrice  // Always use provided custom price (both custom items and services)
       : (item.isCustomItem ? new Prisma.Decimal(0) : null);  // Default only for custom items
 
+  // Extract mechanic_id or employee_id from frontend - CRITICAL: must be passed for service items
+  const mechanicId = (item.mechanicId ?? item.employeeId ?? '').toString().trim() || null;
+
   return {
     product_id: item.isCustomItem ? null : item.productId ?? null,
     product_name: normalizedProductName,
@@ -121,6 +143,8 @@ function normalizeSaleItem(item: SaleItemPayload) {
     is_service: item.isService ?? false,
     is_custom_item: item.isCustomItem ?? false,
     custom_name: item.isCustomItem ? normalizedProductName : item.customName ?? null,
+    mechanic_id: mechanicId,
+    employee_id: mechanicId,
   };
 }
 
@@ -225,6 +249,8 @@ export class SalesService {
             isService: item.is_service,
             isCustomItem: item.is_custom_item,
             customName: item.custom_name,
+            mechanicId: item.mechanic_id,
+            employeeId: item.employee_id,
           })))}::jsonb,
           ${payload.customerName ?? null},
           ${toOptionalBigInt(payload.totalDiscount ?? undefined)},
@@ -250,7 +276,9 @@ export class SalesService {
             "custom_name",
             "custom_price",
             "note",
-            "is_service"
+            "is_service",
+            "mechanic_id",
+            "employee_id"
           )
           VALUES (
             ${tenantId},
@@ -262,7 +290,9 @@ export class SalesService {
             ${item.custom_name},
             ${item.custom_price},
             ${item.note},
-            ${item.is_service}
+            ${item.is_service},
+            ${item.mechanic_id},
+            ${item.employee_id}
           )
           RETURNING *
         `;
@@ -271,6 +301,11 @@ export class SalesService {
         if (insertedItem.custom_price && insertedItem.is_service) {
           console.log(
             `[SalesService.createSale] Service item saved with custom price: ${insertedItem.product_name} = ${insertedItem.custom_price}`
+          );
+        }
+        if (insertedItem.mechanic_id) {
+          console.log(
+            `[SalesService.createSale] Service item saved with mechanic_id: ${insertedItem.product_name} -> MechanicID=${insertedItem.mechanic_id}`
           );
         }
         items.push(insertedItem);

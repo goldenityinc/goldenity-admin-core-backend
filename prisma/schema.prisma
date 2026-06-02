@@ -257,17 +257,21 @@ model daily_cash {
 }
 
 model expenses {
-  id          BigInt    @id @default(autoincrement())
-  tenant_id   String?
-  amount      Decimal?  @db.Decimal
-  notes       String?
-  created_at  DateTime? @default(now())
-  updated_at  DateTime? @default(now())
-  status      String?
-  void_reason String?
-  voided_at   DateTime? @db.Timestamptz(6)
+  id            BigInt    @id @default(autoincrement())
+  tenant_id     String?
+  title         String    @default("Pengeluaran")
+  category      String    @default("Operasional")
+  expense_date  DateTime
+  amount        Decimal?  @db.Decimal
+  notes         String?
+  created_at    DateTime? @default(now())
+  updated_at    DateTime? @default(now())
+  status        String?
+  void_reason   String?
+  voided_at     DateTime? @db.Timestamptz(6)
 
   @@index([tenant_id])
+  @@index([tenant_id, expense_date])
 }
 
 model kas_bon {
@@ -390,6 +394,8 @@ model sales_record_items {
   note            String?
   item_note       String?
   is_service      Boolean   @default(false)
+  mechanic_id     String?   @db.VarChar(255)
+  employee_id     String?   @db.VarChar(255)
   created_at      DateTime? @default(now()) @db.Timestamptz(6)
   updated_at      DateTime? @default(now()) @db.Timestamptz(6)
   is_custom_item  Boolean   @default(false)
@@ -397,6 +403,8 @@ model sales_record_items {
 
   @@index([sales_record_id], map: "idx_sales_record_items_sales_record_id")
   @@index([tenant_id], map: "idx_sales_record_items_tenant_id")
+  @@index([mechanic_id], map: "idx_sales_record_items_mechanic_id")
+  @@index([employee_id], map: "idx_sales_record_items_employee_id")
 }
 
 model sales_records {

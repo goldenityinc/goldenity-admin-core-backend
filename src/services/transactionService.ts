@@ -58,6 +58,8 @@ const transactionItemSelect = Prisma.validator<Prisma.sales_record_itemsSelect>(
   custom_name: true,
   created_at: true,
   updated_at: true,
+  mechanic_id: true,
+  employee_id: true,
 });
 
 export type TransactionListFilters = {
