@@ -61,7 +61,7 @@ function getRoleCandidates(role: string): string[] {
     SUPER_ADMIN: ['OWNER', 'ADMIN', 'SUPER_ADMIN'],
     TENANT_ADMIN: ['ADMIN', 'OWNER', 'TENANT_ADMIN', 'MANAGER'],
     CRM_MANAGER: ['MANAGER', 'ADMIN', 'STAFF'],
-    CRM_STAFF: ['STAFF', 'CASHIER', 'KASIR', 'USER'],
+    CRM_STAFF: ['STAFF', 'CASHIER', 'KASIR', 'USER', 'MECHANIC', 'MONTIR', 'TEKNISI'],
     READ_ONLY: ['VIEWER', 'AUDITOR', 'READ_ONLY', 'STAFF'],
   };
 

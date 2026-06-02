@@ -39,6 +39,9 @@ const normalizeCreateUserRole = (
     case 'CASHIER':
     case 'KASIR':
     case 'USER':
+    case 'MECHANIC':
+    case 'MONTIR':
+    case 'TEKNISI':
       return 'CRM_STAFF';
     case 'READ_ONLY':
     case 'VIEWER':
@@ -100,7 +103,8 @@ export const createTenantUser = asyncHandler(async (req: Request, res: Response)
   const bodyParsed = createUserSchema.safeParse({
     ...req.body,
     tenantId: paramParsed.data.tenantId,
-    role: normalizedIncomingRole,
+    // Default tenant user creation to operational user role, not tenant admin.
+    role: normalizedIncomingRole ?? 'CRM_STAFF',
     branchId: (req.body as { branchId?: unknown }).branchId,
     employeeType: (req.body as { employeeType?: unknown }).employeeType,
     baseSalary: (req.body as { baseSalary?: unknown }).baseSalary,
@@ -174,10 +178,15 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
   const actorRole = (req.user?.role ?? '').toString().toUpperCase();
   const isSuperAdmin = actorRole === 'SUPER_ADMIN';
   const isTenantScopedAdminUser = isTenantScopedAdmin(req);
+  const actorTenantId = req.user?.tenantId;
 
   if (!isSuperAdmin && !isTenantScopedAdminUser) {
     console.warn(`[createUser] Unauthorized user attempted to create user. User: ${getActorIdentifier(req)}, Role: ${actorRole}`);
     throw new AppError('You do not have permission to create users', 403);
+  }
+
+  if (!isSuperAdmin && !actorTenantId) {
+    throw new AppError('Tenant context is required to create users', 403);
   }
 
   const incomingRoleRaw = (req.body as { role?: unknown })?.role;
@@ -208,8 +217,9 @@ export const createUser = asyncHandler(async (req: Request, res: Response) => {
     // TENANT_ADMIN dipaksa ke tenant miliknya sendiri.
     tenantId: isSuperAdmin
       ? (req.body as Record<string, unknown>).tenantId
-      : req.user?.tenantId,
-    role: normalizedIncomingRole,
+      : actorTenantId,
+    // Default role for tenant-created employee is CRM_STAFF when omitted.
+    role: normalizedIncomingRole ?? (isSuperAdmin ? 'TENANT_ADMIN' : 'CRM_STAFF'),
     branchId: (req.body as Record<string, unknown>).branchId,
     employeeType: (req.body as Record<string, unknown>).employeeType,
     baseSalary: (req.body as Record<string, unknown>).baseSalary,
