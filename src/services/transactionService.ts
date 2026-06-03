@@ -358,40 +358,119 @@ export class TransactionService {
       );
     }
 
-    // Verify transaction exists and belongs to this tenant/branch
-    const existingRecord = await prisma.sales_records.findFirst({
-      where: {
-        id,
-        tenant_id: tenantId,
-        ...(branchId !== null ? { branch_id: branchId } : {}),
+    let updatedRecord: TransactionRecordWithBranch | null = null;
+
+    await prisma.$transaction(
+      async (tx) => {
+        const existingRecord = await tx.sales_records.findFirst({
+          where: {
+            id,
+            tenant_id: tenantId,
+            ...(branchId !== null ? { branch_id: branchId } : {}),
+          },
+        });
+
+        if (!existingRecord) {
+          throw new AppError('Transaction tidak ditemukan', 404);
+        }
+
+        const currentOrderStatus = (existingRecord.order_status ?? '')
+          .toString()
+          .trim()
+          .toUpperCase();
+        const rawIsVoid = (
+          existingRecord as unknown as { is_void?: boolean; isVoid?: boolean }
+        ).is_void ?? (
+          existingRecord as unknown as { is_void?: boolean; isVoid?: boolean }
+        ).isVoid;
+
+        if (
+          currentOrderStatus === 'CANCELLED' ||
+          currentOrderStatus === 'VOID' ||
+          rawIsVoid === true
+        ) {
+          throw new AppError('TRANSACTION_ALREADY_VOIDED', 409);
+        }
+
+        const updateResult = await tx.sales_records.updateMany({
+          where: {
+            id,
+            tenant_id: tenantId,
+            ...(branchId !== null ? { branch_id: branchId } : {}),
+            NOT: {
+              order_status: 'CANCELLED',
+            },
+          },
+          data: {
+            order_status: 'CANCELLED',
+            updated_at: new Date(),
+          },
+        });
+
+        if (updateResult.count !== 1) {
+          throw new AppError('TRANSACTION_ALREADY_VOIDED', 409);
+        }
+
+        const soldItems = await tx.sales_record_items.findMany({
+          where: {
+            tenant_id: tenantId,
+            sales_record_id: id,
+          },
+          select: {
+            product_id: true,
+            qty: true,
+            is_service: true,
+          },
+        });
+
+        for (const item of soldItems) {
+          if (item.is_service || !item.product_id) {
+            continue;
+          }
+
+          const qty = Number(item.qty ?? 0);
+          if (!Number.isFinite(qty) || qty <= 0) {
+            continue;
+          }
+
+          await tx.products.updateMany({
+            where: {
+              tenant_id: tenantId,
+              id: item.product_id,
+            },
+            data: {
+              stock: {
+                increment: qty,
+              },
+              updated_at: new Date(),
+            },
+          });
+        }
+
+        updatedRecord = await tx.sales_records.findFirst({
+          where: {
+            id,
+            tenant_id: tenantId,
+            ...(branchId !== null ? { branch_id: branchId } : {}),
+          },
+          select: transactionRecordSelect,
+        });
+
+        if (!updatedRecord) {
+          throw new AppError('Transaction tidak ditemukan setelah pembatalan', 404);
+        }
       },
-    });
-
-    if (!existingRecord) {
-      throw new AppError('Transaction tidak ditemukan', 404);
-    }
-
-    // Prevent double-cancellation
-    if (existingRecord.order_status === 'CANCELLED') {
-      throw new AppError('Transaksi sudah dibatalkan sebelumnya', 400);
-    }
-
-    console.log(
-      `[TransactionService.cancelTransaction] Cancelling transaction ID=${id}, TenantId=${tenantId}. Old Status=${existingRecord.order_status}`
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
     );
 
-    // Update status to CANCELLED and return updated record
-    const updatedRecord = await prisma.sales_records.update({
-      where: { id },
-      data: {
-        order_status: 'CANCELLED',
-        updated_at: new Date(),
-      },
-      select: transactionRecordSelect,
-    });
+    if (!updatedRecord) {
+      throw new AppError('Transaction tidak ditemukan setelah pembatalan', 404);
+    }
 
     console.log(
-      `[TransactionService.cancelTransaction] Transaction cancelled successfully. New Status=${updatedRecord.order_status}`
+      `[TransactionService.cancelTransaction] Transaction cancelled successfully. ID=${id} TenantId=${tenantId}`
     );
 
     const [enrichedRecord] = await this.enrichTransactionsWithNames(tenantId, [updatedRecord]);
