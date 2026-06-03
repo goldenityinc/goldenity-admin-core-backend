@@ -215,6 +215,25 @@ export const cancelTransaction = asyncHandler(async (req: Request, res: Response
       data: serializeForJson(cancelledRecord),
     });
   } catch (error) {
+    if (
+      error instanceof AppError
+      && error.statusCode === 409
+      && error.message === 'TRANSACTION_ALREADY_VOIDED'
+    ) {
+      const existingRecord = await TransactionService.getTransactionById(
+        tenantId,
+        BigInt(rawId),
+        branchId,
+        false,
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Transaksi sudah dibatalkan sebelumnya. Status tetap CANCELLED.',
+        data: serializeForJson(existingRecord),
+      });
+    }
+
     console.error(`[cancelTransaction] Error cancelling transaction ${rawId}:`, error);
     throw error;
   }
