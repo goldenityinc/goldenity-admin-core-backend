@@ -12,6 +12,14 @@ export type ProductListFilters = {
 };
 
 export class ProductService {
+  private static assertTenantId(tenantId: string): string {
+    const normalizedTenantId = (tenantId ?? '').toString().trim();
+    if (!normalizedTenantId) {
+      throw new Error('Security guard: tenantId wajib tersedia untuk operasi produk');
+    }
+    return normalizedTenantId;
+  }
+
   /**
   * List products scoped to the requesting user's tenant.
   * branchId is never allowed to be null in result rows.
@@ -26,13 +34,14 @@ export class ProductService {
       page = 1,
       limit = 100,
     } = filters;
+    const normalizedTenantId = this.assertTenantId(tenantId);
 
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(Math.max(1, limit), 500);
     const skip = (safePage - 1) * safeLimit;
 
     const where: Prisma.productsWhereInput = {
-      tenant_id: tenantId,
+      tenant_id: normalizedTenantId,
       ...(branchId !== null ? { branchId } : { branchId: { not: null } }),
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(category ? { category } : {}),
@@ -94,10 +103,11 @@ export class ProductService {
     productId: string,
     branchId: bigint | null,
   ) {
+    const normalizedTenantId = this.assertTenantId(tenantId);
     const product = await prisma.products.findFirst({
       where: {
         id: productId,
-        tenant_id: tenantId,
+        tenant_id: normalizedTenantId,
         ...(branchId !== null ? { branchId } : { branchId: { not: null } }),
       },
     });
@@ -114,10 +124,11 @@ export class ProductService {
     productId: string,
     branchId: bigint,
   ) {
+    const normalizedTenantId = this.assertTenantId(tenantId);
     const existing = await prisma.products.findFirst({
       where: {
         id: productId,
-        tenant_id: tenantId,
+        tenant_id: normalizedTenantId,
       },
       select: { id: true },
     });
