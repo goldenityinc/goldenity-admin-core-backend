@@ -6,6 +6,7 @@ const transactionRecordSelect = Prisma.validator<Prisma.sales_recordsSelect>()({
   id: true,
   tenant_id: true,
   branch_id: true,
+  table_id: true,
   shift_id: true,
   reference_id: true,
   payment_method: true,
@@ -40,6 +41,13 @@ const transactionRecordSelect = Prisma.validator<Prisma.sales_recordsSelect>()({
     select: {
       id: true,
       name: true,
+    },
+  },
+  table: {
+    select: {
+      id: true,
+      table_number: true,
+      status: true,
     },
   },
 });
@@ -99,6 +107,7 @@ type TransactionRecordResponse = TransactionRecordRow & {
   transaction_status: OrderStatus;
   is_void: boolean;
   isVoid: boolean;
+  table_number: string | null;
   items: Array<
     TransactionItemRow & {
       product_type: string | null;
@@ -179,6 +188,7 @@ export class TransactionService {
       transaction_status: record.order_status,
       is_void: record.order_status === 'CANCELLED',
       isVoid: record.order_status === 'CANCELLED',
+      table_number: record.table?.table_number ?? null,
       items: itemsByTransactionId.get(record.id.toString()) ?? [],
     }));
   }
