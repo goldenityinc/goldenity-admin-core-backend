@@ -25,10 +25,26 @@ model Tenant {
   showInventoryImages Boolean       @default(true) @map("show_inventory_images")
   appInstances        AppInstance[]
   branches            Branch[]
+  tables              tables[]
   users               User[]
 
   @@index([slug])
   @@map("tenants")
+}
+
+model tables {
+  id           BigInt      @id @default(autoincrement())
+  tenant_id    String
+  table_number String
+  capacity     Int
+  status       TableStatus @default(AVAILABLE)
+  created_at   DateTime?   @default(now())
+  updated_at   DateTime?   @default(now()) @updatedAt
+  tenant       Tenant      @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  salesRecords sales_records[]
+
+  @@index([tenant_id])
+  @@unique([tenant_id, table_number])
 }
 
 model Branch {
@@ -436,6 +452,7 @@ model sales_records {
   amount_paid             Decimal?    @default(0) @db.Decimal
   branch_id               BigInt?
   shift_id                BigInt?
+  table_id                BigInt?
   order_type              OrderType   @default(WALK_IN)
   order_status            OrderStatus @default(COMPLETED)
   po_status               String?
@@ -443,10 +460,12 @@ model sales_records {
   target_pickup_branch_id BigInt?
   branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id])
   shift                   shifts?     @relation(fields: [shift_id], references: [id])
+  table                   tables?     @relation(fields: [table_id], references: [id])
   target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id])
 
   @@index([branch_id])
   @@index([shift_id])
+  @@index([table_id])
   @@index([target_pickup_branch_id])
   @@index([order_type])
   @@index([order_status])
@@ -651,15 +670,24 @@ enum JournalEntrySourceType {
 enum OrderType {
   WALK_IN
   PRE_ORDER
+  DINE_IN
+  TAKEAWAY
   DELIVERY
 }
 
 enum OrderStatus {
   PENDING
+  PENDING_PAYMENT
   PREPARING
   READY_FOR_PICKUP
   COMPLETED
   CANCELLED
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
 }
 
 enum ShiftStatus {

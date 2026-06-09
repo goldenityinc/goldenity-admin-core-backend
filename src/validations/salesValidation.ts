@@ -50,9 +50,13 @@ export const createSaleSchema = z.object({
   dpAmount: decimalLikeSchema.optional().nullable(),
   poStatus: z.string().trim().min(1).optional().nullable(),
   branchId: bigintLikeSchema.optional().nullable(),
+  tableId: bigintLikeSchema.optional().nullable(),
+  table_id: bigintLikeSchema.optional().nullable(),
   shiftId: bigintLikeSchema.optional().nullable(),
-  orderType: z.enum(['WALK_IN', 'PRE_ORDER', 'DELIVERY']).optional(),
-  orderStatus: z.enum(['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'COMPLETED', 'CANCELLED']).optional(),
+  orderType: z.enum(['WALK_IN', 'PRE_ORDER', 'DINE_IN', 'TAKEAWAY', 'DELIVERY']).optional(),
+  order_type: z.enum(['WALK_IN', 'PRE_ORDER', 'DINE_IN', 'TAKEAWAY', 'DELIVERY']).optional(),
+  orderStatus: z.enum(['PENDING', 'PENDING_PAYMENT', 'PREPARING', 'READY_FOR_PICKUP', 'COMPLETED', 'CANCELLED']).optional(),
+  order_status: z.enum(['PENDING', 'PENDING_PAYMENT', 'PREPARING', 'READY_FOR_PICKUP', 'COMPLETED', 'CANCELLED']).optional(),
   pickupDate: z.union([z.coerce.date(), z.string().datetime()]).optional().nullable(),
   targetPickupBranchId: bigintLikeSchema.optional().nullable(),
   totalPrice: decimalLikeSchema.optional().nullable(),
@@ -73,7 +77,8 @@ export const createSaleSchema = z.object({
   amountPaid: decimalLikeSchema.optional().nullable(),
   items: z.array(saleItemSchema).min(1, 'At least one sale item is required'),
 }).superRefine((data, ctx) => {
-  if (data.orderType === 'PRE_ORDER' && !data.pickupDate) {
+  const orderType = data.orderType ?? data.order_type;
+  if (orderType === 'PRE_ORDER' && !data.pickupDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'pickupDate wajib diisi untuk PRE_ORDER',

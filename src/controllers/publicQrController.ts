@@ -1,0 +1,242 @@
+import type { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
+import prisma from '../config/database';
+import { asyncHandler } from '../utils/asyncHandler';
+import { AppError } from '../utils/AppError';
+import { serializeForJson } from '../utils/serializeForJson';
+
+type QrMenuItemRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  product_type: string | null;
+  price: number | null;
+  stock: number | null;
+  image_url: string | null;
+};
+
+type QrOrderItemInput = {
+  productId: string;
+  qty: number;
+  note?: string;
+  customPrice?: number;
+};
+
+function parseTenantId(value: unknown): string {
+  const tenantId = (value ?? '').toString().trim();
+  if (!tenantId) {
+    throw new AppError('tenantId wajib diisi', 400);
+  }
+  return tenantId;
+}
+
+function parseTableId(value: unknown): bigint {
+  const text = (value ?? '').toString().trim();
+  if (!/^\d+$/.test(text)) {
+    throw new AppError('table_id tidak valid', 400);
+  }
+  return BigInt(text);
+}
+
+function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new AppError('items wajib diisi minimal 1 item', 400);
+  }
+
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== 'object') {
+      throw new AppError(`items[${index}] tidak valid`, 400);
+    }
+
+    const row = raw as Record<string, unknown>;
+    const productId = (row.productId ?? row.product_id ?? '').toString().trim();
+    if (!productId) {
+      throw new AppError(`items[${index}].productId wajib diisi`, 400);
+    }
+
+    const qty = Number(row.qty ?? row.quantity);
+    if (!Number.isInteger(qty) || qty <= 0) {
+      throw new AppError(`items[${index}].qty harus angka bulat > 0`, 400);
+    }
+
+    const customPriceRaw = row.customPrice ?? row.custom_price;
+    const customPrice = customPriceRaw === undefined || customPriceRaw === null || customPriceRaw === ''
+      ? undefined
+      : Number(customPriceRaw);
+
+    if (customPrice !== undefined && (!Number.isFinite(customPrice) || customPrice < 0)) {
+      throw new AppError(`items[${index}].customPrice tidak valid`, 400);
+    }
+
+    return {
+      productId,
+      qty,
+      note: (row.note ?? '').toString().trim() || undefined,
+      customPrice,
+    };
+  });
+}
+
+export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = parseTenantId(req.params.tenantId);
+
+  const rows = await prisma.$queryRaw<QrMenuItemRow[]>`
+    SELECT id, name, category, product_type, price, stock, image_url
+    FROM products
+    WHERE tenant_id = ${tenantId}
+      AND COALESCE(is_active, true) = true
+      AND (
+        UPPER(COALESCE(product_type, '')) IN ('FOOD', 'BEVERAGE', 'FNB', 'F&B', 'MENU')
+        OR LOWER(COALESCE(category, '')) IN ('food', 'beverage', 'fnb', 'f&b', 'menu')
+      )
+      AND (
+        COALESCE(is_service, false) = true
+        OR COALESCE(stock, 0) > 0
+      )
+    ORDER BY name ASC
+  `;
+
+  return res.status(200).json({
+    success: true,
+    data: serializeForJson(rows),
+  });
+});
+
+export const createQrOrder = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = parseTenantId(req.body.tenantId ?? req.body.tenant_id);
+  const tableId = parseTableId(req.body.tableId ?? req.body.table_id);
+  const items = parseQrOrderItems(req.body.items);
+  const customerName = (req.body.customerName ?? req.body.customer_name ?? 'Guest').toString().trim();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string }>>`
+      SELECT id, status
+      FROM tables
+      WHERE id = ${tableId} AND tenant_id = ${tenantId}
+      LIMIT 1
+    `;
+
+    if (!tableRows[0]) {
+      throw new AppError('Meja tidak ditemukan untuk tenant ini', 404);
+    }
+
+    const productIds = items.map((item) => item.productId);
+    const products = await tx.$queryRaw<Array<{ id: string; name: string; price: number | null; is_service: boolean | null; stock: number | null }>>`
+      SELECT id, name, price, is_service, stock
+      FROM products
+      WHERE tenant_id = ${tenantId}
+        AND id IN (${Prisma.join(productIds)})
+    `;
+
+    const productMap = new Map(products.map((row) => [row.id, row]));
+
+    let total = 0;
+    const normalizedItems = items.map((item) => {
+      const product = productMap.get(item.productId);
+      if (!product) {
+        throw new AppError(`Produk tidak ditemukan: ${item.productId}`, 404);
+      }
+
+      if (!(product.is_service === true) && Number(product.stock ?? 0) < item.qty) {
+        throw new AppError(`Stok tidak cukup untuk produk ${product.name}`, 400);
+      }
+
+      const unitPrice = item.customPrice ?? Number(product.price ?? 0);
+      total += unitPrice * item.qty;
+
+      return {
+        productId: item.productId,
+        productName: product.name,
+        qty: item.qty,
+        customPrice: unitPrice,
+        note: item.note ?? null,
+        isService: product.is_service === true,
+      };
+    });
+
+    const referenceId = `qr_${Date.now()}`;
+
+    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; total_price: string | null; order_status: string }>>`
+      INSERT INTO sales_records (
+        tenant_id,
+        table_id,
+        reference_id,
+        payment_method,
+        payment_status,
+        order_type,
+        order_status,
+        total_price,
+        total_amount,
+        customer_name,
+        items_json,
+        amount_paid
+      )
+      VALUES (
+        ${tenantId},
+        ${tableId},
+        ${referenceId},
+        ${'QRIS'},
+        ${'PENDING_PAYMENT'},
+        ${'DINE_IN'}::"OrderType",
+        ${'PENDING_PAYMENT'}::"OrderStatus",
+        ${total},
+        ${total},
+        ${customerName || 'Guest'},
+        ${JSON.stringify(normalizedItems)}::jsonb,
+        ${0}
+      )
+      RETURNING id, reference_id, total_price, order_status
+    `;
+
+    const sale = saleRows[0];
+    if (!sale) {
+      throw new AppError('Gagal membuat pesanan QR', 500);
+    }
+
+    for (const item of normalizedItems) {
+      await tx.$queryRaw`
+        INSERT INTO sales_record_items (
+          tenant_id,
+          sales_record_id,
+          product_id,
+          product_name,
+          qty,
+          custom_price,
+          note,
+          is_service
+        )
+        VALUES (
+          ${tenantId},
+          ${sale.id},
+          ${item.productId},
+          ${item.productName},
+          ${item.qty},
+          ${item.customPrice},
+          ${item.note},
+          ${item.isService}
+        )
+      `;
+
+      if (!item.isService) {
+        await tx.$queryRaw`
+          UPDATE products
+          SET stock = COALESCE(stock, 0) - ${item.qty}, updated_at = NOW()
+          WHERE id = ${item.productId} AND tenant_id = ${tenantId}
+        `;
+      }
+    }
+
+    await tx.$queryRaw`
+      UPDATE tables
+      SET status = ${'OCCUPIED'}::"TableStatus", updated_at = NOW()
+      WHERE id = ${tableId} AND tenant_id = ${tenantId}
+    `;
+
+    return sale;
+  });
+
+  return res.status(201).json({
+    success: true,
+    data: serializeForJson(result),
+  });
+});

@@ -8,6 +8,7 @@ import { serializeForJson } from '../utils/serializeForJson';
 
 const ORDER_STATUS_VALUES = new Set<OrderStatus>([
   'PENDING',
+  'PENDING_PAYMENT',
   'PREPARING',
   'READY_FOR_PICKUP',
   'COMPLETED',
@@ -17,6 +18,8 @@ const ORDER_STATUS_VALUES = new Set<OrderStatus>([
 const ORDER_TYPE_VALUES = new Set<OrderType>([
   'WALK_IN',
   'PRE_ORDER',
+  'DINE_IN',
+  'TAKEAWAY',
   'DELIVERY',
 ]);
 

@@ -32,8 +32,15 @@ export const createSale = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid sale payload', 400);
   }
 
+  const normalizedPayload = {
+    ...parsed.data,
+    tableId: parsed.data.tableId ?? parsed.data.table_id,
+    orderType: parsed.data.orderType ?? parsed.data.order_type,
+    orderStatus: parsed.data.orderStatus ?? parsed.data.order_status,
+  };
+
   try {
-    const result = await SalesService.createSale(readTenantId(req), parsed.data);
+    const result = await SalesService.createSale(readTenantId(req), normalizedPayload);
 
     console.log(
       `[createSale] Sale created successfully. ID=${result.sale.id}, Items=${result.items.length}, Tenant=${readTenantId(req)}`

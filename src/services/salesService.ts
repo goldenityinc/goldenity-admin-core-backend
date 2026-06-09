@@ -18,6 +18,7 @@ type SaleRow = {
   id: bigint;
   tenant_id: string | null;
   branch_id: bigint | null;
+  table_id?: bigint | null;
   reference_id: string | null;
   payment_method: string | null;
   payment_type: string | null;
@@ -135,6 +136,7 @@ function normalizeSaleItem(item: SaleItemPayload) {
 export class SalesService {
   static async createSale(tenantId: string, payload: CreateSaleInput) {
     const branchId = toOptionalBigInt(payload.branchId ?? undefined);
+    const tableId = toOptionalBigInt(payload.tableId ?? undefined);
     const shiftId = toOptionalBigInt(payload.shiftId ?? undefined);
     const targetPickupBranchId = toOptionalBigInt(payload.targetPickupBranchId ?? undefined);
 
@@ -168,6 +170,7 @@ export class SalesService {
         INSERT INTO "sales_records" (
           "tenant_id",
           "branch_id",
+          "table_id",
           "shift_id",
           "reference_id",
           "payment_method",
@@ -200,6 +203,7 @@ export class SalesService {
         VALUES (
           ${tenantId},
           ${branchId},
+          ${tableId},
           ${shiftId},
           ${payload.referenceId ?? null},
           ${payload.paymentMethod ?? null},

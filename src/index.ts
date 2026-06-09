@@ -21,7 +21,10 @@ import transactionRoutes from './routes/transactionRoutes';
 import productRoutes from './routes/productRoutes';
 import shiftRoutes from './routes/shiftRoutes';
 import expenseRoutes from './routes/expenseRoutes';
+import tableRoutes from './routes/tableRoutes';
+import publicQrRoutes from './routes/publicQrRoutes';
 import { initializeSocketServer } from './services/socketServer';
+import prisma from './config/database';
 
 // Load environment variables
 dotenv.config();
@@ -59,6 +62,40 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
+app.get('/api/v1/health/db-schema-check', async (_req: Request, res: Response) => {
+  const tableRows = await prisma.$queryRaw<Array<{ table_name: string }>>`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'tables'
+  `;
+
+  const columnRows = await prisma.$queryRaw<Array<{ column_name: string }>>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'sales_records'
+      AND column_name IN ('table_id', 'order_type')
+  `;
+
+  const tableExists = tableRows.length > 0;
+  const columnSet = new Set(columnRows.map((row) => row.column_name));
+  const requiredColumns = ['table_id', 'order_type'];
+  const columnsReady = requiredColumns.every((column) => columnSet.has(column));
+  const fnbReady = tableExists && columnsReady;
+
+  res.status(200).json({
+    ok: true,
+    fnb_ready: fnbReady,
+    details: {
+      table_exists: tableExists,
+      found_tables: tableRows,
+      found_columns: columnRows,
+      required_columns: requiredColumns,
+    },
+  });
+});
+
 // Root route
 app.get('/', (_req: Request, res: Response) => {
   res.status(200).json({
@@ -70,6 +107,7 @@ app.get('/', (_req: Request, res: Response) => {
 
 // API Routes
 app.use('/public', publicRoutes);
+app.use('/api/v1', publicQrRoutes);
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/tenants', tenantRoutes);
@@ -88,6 +126,7 @@ app.use('/api/v1/transactions', transactionRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/shifts', shiftRoutes);
 app.use('/api/v1/expenses', expenseRoutes);
+app.use('/api/v1/tables', tableRoutes);
 
 
 // 404 Handler - Route not found
