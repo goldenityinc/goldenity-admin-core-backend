@@ -13,6 +13,7 @@ type QrMenuItemRow = {
   price: number | null;
   stock: number | null;
   image_url: string | null;
+  is_service?: boolean | null;
 };
 
 type QrOrderItemInput = {
@@ -21,6 +22,17 @@ type QrOrderItemInput = {
   note?: string;
   customPrice?: number;
 };
+
+function parseOptionalBranchId(value: unknown): bigint | undefined {
+  const text = (value ?? '').toString().trim();
+  if (!text) {
+    return undefined;
+  }
+  if (!/^\d+$/.test(text)) {
+    throw new AppError('branch_id tidak valid', 400);
+  }
+  return BigInt(text);
+}
 
 function parseTenantId(value: unknown): string {
   const tenantId = (value ?? '').toString().trim();
@@ -79,11 +91,16 @@ function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
 
 export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = parseTenantId(req.params.tenantId);
+  const branchId = parseOptionalBranchId(req.query.branchId ?? req.query.branch_id);
+  const branchNameFromQuery = (req.query.branchName ?? req.query.branch_name ?? '')
+    .toString()
+    .trim();
 
   const rows = await prisma.$queryRaw<QrMenuItemRow[]>`
-    SELECT id, name, category, product_type, price, stock, image_url
+    SELECT id, name, category, product_type, price, stock, image_url, is_service
     FROM products
     WHERE tenant_id = ${tenantId}
+      AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
       AND COALESCE(is_active, true) = true
       AND (
         UPPER(COALESCE(product_type, '')) IN ('FOOD', 'BEVERAGE', 'FNB', 'F&B', 'MENU')
@@ -96,15 +113,93 @@ export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
     ORDER BY name ASC
   `;
 
+  const fallbackRows = rows.length > 0
+    ? rows
+    : await prisma.$queryRaw<QrMenuItemRow[]>`
+        SELECT id, name, category, product_type, price, stock, image_url, is_service
+        FROM products
+        WHERE tenant_id = ${tenantId}
+          AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
+          AND COALESCE(is_active, true) = true
+          AND (
+            COALESCE(is_service, false) = true
+            OR COALESCE(stock, 0) > 0
+          )
+        ORDER BY name ASC
+      `;
+
+  const [tenantMeta, branchMeta, storeSetting] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true, slug: true },
+    }),
+    branchId
+      ? prisma.branch.findFirst({
+          where: { tenantId, id: branchId },
+          select: { id: true, name: true, branchCode: true },
+        })
+      : Promise.resolve(null),
+    prisma.store_settings.findFirst({
+      where: {
+        tenant_id: tenantId,
+        key: { in: ['store_name', 'nama_toko', 'name'] },
+      },
+      orderBy: [
+        { updated_at: 'desc' },
+        { created_at: 'desc' },
+      ],
+    }),
+  ]);
+
+  const categoriesMap = new Map<string, { id: string; name: string; sortOrder: number }>();
+  const products = fallbackRows.map((row) => {
+    const categoryName = (row.category || 'Menu').toString().trim() || 'Menu';
+    const categoryId = categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    if (!categoriesMap.has(categoryId)) {
+      categoriesMap.set(categoryId, {
+        id: categoryId,
+        name: categoryName,
+        sortOrder: categoriesMap.size,
+      });
+    }
+
+    return {
+      id: row.id,
+      name: row.name,
+      categoryId,
+      categoryName,
+      price: Number(row.price || 0),
+      isAvailable: Number(row.stock || 0) > 0 || row.is_service === true,
+      stock: Number(row.stock || 0),
+      imageUrl: row.image_url || null,
+      sortOrder: 0,
+    };
+  });
+
   return res.status(200).json({
     success: true,
-    data: serializeForJson(rows),
+    data: serializeForJson({
+      tenant: {
+        id: tenantId,
+        name: (storeSetting?.value || tenantMeta?.name || '').toString().trim() || null,
+        slug: tenantMeta?.slug || null,
+      },
+      branch: {
+        id: branchId ?? null,
+        name: branchMeta?.name || branchNameFromQuery || null,
+        code: branchMeta?.branchCode || null,
+      },
+      categories: Array.from(categoriesMap.values()),
+      products,
+      items: products,
+    }),
   });
 });
 
 export const createQrOrder = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = parseTenantId(req.body.tenantId ?? req.body.tenant_id);
   const tableId = parseTableId(req.body.tableId ?? req.body.table_id);
+  const branchId = parseOptionalBranchId(req.body.branchId ?? req.body.branch_id);
   const items = parseQrOrderItems(req.body.items);
   const customerName = (req.body.customerName ?? req.body.customer_name ?? 'Guest').toString().trim();
 
@@ -126,6 +221,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       FROM products
       WHERE tenant_id = ${tenantId}
         AND id IN (${Prisma.join(productIds)})
+        AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
     `;
 
     const productMap = new Map(products.map((row) => [row.id, row]));
@@ -159,6 +255,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; total_price: string | null; order_status: string }>>`
       INSERT INTO sales_records (
         tenant_id,
+        branch_id,
         table_id,
         reference_id,
         payment_method,
@@ -173,6 +270,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       )
       VALUES (
         ${tenantId},
+        ${branchId ?? null},
         ${tableId},
         ${referenceId},
         ${'QRIS'},
