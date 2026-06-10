@@ -89,6 +89,13 @@ function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
   });
 }
 
+function generateReceiptNumber(): string {
+  const now = new Date();
+  const yyyymmdd = `${now.getFullYear()}${`${now.getMonth() + 1}`.padStart(2, '0')}${`${now.getDate()}`.padStart(2, '0')}`;
+  const serial = `${now.getTime() % 10000}`.padStart(4, '0');
+  return `INV-${yyyymmdd}-${serial}`;
+}
+
 export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = parseTenantId(req.params.tenantId);
   const branchId = parseOptionalBranchId(req.query.branchId ?? req.query.branch_id);
@@ -251,6 +258,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     });
 
     const referenceId = `qr_${Date.now()}`;
+    const receiptNumber = generateReceiptNumber();
 
     const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; total_price: string | null; order_status: string }>>`
       INSERT INTO sales_records (
@@ -258,6 +266,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         branch_id,
         table_id,
         reference_id,
+        receipt_number,
         payment_method,
         payment_status,
         order_type,
@@ -265,6 +274,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         total_price,
         total_amount,
         customer_name,
+        cashier_name,
         items_json,
         amount_paid
       )
@@ -273,17 +283,19 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         ${branchId ?? null},
         ${tableId},
         ${referenceId},
-        ${'QRIS'},
+        ${receiptNumber},
+        ${'Bayar di Kasir'},
         ${'PENDING_PAYMENT'},
         ${'DINE_IN'}::"OrderType",
         ${'PENDING_PAYMENT'}::"OrderStatus",
         ${total},
         ${total},
         ${customerName || 'Guest'},
+        ${'Online Order'},
         ${JSON.stringify(normalizedItems)}::jsonb,
         ${0}
       )
-      RETURNING id, reference_id, total_price, order_status
+      RETURNING id, reference_id, receipt_number, cashier_name, total_price, order_status
     `;
 
     const sale = saleRows[0];
