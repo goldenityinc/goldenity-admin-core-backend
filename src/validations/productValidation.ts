@@ -20,6 +20,12 @@ const bigintLikeSchema = z.preprocess(
 
 const optionalText = z.string().trim().min(1).optional().nullable();
 
+const optionalBooleanLike = z.preprocess((value) => {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}, z.boolean().optional());
+
 export const createProductSchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1, 'Product name is required'),
@@ -36,7 +42,12 @@ export const createProductSchema = z.object({
   referenceId: optionalText,
 });
 
-export const updateProductSchema = createProductSchema.partial().refine(
+export const updateProductSchema = createProductSchema.partial().extend({
+  branch_id: bigintLikeSchema.optional(),
+  is_available: optionalBooleanLike,
+  isAvailable: optionalBooleanLike,
+  is_active: optionalBooleanLike,
+}).refine(
   (data) => Object.keys(data).length > 0,
   {
     message: 'At least one field must be provided',

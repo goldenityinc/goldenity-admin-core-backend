@@ -11,6 +11,12 @@ export type ProductListFilters = {
   limit?: number;
 };
 
+export type ProductUpdateFields = {
+  branchId?: bigint | null;
+  is_available?: boolean;
+  is_active?: boolean;
+};
+
 export class ProductService {
   private static assertTenantId(tenantId: string): string {
     const normalizedTenantId = (tenantId ?? '').toString().trim();
@@ -119,10 +125,10 @@ export class ProductService {
     return product ?? null;
   }
 
-  static async updateProductBranchId(
+  static async updateProductFields(
     tenantId: string,
     productId: string,
-    branchId: bigint,
+    fields: ProductUpdateFields,
   ) {
     const normalizedTenantId = this.assertTenantId(tenantId);
     const existing = await prisma.products.findFirst({
@@ -137,9 +143,19 @@ export class ProductService {
       return null;
     }
 
+    const data: Prisma.productsUpdateInput = {
+      ...(fields.branchId !== undefined ? { branchId: fields.branchId } : {}),
+      ...(fields.is_available !== undefined ? { is_available: fields.is_available } : {}),
+      ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
+    };
+
+    if (Object.keys(data).length === 0) {
+      return null;
+    }
+
     return prisma.products.update({
       where: { id: productId },
-      data: { branchId },
+      data,
     });
   }
 }

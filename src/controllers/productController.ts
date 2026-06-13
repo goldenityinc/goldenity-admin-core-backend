@@ -3,7 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
-import { assignProductBranchSchema } from '../validations/productValidation';
+import { updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
 
 function readTenantId(req: Request): string {
@@ -139,15 +139,34 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     throw new AppError('Product ID tidak valid', 400);
   }
 
-  const parsed = assignProductBranchSchema.safeParse(req.body);
+  const parsed = updateProductSchema.safeParse(req.body);
   if (!parsed.success) {
     throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid payload', 400);
   }
 
-  const updated = await ProductService.updateProductBranchId(
+  const branchIdRaw = parsed.data.branchId ?? parsed.data.branch_id;
+  const isAvailableRaw = parsed.data.is_available ?? parsed.data.isAvailable;
+  const isActiveRaw = parsed.data.is_active ?? parsed.data.isActive;
+
+  const updatePayload = {
+    ...(branchIdRaw !== undefined
+      ? {
+          branchId:
+            branchIdRaw === null ? null : BigInt(branchIdRaw),
+        }
+      : {}),
+    ...(isAvailableRaw !== undefined ? { is_available: Boolean(isAvailableRaw) } : {}),
+    ...(isActiveRaw !== undefined ? { is_active: Boolean(isActiveRaw) } : {}),
+  };
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new AppError('Tidak ada field yang dapat diubah', 400);
+  }
+
+  const updated = await ProductService.updateProductFields(
     tenantId,
     productId,
-    BigInt(parsed.data.branchId),
+    updatePayload,
   );
 
   if (!updated) {
@@ -156,7 +175,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
 
   return res.status(200).json({
     success: true,
-    message: 'Branch produk berhasil diperbarui',
+    message: 'Produk berhasil diperbarui',
     data: updated,
   });
 });
