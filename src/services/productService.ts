@@ -15,6 +15,7 @@ export type ProductUpdateFields = {
   branchId?: bigint | null;
   is_available?: boolean;
   is_active?: boolean;
+  image_url?: string;
 };
 
 export class ProductService {
@@ -147,6 +148,7 @@ export class ProductService {
       ...(fields.branchId !== undefined ? { branchId: fields.branchId } : {}),
       ...(fields.is_available !== undefined ? { is_available: fields.is_available } : {}),
       ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
+      ...(fields.image_url !== undefined ? { image_url: fields.image_url } : {}),
     };
 
     if (Object.keys(data).length === 0) {

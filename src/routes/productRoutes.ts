@@ -1,13 +1,21 @@
 import { Router } from 'express';
-import { listProducts, getProduct, updateProductBranch } from '../controllers/productController';
+import { listProducts, getProduct, updateProductBranch, uploadProductImage } from '../controllers/productController';
 import { authMiddleware } from '../middlewares/authMiddleware';
+import multer from 'multer';
 
 const router = Router();
+const upload = multer({
+	storage: multer.memoryStorage(),
+	limits: {
+		fileSize: 4 * 1024 * 1024,
+	},
+});
 
 router.use(authMiddleware);
 
 router.get('/', listProducts);
 router.get('/:productId', getProduct);
+router.post('/:id/image', upload.single('file'), uploadProductImage);
 router.patch('/:id', updateProductBranch);
 
 export default router;

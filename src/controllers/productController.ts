@@ -5,6 +5,7 @@ import { ProductService } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
+import { ObjectStorageService } from '../services/objectStorageService';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -32,6 +33,15 @@ function parseQueryBranchId(value: unknown): bigint | null {
   }
 
   return BigInt(value);
+}
+
+function inferImageExtension(mimeType: string): string | null {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/svg+xml') return 'svg';
+  return null;
 }
 
 function resolveProductBranchFilter(req: Request): bigint | null {
@@ -177,5 +187,61 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     success: true,
     message: 'Produk berhasil diperbarui',
     data: updated,
+  });
+});
+
+/**
+ * POST /api/v1/products/:id/image
+ */
+export const uploadProductImage = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const role = (req.user?.role ?? '').trim().toUpperCase();
+
+  if (role !== 'TENANT_ADMIN') {
+    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat mengunggah foto produk', 403);
+  }
+
+  const productId = (req.params.id ?? '').toString().trim();
+  if (!productId) {
+    throw new AppError('Product ID tidak valid', 400);
+  }
+
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!file) {
+    throw new AppError('File gambar wajib diupload (field: file)', 400);
+  }
+
+  if (!file.mimetype || !file.mimetype.toLowerCase().startsWith('image/')) {
+    throw new AppError('File harus berupa gambar', 400);
+  }
+
+  const ext = inferImageExtension(file.mimetype);
+  if (!ext) {
+    throw new AppError('Format gambar tidak didukung (png/jpg/webp/svg)', 400);
+  }
+
+  const key = `products/${tenantId}/${productId}/image-${Date.now()}.${ext}`;
+  const uploaded = await ObjectStorageService.putPublicObject({
+    key,
+    body: file.buffer,
+    contentType: file.mimetype,
+  });
+
+  const updated = await ProductService.updateProductFields(tenantId, productId, {
+    image_url: uploaded.url,
+  });
+
+  if (!updated) {
+    throw new AppError('Produk tidak ditemukan', 404);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Foto produk berhasil diupload',
+    data: {
+      id: updated.id,
+      image_url: updated.image_url,
+      imageUrl: updated.image_url,
+    },
   });
 });
