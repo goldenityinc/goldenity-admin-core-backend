@@ -377,6 +377,7 @@ model products {
   price          Float?    @default(0)
   purchase_price Float?
   stock          Int?      @default(0)
+  is_available   Boolean?  @default(true)
   is_service     Boolean?  @default(false)
   supplier_name  String?
   image_url      String?
