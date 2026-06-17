@@ -6,6 +6,7 @@ import { resolveBranchFilter } from '../utils/branchIsolation';
 import { updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
 import { ObjectStorageService } from '../services/objectStorageService';
+import { AuditLogService } from '../services/auditLogService';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -182,6 +183,14 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
   if (!updated) {
     throw new AppError('Produk tidak ditemukan', 404);
   }
+
+  await AuditLogService.createLog({
+    tenantId,
+    userId: req.user?.userId,
+    userName: req.user?.email,
+    actionType: 'PRODUCT_UPDATED',
+    details: `Produk ${productId} diperbarui`,
+  });
 
   return res.status(200).json({
     success: true,

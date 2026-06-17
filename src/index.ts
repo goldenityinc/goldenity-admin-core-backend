@@ -22,6 +22,7 @@ import productRoutes from './routes/productRoutes';
 import shiftRoutes from './routes/shiftRoutes';
 import expenseRoutes from './routes/expenseRoutes';
 import tableRoutes from './routes/tableRoutes';
+import auditLogRoutes from './routes/auditLogRoutes';
 import publicQrRoutes from './routes/publicQrRoutes';
 import { initializeSocketServer } from './services/socketServer';
 import prisma from './config/database';
@@ -127,6 +128,7 @@ app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/shifts', shiftRoutes);
 app.use('/api/v1/expenses', expenseRoutes);
 app.use('/api/v1/tables', tableRoutes);
+app.use('/api/v1/audit-logs', auditLogRoutes);
 
 
 // 404 Handler - Route not found
