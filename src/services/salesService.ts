@@ -69,6 +69,11 @@ type SaleItemRow = {
   employee_id: string | null;
 };
 
+type StockDeductionEntry = {
+  productId: string;
+  qty: number;
+};
+
 export type PreOrderListFilters = {
   tenantId: string;
   branchId: bigint | null;
@@ -304,6 +309,7 @@ export class SalesService {
 
       const sale = saleRows[0];
       const items: SaleItemRow[] = [];
+      const stockDeductionMap = new Map<string, number>();
 
       for (const item of normalizedItems) {
         const itemRows = await tx.$queryRaw<SaleItemRow[]>`
@@ -350,9 +356,60 @@ export class SalesService {
           );
         }
         items.push(insertedItem);
+
+        const productId = (insertedItem.product_id ?? '').toString().trim();
+        const shouldDeductStock =
+          productId.length > 0 &&
+          !insertedItem.is_service &&
+          !insertedItem.is_custom_item &&
+          insertedItem.qty > 0;
+
+        if (shouldDeductStock) {
+          const previousQty = stockDeductionMap.get(productId) ?? 0;
+          stockDeductionMap.set(productId, previousQty + insertedItem.qty);
+        }
       }
 
-      return { sale, items };
+      const stockUpdates: StockDeductionEntry[] = [];
+      for (const [productId, qty] of stockDeductionMap.entries()) {
+        await tx.products.updateMany({
+          where: {
+            tenant_id: tenantId,
+            id: productId,
+            stock: null,
+          },
+          data: {
+            stock: 0,
+          },
+        });
+
+        const deductionResult = await tx.products.updateMany({
+          where: {
+            tenant_id: tenantId,
+            id: productId,
+          },
+          data: {
+            stock: {
+              decrement: qty,
+            },
+            updated_at: new Date(),
+          },
+        });
+
+        if (deductionResult.count <= 0) {
+          throw new AppError(
+            `Produk tidak ditemukan saat potong stok (id=${productId})`,
+            400,
+          );
+        }
+
+        stockUpdates.push({
+          productId,
+          qty,
+        });
+      }
+
+      return { sale, items, stockUpdates };
     });
   }
 

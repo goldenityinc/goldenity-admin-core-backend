@@ -101,6 +101,12 @@ export const createSale = asyncHandler(async (req: Request, res: Response) => {
       .trim();
     const totalAmount = serializedSale.total_amount ?? serializedSale.total_price ?? 0;
     const itemSummary = buildSaleItemsAuditText(serializedItems);
+    const serializedStockUpdates = Array.isArray(result.stockUpdates)
+      ? result.stockUpdates.map((entry) => ({
+          productId: (entry.productId ?? '').toString().trim(),
+          qty: Number(entry.qty ?? 0),
+        }))
+      : [];
 
     await AuditLogService.createLog({
       tenantId: readTenantId(req),
@@ -126,6 +132,16 @@ export const createSale = asyncHandler(async (req: Request, res: Response) => {
 
     emitToTenant(tenantId, 'db_mutation', socketPayload);
     emitToTenant(tenantId, 'transaction_created', socketPayload);
+    emitToTenant(tenantId, 'inventory_updated', {
+      tenantId,
+      entity: 'products',
+      table: 'products',
+      action: 'BULK_UPDATE',
+      updates: serializedStockUpdates,
+      transactionId: serializedSale.id?.toString(),
+      deviceId: req.header('X-Device-ID'),
+      timestamp: new Date().toISOString(),
+    });
 
     console.log(
       `[createSale] Sale created successfully. ID=${result.sale.id}, Items=${result.items.length}, Tenant=${readTenantId(req)}`
@@ -137,6 +153,7 @@ export const createSale = asyncHandler(async (req: Request, res: Response) => {
       data: {
         sale: serializedSale,
         items: serializedItems,
+        stockUpdates: serializedStockUpdates,
       },
     });
   } catch (error) {
