@@ -111,6 +111,7 @@ app.use('/public', publicRoutes);
 app.use('/api/v1', publicQrRoutes);
 app.use('/auth', authRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/v1/auth', authRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/solutions', solutionRoutes);
 app.use('/api/app-instances', appInstanceRoutes);

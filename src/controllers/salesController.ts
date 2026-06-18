@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { createSaleSchema } from '../validations/salesValidation';
 import { SalesService } from '../services/salesService';
+import { AuditLogService } from '../services/auditLogService';
 import { serializeForJson } from '../utils/serializeForJson';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 
@@ -41,6 +42,14 @@ export const createSale = asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const result = await SalesService.createSale(readTenantId(req), normalizedPayload);
+
+    await AuditLogService.createLog({
+      tenantId: readTenantId(req),
+      userId: req.user?.userId,
+      userName: req.user?.email,
+      actionType: 'CREATE_SALE',
+      details: `Sale created with id=${result.sale.id}`,
+    });
 
     console.log(
       `[createSale] Sale created successfully. ID=${result.sale.id}, Items=${result.items.length}, Tenant=${readTenantId(req)}`
