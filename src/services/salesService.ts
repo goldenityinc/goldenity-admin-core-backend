@@ -85,6 +85,10 @@ export type PreOrderSummaryFilters = {
   requireAssignedBranch?: boolean;
 };
 
+type ReceiptLookupRow = {
+  id: bigint;
+};
+
 function toOptionalBigInt(value: string | number | null | undefined): bigint | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -134,6 +138,49 @@ function normalizeSaleItem(item: SaleItemPayload) {
 }
 
 export class SalesService {
+  private static shouldGenerateCanonicalReceiptNumber(rawReceipt: string): boolean {
+    const normalized = rawReceipt.trim();
+    if (normalized.length === 0 || normalized === '-') {
+      return true;
+    }
+
+    return normalized.toUpperCase().startsWith('MOB-');
+  }
+
+  private static buildCanonicalReceiptNumber(): string {
+    const now = new Date();
+    const yyyymmdd = `${now.getFullYear()}${`${now.getMonth() + 1}`.padStart(2, '0')}${`${now.getDate()}`.padStart(2, '0')}`;
+    const serial = `${Math.floor(Math.random() * 10000)}`.padStart(4, '0');
+    return `INV-${yyyymmdd}-${serial}`;
+  }
+
+  private static async resolveReceiptNumber(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    incomingReceipt: string | null | undefined,
+  ): Promise<string> {
+    const normalizedIncoming = (incomingReceipt ?? '').toString().trim();
+    if (!this.shouldGenerateCanonicalReceiptNumber(normalizedIncoming)) {
+      return normalizedIncoming;
+    }
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const candidate = this.buildCanonicalReceiptNumber();
+      const existingRows = await tx.$queryRaw<ReceiptLookupRow[]>`
+        SELECT "id"
+        FROM "sales_records"
+        WHERE "tenant_id" = ${tenantId}
+          AND "receipt_number" = ${candidate}
+        LIMIT 1
+      `;
+      if (existingRows.length === 0) {
+        return candidate;
+      }
+    }
+
+    throw new AppError('Gagal membuat nomor invoice unik, silakan coba lagi', 500);
+  }
+
   static async createSale(tenantId: string, payload: CreateSaleInput) {
     const branchId = toOptionalBigInt(payload.branchId ?? undefined);
     const tableId = toOptionalBigInt(payload.tableId ?? undefined);
@@ -166,6 +213,12 @@ export class SalesService {
     }
 
     return prisma.$transaction(async (tx) => {
+      const resolvedReceiptNumber = await this.resolveReceiptNumber(
+        tx,
+        tenantId,
+        payload.receiptNumber,
+      );
+
       const saleRows = await tx.$queryRaw<SaleRow[]>`
         INSERT INTO "sales_records" (
           "tenant_id",
@@ -221,7 +274,7 @@ export class SalesService {
           ${toOptionalDecimal(payload.totalAmount ?? undefined)},
           ${toOptionalDecimal(payload.remainingBalance ?? undefined)},
           ${toOptionalDecimal(payload.outstandingBalance ?? undefined)},
-          ${payload.receiptNumber ?? null},
+          ${resolvedReceiptNumber},
           ${payload.cashierId ?? null},
           ${payload.cashierName ?? null},
           ${payload.mechanicId ?? null},
