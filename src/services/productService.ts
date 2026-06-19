@@ -18,6 +18,25 @@ export type ProductUpdateFields = {
   image_url?: string;
 };
 
+export type ProductCreateInput = {
+  id: string;
+  tenantId: string;
+  branchId?: bigint | null;
+  name: string;
+  product_type?: string;
+  barcode?: string | null;
+  category?: string | null;
+  price?: number;
+  purchase_price?: number | null;
+  stock?: number;
+  is_available?: boolean;
+  is_service?: boolean;
+  supplier_name?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+  reference_id?: string | null;
+};
+
 export class ProductService {
   private static assertTenantId(tenantId: string): string {
     const normalizedTenantId = (tenantId ?? '').toString().trim();
@@ -158,6 +177,31 @@ export class ProductService {
     return prisma.products.update({
       where: { id: productId },
       data,
+    });
+  }
+
+  static async createProduct(input: ProductCreateInput) {
+    const tenantId = this.assertTenantId(input.tenantId);
+
+    return prisma.products.create({
+      data: {
+        id: input.id,
+        tenant_id: tenantId,
+        name: input.name,
+        product_type: input.product_type ?? 'Barang',
+        branchId: input.branchId,
+        barcode: input.barcode ?? null,
+        category: input.category ?? null,
+        price: input.price ?? 0,
+        purchase_price: input.purchase_price ?? null,
+        stock: input.stock ?? 0,
+        is_available: input.is_available ?? true,
+        is_service: input.is_service ?? false,
+        supplier_name: input.supplier_name ?? null,
+        image_url: input.image_url ?? null,
+        is_active: input.is_active ?? true,
+        reference_id: input.reference_id ?? null,
+      },
     });
   }
 }

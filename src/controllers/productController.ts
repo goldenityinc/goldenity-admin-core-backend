@@ -3,10 +3,11 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
-import { updateProductSchema } from '../validations/productValidation';
+import { createProductSchema, updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
 import { ObjectStorageService } from '../services/objectStorageService';
 import { AuditLogService } from '../services/auditLogService';
+import prisma from '../config/database';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -34,6 +35,65 @@ function parseQueryBranchId(value: unknown): bigint | null {
   }
 
   return BigInt(value);
+}
+
+function parseOptionalBigIntLike(value: unknown): bigint | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const normalized = value.toString().trim();
+  if (!/^\d+$/.test(normalized)) {
+    return null;
+  }
+
+  return BigInt(normalized);
+}
+
+async function resolveProductCategoryName(
+  tenantId: string,
+  rawCategoryId: unknown,
+  rawCategoryName: unknown,
+): Promise<string | null> {
+  const directName = (rawCategoryName ?? '').toString().trim();
+  if (directName.length > 0) {
+    const existingCategory = await prisma.categories.findFirst({
+      where: {
+        tenant_id: tenantId,
+        name: {
+          equals: directName,
+          mode: 'insensitive',
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!existingCategory) {
+      await prisma.categories.create({
+        data: {
+          tenant_id: tenantId,
+          name: directName,
+          category_type: 'PRODUCT',
+        },
+      });
+    }
+
+    return directName;
+  }
+
+  const categoryId = parseOptionalBigIntLike(rawCategoryId);
+  if (categoryId == null) {
+    return null;
+  }
+
+  const byId = await prisma.categories.findFirst({
+    where: {
+      id: categoryId,
+      tenant_id: tenantId,
+    },
+    select: { name: true },
+  });
+  return byId?.name?.trim() || null;
 }
 
 function inferImageExtension(mimeType: string): string | null {
@@ -131,6 +191,72 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
   return res.status(200).json({
     success: true,
     data: serializeForJson(product),
+  });
+});
+
+/**
+ * POST /api/v1/products
+ */
+export const createProduct = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const role = (req.user?.role ?? '').trim().toUpperCase();
+  if (role !== 'TENANT_ADMIN') {
+    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat menambah produk', 403);
+  }
+
+  const parsed = createProductSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid payload', 400);
+  }
+
+  const body = parsed.data;
+  const now = Date.now();
+  const productId =
+    (body.id ?? '').toString().trim() ||
+    `prod_${now}_${Math.floor(Math.random() * 1000)}`;
+
+  const branchId =
+    parseOptionalBigIntLike(body.branchId ?? body.branch_id) ??
+    parseOptionalBigIntLike(req.user?.branchId);
+  const categoryName = await resolveProductCategoryName(
+    tenantId,
+    body.categoryId ?? body.category_id,
+    body.category,
+  );
+  const purchasePrice = body.purchasePrice ?? body.purchase_price;
+  const isService = body.isService ?? body.is_service ?? false;
+
+  const created = await ProductService.createProduct({
+    id: productId,
+    tenantId,
+    branchId,
+    name: body.name,
+    product_type: isService ? 'Jasa' : 'Barang',
+    barcode: body.barcode ?? null,
+    category: categoryName,
+    price: body.price ?? 0,
+    purchase_price: isService ? 0 : purchasePrice ?? null,
+    stock: isService ? 0 : body.stock ?? 0,
+    is_available: true,
+    is_service: isService,
+    supplier_name: body.supplierName ?? body.supplier_name ?? null,
+    image_url: body.imageUrl ?? body.image_url ?? null,
+    is_active: body.isActive ?? body.is_active ?? true,
+    reference_id: body.referenceId ?? body.reference_id ?? null,
+  });
+
+  await AuditLogService.createLog({
+    tenantId,
+    userId: req.user?.userId,
+    userName: req.user?.email,
+    actionType: 'PRODUCT_CREATED',
+    details: `Produk ${created.id} dibuat`,
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: 'Produk berhasil dibuat',
+    data: serializeForJson(created),
   });
 });
 

@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { listProducts, getProduct, updateProductBranch, uploadProductImage } from '../controllers/productController';
+import {
+	createProduct,
+	listProducts,
+	getProduct,
+	updateProductBranch,
+	uploadProductImage,
+} from '../controllers/productController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import multer from 'multer';
 
@@ -14,6 +20,7 @@ const upload = multer({
 router.use(authMiddleware);
 
 router.get('/', listProducts);
+router.post('/', createProduct);
 router.get('/:productId', getProduct);
 router.post('/:id/image', upload.single('file'), uploadProductImage);
 router.patch('/:id', updateProductBranch);
