@@ -228,11 +228,6 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
  */
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const role = (req.user?.role ?? '').trim().toUpperCase();
-  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
-  if (!allowedProductRoles.includes(role)) {
-    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk menambah produk', 403);
-  }
 
   const parsed = createProductSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -295,11 +290,6 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
  */
 export const updateProductBranch = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const role = (req.user?.role ?? '').trim().toUpperCase();
-  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
-  if (!allowedProductRoles.includes(role)) {
-    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk mengubah produk', 403);
-  }
 
   const productId = req.params.id;
   if (!productId || typeof productId !== 'string') {
@@ -403,11 +393,6 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
  */
 export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const role = (req.user?.role ?? '').trim().toUpperCase();
-  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
-  if (!allowedProductRoles.includes(role)) {
-    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk menghapus produk', 403);
-  }
 
   const productId = (req.params.id ?? '').toString().trim();
   if (!productId) {
@@ -443,11 +428,6 @@ export const deleteProduct = asyncHandler(async (req: Request, res: Response) =>
  */
 export const uploadProductImage = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
-  const role = (req.user?.role ?? '').trim().toUpperCase();
-  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
-  if (!allowedProductRoles.includes(role)) {
-    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk mengunggah foto produk', 403);
-  }
 
   const productId = (req.params.id ?? '').toString().trim();
   if (!productId) {
