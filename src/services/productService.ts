@@ -16,6 +16,12 @@ export type ProductUpdateFields = {
   is_available?: boolean;
   is_active?: boolean;
   image_url?: string;
+  name?: string;
+  barcode?: string | null;
+  category?: string | null;
+  price?: number;
+  purchase_price?: number | null;
+  stock?: number;
 };
 
 export type ProductCreateInput = {
@@ -168,6 +174,12 @@ export class ProductService {
       ...(fields.is_available !== undefined ? { is_available: fields.is_available } : {}),
       ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
       ...(fields.image_url !== undefined ? { image_url: fields.image_url } : {}),
+      ...(fields.name !== undefined ? { name: fields.name } : {}),
+      ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
+      ...(fields.category !== undefined ? { category: fields.category } : {}),
+      ...(fields.price !== undefined ? { price: fields.price } : {}),
+      ...(fields.purchase_price !== undefined ? { purchase_price: fields.purchase_price } : {}),
+      ...(fields.stock !== undefined ? { stock: fields.stock } : {}),
     };
 
     if (Object.keys(data).length === 0) {
@@ -203,5 +215,17 @@ export class ProductService {
         reference_id: input.reference_id ?? null,
       },
     });
+  }
+
+  static async deleteProduct(tenantId: string, productId: string): Promise<number> {
+    const normalizedTenantId = this.assertTenantId(tenantId);
+    const result = await prisma.products.deleteMany({
+      where: {
+        tenant_id: normalizedTenantId,
+        id: productId,
+      },
+    });
+
+    return result.count;
   }
 }

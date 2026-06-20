@@ -4,6 +4,7 @@ import {
 	getEntitlements,
 	getSubscription,
 	login,
+	logout,
 	me,
 } from '../controllers/authController';
 import { verifyToken } from '../middlewares/authMiddleware';
@@ -15,6 +16,7 @@ router.post('/login', login);
 router.post('/login-tenant', login);
 router.get('/me', verifyToken, me);
 router.put('/change-password', verifyToken, changePassword);
+router.post('/logout', verifyToken, logout);
 router.get('/subscription', verifyToken, getSubscription);
 router.get('/entitlements', verifyToken, getEntitlements);
 

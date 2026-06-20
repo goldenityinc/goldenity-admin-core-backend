@@ -8,6 +8,36 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { loginSchema } from '../validations/authValidation';
 
+async function createAuditLogSafely(input: {
+  tenantId: string;
+  userId?: string | null;
+  userName?: string | null;
+  actionType: string;
+  details: string;
+}): Promise<void> {
+  const tenantId = (input.tenantId ?? '').toString().trim();
+  if (!tenantId) {
+    return;
+  }
+
+  try {
+    await prisma.audit_logs.create({
+      data: {
+        tenant_id: tenantId,
+        user_id: (input.userId ?? '').toString().trim() || null,
+        user_name: (input.userName ?? '').toString().trim() || null,
+        action_type: input.actionType,
+        details: input.details,
+      },
+    });
+  } catch (error: any) {
+    if (error?.code === 'P2021') {
+      return;
+    }
+    throw error;
+  }
+}
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   console.log('[authController.login] request-received', {
     bodyKeys: Object.keys(req.body ?? {}),
@@ -28,6 +58,14 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const result = await AuthService.login(parsed.data);
+
+  await createAuditLogSafely({
+    tenantId: (result.user?.tenantId ?? '').toString(),
+    userId: (result.user?.id ?? '').toString(),
+    userName: (result.user?.username ?? '').toString(),
+    actionType: 'USER_LOGIN',
+    details: 'User berhasil login ke sistem',
+  });
 
   return res.status(200).json({
     success: true,
@@ -166,5 +204,24 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
   return res.status(200).json({
     success: true,
     message: 'Password berhasil diperbarui',
+  });
+});
+
+export const logout = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user?.tenantId) {
+    throw new AppError('User not authenticated', 401);
+  }
+
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? '').toString(),
+    userId: (req.user?.userId ?? '').toString(),
+    userName: (req.user?.email ?? '').toString(),
+    actionType: 'USER_LOGOUT',
+    details: 'User logout dari sistem',
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Logout berhasil',
   });
 });

@@ -6,7 +6,6 @@ import { resolveBranchFilter } from '../utils/branchIsolation';
 import { createProductSchema, updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
 import { ObjectStorageService } from '../services/objectStorageService';
-import { AuditLogService } from '../services/auditLogService';
 import prisma from '../config/database';
 
 function readTenantId(req: Request): string {
@@ -15,6 +14,36 @@ function readTenantId(req: Request): string {
     throw new AppError('Tenant context is required', 401);
   }
   return tenantId;
+}
+
+async function createAuditLogSafely(input: {
+  tenantId: string;
+  userId?: string | null;
+  userName?: string | null;
+  actionType: string;
+  details: string;
+}): Promise<void> {
+  const tenantId = (input.tenantId ?? '').toString().trim();
+  if (!tenantId) {
+    return;
+  }
+
+  try {
+    await prisma.audit_logs.create({
+      data: {
+        tenant_id: tenantId,
+        user_id: (input.userId ?? '').toString().trim() || null,
+        user_name: (input.userName ?? '').toString().trim() || null,
+        action_type: input.actionType,
+        details: input.details,
+      },
+    });
+  } catch (error: any) {
+    if (error?.code === 'P2021') {
+      return;
+    }
+    throw error;
+  }
 }
 
 function parsePositiveInt(value: unknown, fallback: number): number {
@@ -200,8 +229,9 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
 export const createProduct = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
   const role = (req.user?.role ?? '').trim().toUpperCase();
-  if (role !== 'TENANT_ADMIN') {
-    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat menambah produk', 403);
+  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
+  if (!allowedProductRoles.includes(role)) {
+    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk menambah produk', 403);
   }
 
   const parsed = createProductSchema.safeParse(req.body);
@@ -245,12 +275,12 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     reference_id: body.referenceId ?? body.reference_id ?? null,
   });
 
-  await AuditLogService.createLog({
-    tenantId,
-    userId: req.user?.userId,
-    userName: req.user?.email,
-    actionType: 'PRODUCT_CREATED',
-    details: `Produk ${created.id} dibuat`,
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? tenantId).toString(),
+    userId: req.user?.userId ?? null,
+    userName: req.user?.email ?? null,
+    actionType: 'CREATE_PRODUCT',
+    details: `Menambahkan produk baru: ${created.name}`,
   });
 
   return res.status(201).json({
@@ -266,9 +296,9 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
 export const updateProductBranch = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
   const role = (req.user?.role ?? '').trim().toUpperCase();
-
-  if (role !== 'TENANT_ADMIN') {
-    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat mengubah cabang produk', 403);
+  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
+  if (!allowedProductRoles.includes(role)) {
+    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk mengubah produk', 403);
   }
 
   const productId = req.params.id;
@@ -281,9 +311,20 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     throw new AppError(parsed.error.issues[0]?.message ?? 'Invalid payload', 400);
   }
 
+  const existing = await ProductService.getProductById(tenantId, productId, null);
+  if (!existing) {
+    throw new AppError('Produk tidak ditemukan', 404);
+  }
+
   const branchIdRaw = parsed.data.branchId ?? parsed.data.branch_id;
   const isAvailableRaw = parsed.data.is_available ?? parsed.data.isAvailable;
   const isActiveRaw = parsed.data.is_active ?? parsed.data.isActive;
+  const stockRaw = parsed.data.stock;
+  const priceRaw = parsed.data.price;
+  const purchasePriceRaw = parsed.data.purchasePrice ?? parsed.data.purchase_price;
+  const categoryRaw = parsed.data.category;
+  const barcodeRaw = parsed.data.barcode;
+  const nameRaw = parsed.data.name;
 
   const updatePayload = {
     ...(branchIdRaw !== undefined
@@ -294,6 +335,12 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       : {}),
     ...(isAvailableRaw !== undefined ? { is_available: Boolean(isAvailableRaw) } : {}),
     ...(isActiveRaw !== undefined ? { is_active: Boolean(isActiveRaw) } : {}),
+    ...(stockRaw !== undefined ? { stock: stockRaw } : {}),
+    ...(priceRaw !== undefined ? { price: priceRaw } : {}),
+    ...(purchasePriceRaw !== undefined ? { purchase_price: purchasePriceRaw } : {}),
+    ...(categoryRaw !== undefined ? { category: categoryRaw } : {}),
+    ...(barcodeRaw !== undefined ? { barcode: barcodeRaw } : {}),
+    ...(nameRaw !== undefined ? { name: nameRaw } : {}),
   };
 
   if (Object.keys(updatePayload).length === 0) {
@@ -310,13 +357,39 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     throw new AppError('Produk tidak ditemukan', 404);
   }
 
-  await AuditLogService.createLog({
-    tenantId,
-    userId: req.user?.userId,
-    userName: req.user?.email,
-    actionType: 'PRODUCT_UPDATED',
-    details: `Produk ${productId} diperbarui`,
+  const productName = (updated.name ?? existing.name ?? productId).toString();
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? tenantId).toString(),
+    userId: req.user?.userId ?? null,
+    userName: req.user?.email ?? null,
+    actionType: 'UPDATE_PRODUCT',
+    details: `Mengedit produk: ${productName} (Harga/Stok diubah)`,
   });
+
+  if (stockRaw !== undefined) {
+    const oldQty = Number(existing.stock ?? 0);
+    const newQty = Number(updated.stock ?? 0);
+
+    if (newQty > oldQty) {
+      await createAuditLogSafely({
+        tenantId: (req.user?.tenantId ?? tenantId).toString(),
+        userId: req.user?.userId ?? null,
+        userName: req.user?.email ?? null,
+        actionType: 'RESTOCK_INVENTORY',
+        details: `Melakukan restock ${productName} sebanyak ${newQty - oldQty}`,
+      });
+    }
+
+    if (newQty !== oldQty) {
+      await createAuditLogSafely({
+        tenantId: (req.user?.tenantId ?? tenantId).toString(),
+        userId: req.user?.userId ?? null,
+        userName: req.user?.email ?? null,
+        actionType: 'ADJUST_STOCK',
+        details: `Menyesuaikan stok ${productName} dari ${oldQty} menjadi ${newQty}`,
+      });
+    }
+  }
 
   return res.status(200).json({
     success: true,
@@ -326,14 +399,54 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
 });
 
 /**
+ * DELETE /api/v1/products/:id
+ */
+export const deleteProduct = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const role = (req.user?.role ?? '').trim().toUpperCase();
+  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
+  if (!allowedProductRoles.includes(role)) {
+    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk menghapus produk', 403);
+  }
+
+  const productId = (req.params.id ?? '').toString().trim();
+  if (!productId) {
+    throw new AppError('Product ID tidak valid', 400);
+  }
+
+  const existing = await ProductService.getProductById(tenantId, productId, null);
+  if (!existing) {
+    throw new AppError('Produk tidak ditemukan', 404);
+  }
+
+  const deletedCount = await ProductService.deleteProduct(tenantId, productId);
+  if (deletedCount <= 0) {
+    throw new AppError('Produk tidak ditemukan', 404);
+  }
+
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? tenantId).toString(),
+    userId: req.user?.userId ?? null,
+    userName: req.user?.email ?? null,
+    actionType: 'DELETE_PRODUCT',
+    details: `Menghapus produk: ${existing.name}`,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Produk berhasil dihapus',
+  });
+});
+
+/**
  * POST /api/v1/products/:id/image
  */
 export const uploadProductImage = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
   const role = (req.user?.role ?? '').trim().toUpperCase();
-
-  if (role !== 'TENANT_ADMIN') {
-    throw new AppError('Akses ditolak: hanya TENANT_ADMIN yang dapat mengunggah foto produk', 403);
+  const allowedProductRoles = ['TENANT_ADMIN', 'ADMIN', 'OWNER', 'CASHIER'];
+  if (!allowedProductRoles.includes(role)) {
+    throw new AppError('Akses ditolak: Anda tidak memiliki izin untuk mengunggah foto produk', 403);
   }
 
   const productId = (req.params.id ?? '').toString().trim();

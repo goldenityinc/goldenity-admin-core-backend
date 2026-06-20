@@ -4,6 +4,7 @@ import { AppError } from '../utils/AppError';
 import { serializeForJson } from '../utils/serializeForJson';
 import { closeShiftSchema, openShiftSchema } from '../validations/shiftValidation';
 import { ShiftService } from '../services/shiftService';
+import prisma from '../config/database';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -74,6 +75,42 @@ function parseOptionalDate(raw: unknown, fieldName: string, endOfDay = false): D
   return parsed;
 }
 
+function formatCurrencyIdr(raw: unknown): string {
+  const value = Number(raw ?? 0);
+  const safe = Number.isFinite(value) ? Math.round(value) : 0;
+  return `Rp ${new Intl.NumberFormat('id-ID').format(safe)}`;
+}
+
+async function createAuditLogSafely(input: {
+  tenantId: string;
+  userId?: string | null;
+  userName?: string | null;
+  actionType: string;
+  details: string;
+}): Promise<void> {
+  const tenantId = (input.tenantId ?? '').toString().trim();
+  if (!tenantId) {
+    return;
+  }
+
+  try {
+    await prisma.audit_logs.create({
+      data: {
+        tenant_id: tenantId,
+        user_id: (input.userId ?? '').toString().trim() || null,
+        user_name: (input.userName ?? '').toString().trim() || null,
+        action_type: input.actionType,
+        details: input.details,
+      },
+    });
+  } catch (error: any) {
+    if (error?.code === 'P2021') {
+      return;
+    }
+    throw error;
+  }
+}
+
 export const getShifts = asyncHandler(async (req: Request, res: Response) => {
   const branchId = parseOptionalBigInt(req.query.branch_id, 'branch_id');
   const userId = (req.query.user_id ?? '').toString().trim() || undefined;
@@ -104,6 +141,14 @@ export const openShift = asyncHandler(async (req: Request, res: Response) => {
     branchId: readBranchId(req),
     userId: readUserId(req),
     startingCash: parsed.data.starting_cash,
+  });
+
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? '').toString(),
+    userId: (req.user?.userId ?? '').toString(),
+    userName: (req.user?.email ?? '').toString(),
+    actionType: 'OPEN_SHIFT',
+    details: `Membuka shift kasir dengan saldo awal ${formatCurrencyIdr(parsed.data.starting_cash)}`,
   });
 
   return res.status(201).json({
@@ -140,6 +185,14 @@ export const closeShift = asyncHandler(async (req: Request, res: Response) => {
     actualCash: parsed.data.actual_cash,
     actualQris: parsed.data.actual_qris,
     actualTransfer: parsed.data.actual_transfer,
+  });
+
+  await createAuditLogSafely({
+    tenantId: (req.user?.tenantId ?? '').toString(),
+    userId: (req.user?.userId ?? '').toString(),
+    userName: (req.user?.email ?? '').toString(),
+    actionType: 'CLOSE_SHIFT',
+    details: `Menutup shift kasir dengan selisih ${formatCurrencyIdr((shift as any).difference_cash ?? 0)}`,
   });
 
   return res.status(200).json({
