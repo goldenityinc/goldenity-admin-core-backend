@@ -210,6 +210,15 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const branchId = parseOptionalBranchId(req.body.branchId ?? req.body.branch_id);
   const items = parseQrOrderItems(req.body.items);
   const customerName = (req.body.customerName ?? req.body.customer_name ?? 'Guest').toString().trim();
+  const orderNote = (
+    req.body.orderNote ??
+    req.body.order_note ??
+    req.body.customerNote ??
+    req.body.customer_note ??
+    req.body.note ??
+    req.body.notes ??
+    ''
+  ).toString().trim();
 
   const result = await prisma.$transaction(async (tx) => {
     const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string; table_number: string | null }>>`
@@ -261,7 +270,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     const referenceId = `qr_${Date.now()}`;
     const receiptNumber = generateReceiptNumber();
 
-    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; total_price: string | null; order_status: string }>>`
+    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; receipt_number: string | null; total_price: string | null; order_status: string }>>`
       INSERT INTO sales_records (
         tenant_id,
         branch_id,
@@ -352,10 +361,37 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const totalItems = items.reduce((sum, item) => sum + item.qty, 0);
   const tableLabel = (result.table_number ?? '').toString().trim();
   emitToTenant(tenantId, 'incoming_qr_order', {
+    tenantId,
     orderId: result.id,
+    referenceId: result.reference_id,
+    receiptNumber: result.receipt_number,
+    tableId,
     tableName: tableLabel || tableId.toString(),
+    orderType: 'DINE_IN',
+    orderStatus: result.order_status,
+    paymentStatus: 'PENDING_PAYMENT',
+    paymentMethod: 'Bayar di Kasir',
+    customerName: customerName || 'Guest',
+    orderNote,
     totalItems,
     grandTotal: Number(result.total_price ?? 0),
+    items: items.map((item) => ({
+      product_id: item.productId,
+      qty: item.qty,
+      custom_price: item.customPrice ?? 0,
+      note: item.note ?? '',
+      item_note: item.note ?? '',
+      notes: item.note ?? '',
+    })),
+    items_json: items.map((item) => ({
+      product_id: item.productId,
+      qty: item.qty,
+      custom_price: item.customPrice ?? 0,
+      note: item.note ?? '',
+      item_note: item.note ?? '',
+      notes: item.note ?? '',
+    })),
+    created_at: new Date().toISOString(),
   });
 
   return res.status(201).json({
