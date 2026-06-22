@@ -34,19 +34,19 @@ function runOptionalNodeScript(relativeScriptPath) {
 }
 
 function resolvePrismaCommand() {
-  const prismaBinName = process.platform === 'win32' ? 'prisma.cmd' : 'prisma';
-  const prismaLocalPath = path.join(
+  const prismaCliPath = path.join(
     __dirname,
     '..',
     'node_modules',
-    '.bin',
-    prismaBinName,
+    'prisma',
+    'build',
+    'index.js',
   );
 
-  if (fs.existsSync(prismaLocalPath)) {
+  if (fs.existsSync(prismaCliPath)) {
     return {
-      command: prismaLocalPath,
-      args: ['migrate', 'deploy'],
+      command: process.execPath,
+      args: [prismaCliPath, 'migrate', 'deploy'],
     };
   }
 
