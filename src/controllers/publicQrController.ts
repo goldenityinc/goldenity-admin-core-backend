@@ -349,7 +349,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     };
   });
 
-  const totalItems = items.fold<number>((sum, item) => sum + item.qty, 0);
+  const totalItems = items.reduce((sum, item) => sum + item.qty, 0);
   const tableLabel = (result.table_number ?? '').toString().trim();
   emitToTenant(tenantId, 'incoming_qr_order', {
     orderId: result.id,
