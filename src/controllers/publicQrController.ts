@@ -4,6 +4,7 @@ import prisma from '../config/database';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { serializeForJson } from '../utils/serializeForJson';
+import { emitToTenant } from '../services/socketServer';
 
 type QrMenuItemRow = {
   id: string;
@@ -211,8 +212,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const customerName = (req.body.customerName ?? req.body.customer_name ?? 'Guest').toString().trim();
 
   const result = await prisma.$transaction(async (tx) => {
-    const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string }>>`
-      SELECT id, status
+    const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string; table_number: string | null }>>`
+      SELECT id, status, table_number
       FROM tables
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
       LIMIT 1
@@ -287,7 +288,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         ${'Bayar di Kasir'},
         ${'PENDING_PAYMENT'},
         ${'DINE_IN'}::"OrderType",
-        ${'PENDING_PAYMENT'}::"OrderStatus",
+        ${'PENDING'}::"OrderStatus",
         ${total},
         ${total},
         ${customerName || 'Guest'},
@@ -342,7 +343,19 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
     `;
 
-    return sale;
+    return {
+      ...sale,
+      table_number: tableRows[0]?.table_number ?? null,
+    };
+  });
+
+  const totalItems = items.fold<number>((sum, item) => sum + item.qty, 0);
+  const tableLabel = (result.table_number ?? '').toString().trim();
+  emitToTenant(tenantId, 'incoming_qr_order', {
+    orderId: result.id,
+    tableName: tableLabel || tableId.toString(),
+    totalItems,
+    grandTotal: Number(result.total_price ?? 0),
   });
 
   return res.status(201).json({
