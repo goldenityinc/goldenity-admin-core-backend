@@ -279,6 +279,7 @@ model expenses {
   tenant_id    String?
   title        String    @default("Pengeluaran")
   category     String    @default("Operasional")
+  expense_number String? @unique
   expense_date DateTime
   amount       Decimal?  @db.Decimal
   notes        String?
