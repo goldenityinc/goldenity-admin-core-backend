@@ -560,6 +560,7 @@ model transactions {
   mechanic_id         String?
   mechanic_name       String?
   mechanic_commission Decimal?  @default(0) @db.Decimal(14, 2)
+  special_note        String?   @db.Text
   created_at          DateTime? @default(now())
   updated_at          DateTime? @default(now())
 

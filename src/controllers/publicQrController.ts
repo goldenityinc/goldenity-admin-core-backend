@@ -213,6 +213,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const orderNote = (
     req.body.orderNote ??
     req.body.order_note ??
+    req.body.special_note ??
+    req.body.specialNote ??
     req.body.customerNote ??
     req.body.customer_note ??
     req.body.note ??
@@ -313,6 +315,18 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       throw new AppError('Gagal membuat pesanan QR', 500);
     }
 
+    if (orderNote.isNotEmpty) {
+      try {
+        await tx.$queryRaw`
+          UPDATE sales_records
+          SET special_note = ${orderNote}, updated_at = NOW()
+          WHERE id = ${sale.id} AND tenant_id = ${tenantId}
+        `;
+      } catch (_) {
+        // Keep order creation resilient on tenants that have not added special_note yet.
+      }
+    }
+
     for (const item of normalizedItems) {
       await tx.$queryRaw`
         INSERT INTO sales_record_items (
@@ -355,6 +369,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     return {
       ...sale,
       table_number: tableRows[0]?.table_number ?? null,
+      special_note: orderNote || null,
     };
   });
 
@@ -373,6 +388,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     paymentMethod: 'Bayar di Kasir',
     customerName: customerName || 'Guest',
     orderNote,
+    special_note: orderNote || null,
+    specialNote: orderNote || null,
     totalItems,
     grandTotal: Number(result.total_price ?? 0),
     items: items.map((item) => ({
