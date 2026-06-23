@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { UserRole } from '@prisma/client';
+import { BusinessCategory, UserRole } from '@prisma/client';
 import prisma from '../config/database';
 
 export class TenantService {
@@ -14,6 +14,7 @@ export class TenantService {
     logoUrl?: string;
     adminEmail?: string;
     adminPassword?: string;
+    businessCategory?: BusinessCategory;
     isActive?: boolean;
     showInventoryImages?: boolean;
   }) {
@@ -34,6 +35,7 @@ export class TenantService {
           email: data.email,
           phone: data.phone,
           address: data.address,
+          businessCategory: data.businessCategory ?? 'GENERAL',
           logoUrl: data.logoUrl,
           isActive: data.isActive ?? true,
           showInventoryImages: data.showInventoryImages ?? true,

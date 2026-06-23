@@ -1,6 +1,7 @@
 import prisma from '../config/database';
 import { resolveLegacyModuleAssignments } from '../constants/moduleCatalog';
 import { normalizeSubscriptionAddons } from '../constants/subscriptionAddons';
+import { getBusinessCategoryDefaultModuleKeys } from '../constants/businessCategory';
 import type {
   ModuleEntitlementDto,
   TenantEntitlementsDto,
@@ -87,6 +88,12 @@ export class EntitlementService {
   static async resolveForTenant(
     tenantId: string,
   ): Promise<ResolvedTenantEntitlements> {
+    // Fetch tenant to get business_category
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { businessCategory: true },
+    });
+
     const appInstance =
       (await prisma.appInstance.findFirst({
         where: {
@@ -167,6 +174,11 @@ export class EntitlementService {
 
     const modules: Record<string, ModuleEntitlementDto> = {};
 
+    // Get business category default modules to auto-enable
+    const businessCategoryDefaultModules = new Set(
+      getBusinessCategoryDefaultModuleKeys(tenant?.businessCategory),
+    );
+
     if (enabledAssignments.length > 0) {
       for (const assignment of enabledAssignments) {
         const moduleKey = assignment.moduleDefinition.moduleKey.trim();
@@ -201,6 +213,20 @@ export class EntitlementService {
           source: assignment.source,
           config: assignment.config ?? {},
           limits: assignment.limits ?? {},
+          activatedAt: null,
+          expiredAt: null,
+        };
+      }
+    }
+
+    // Auto-enable business category default modules if not already present
+    for (const moduleKey of businessCategoryDefaultModules) {
+      if (!modules[moduleKey]) {
+        modules[moduleKey] = {
+          enabled: true,
+          source: 'CORE',
+          config: {},
+          limits: {},
           activatedAt: null,
           expiredAt: null,
         };

@@ -50,6 +50,7 @@ export type LoginResponseDto = {
     id: string;
     slug: string;
     name: string;
+    businessCategory?: 'GENERAL' | 'RETAIL_FNB' | 'SERVICES_AUTOMOTIVE';
     bridgeApiUrl?: string | null;
     showInventoryImages?: boolean;
     syncMode?: string;

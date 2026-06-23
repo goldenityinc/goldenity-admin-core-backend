@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BUSINESS_CATEGORY_VALUES } from '../constants/businessCategory';
 
 const optionalTrimmedString = () =>
   z.preprocess(
@@ -50,6 +51,7 @@ const optionalNullableBranchIdSchema = z.preprocess(
 
 export const createTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters'),
+  businessCategory: z.enum(BUSINESS_CATEGORY_VALUES).optional(),
   solution: optionalTrimmedString().pipe(z.string().optional()),
   subscriptionType: optionalTrimmedString().pipe(z.string().optional()),
   branchName: optionalTrimmedString().pipe(
@@ -85,6 +87,7 @@ export const createTenantSchema = z.object({
 
 export const updateTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters').optional(),
+  businessCategory: z.enum(BUSINESS_CATEGORY_VALUES).optional(),
   email: z.string().email('Invalid tenant email').optional().nullable(),
   phone: z.string().min(6, 'Phone must be at least 6 characters').optional().nullable(),
   address: z.string().min(5, 'Address must be at least 5 characters').optional().nullable(),

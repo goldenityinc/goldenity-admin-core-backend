@@ -228,6 +228,7 @@ export class AuthService {
         id: true,
         slug: true,
         name: true,
+        businessCategory: true,
         bridgeApiUrl: true,
         showInventoryImages: true,
       },
@@ -286,6 +287,7 @@ export class AuthService {
         id: resolvedLoginRecord.tenantId,
         slug: tenant?.slug ?? resolvedLoginRecord.tenantSlug,
         name: tenant?.name ?? resolvedLoginRecord.tenantSlug ?? resolvedLoginRecord.tenantId,
+        businessCategory: tenant?.businessCategory ?? 'GENERAL',
         bridgeApiUrl:
           tenant?.bridgeApiUrl ?? resolvedLoginRecord.tenantBridgeApiUrl,
         showInventoryImages:

@@ -176,6 +176,17 @@ export const POS_MODULE_CATALOG: ModuleCatalogEntry[] = [
     dependencies: ['module_inventory'],
   },
   {
+    moduleKey: 'module_fnb',
+    displayName: 'F&B Operations',
+    category: 'operations',
+    description: 'Table management dan kitchen printer untuk operasional F&B.',
+    dependencies: ['module_sales', 'module_settings', 'module_receipt_printing'],
+    defaultConfig: {
+      table_management: true,
+      kitchen_printer: true,
+    },
+  },
+  {
     moduleKey: 'module_service_orders',
     displayName: 'Service Orders',
     category: 'service',

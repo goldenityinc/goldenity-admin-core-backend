@@ -1,6 +1,7 @@
-import { Prisma, type ModuleAssignmentSource } from '@prisma/client';
+import { Prisma, type BusinessCategory, type ModuleAssignmentSource } from '@prisma/client';
 import prisma from '../config/database';
 import { getPosModuleCatalogMap, resolveLegacyModuleAssignments } from '../constants/moduleCatalog';
+import { getBusinessCategoryDefaultModuleKeys } from '../constants/businessCategory';
 import { AppError } from '../utils/AppError';
 
 type AppInstanceModuleAssignment = {
@@ -43,7 +44,7 @@ type AppInstanceUpdatePayload = {
 };
 
 const APP_INSTANCE_INCLUDE = {
-  tenant: { select: { id: true, name: true, slug: true } },
+  tenant: { select: { id: true, name: true, slug: true, businessCategory: true } },
   solution: { select: { id: true, name: true, code: true } },
   modules: {
     where: { isEnabled: true },
@@ -221,6 +222,7 @@ export class AppInstanceService {
     tier?: string | null;
     addons?: string[];
     moduleKeys?: string[];
+    businessCategory?: BusinessCategory | null;
   }): Record<string, AppInstanceModuleAssignment> {
     if (input.solutionType !== 'POS') {
       return {};
@@ -232,8 +234,14 @@ export class AppInstanceService {
       addons: input.addons,
     }) as Record<string, AppInstanceModuleAssignment>;
 
+    const categoryDefaultModuleKeys = getBusinessCategoryDefaultModuleKeys(
+      input.businessCategory,
+    );
     const resolvedModuleKeys = AppInstanceService.resolveModuleKeysWithDependencies(
-      normalizeModuleKeys(input.moduleKeys),
+      normalizeModuleKeys([
+        ...(input.moduleKeys ?? []),
+        ...categoryDefaultModuleKeys,
+      ]),
     );
 
     for (const moduleKey of resolvedModuleKeys) {
@@ -258,12 +266,13 @@ export class AppInstanceService {
       tier?: string | null;
       addons?: string[];
       moduleKeys?: string[];
+      businessCategory?: BusinessCategory | null;
     },
   ): Promise<void> {
     const assignments = AppInstanceService.buildModuleAssignments(input);
     const moduleKeys = Object.keys(assignments);
 
-    const definitions = moduleKeys.length
+    let definitions = moduleKeys.length
       ? await tx.moduleDefinition.findMany({
           where: {
             moduleKey: {
@@ -277,10 +286,47 @@ export class AppInstanceService {
         })
       : [];
 
-    const definitionMap = new Map(definitions.map((item) => [item.moduleKey, item.id]));
+    let definitionMap = new Map(definitions.map((item) => [item.moduleKey, item.id]));
     const missing = moduleKeys.filter((moduleKey) => !definitionMap.has(moduleKey));
     if (missing.length > 0) {
-      throw new AppError(`Unknown module keys: ${missing.join(', ')}`, 400);
+      const catalogMap = getPosModuleCatalogMap();
+      const missingCatalogEntries = missing
+        .map((moduleKey) => catalogMap.get(moduleKey))
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+      if (missingCatalogEntries.length > 0) {
+        await tx.moduleDefinition.createMany({
+          data: missingCatalogEntries.map((entry) => ({
+            moduleKey: entry.moduleKey,
+            displayName: entry.displayName,
+            category: entry.category,
+            description: entry.description,
+            isCore: entry.isCore ?? false,
+            status: 'ACTIVE',
+            dependencies: entry.dependencies ?? [],
+            defaultConfig: toNullableInputJson(entry.defaultConfig),
+          })),
+          skipDuplicates: true,
+        });
+
+        definitions = await tx.moduleDefinition.findMany({
+          where: {
+            moduleKey: {
+              in: moduleKeys,
+            },
+          },
+          select: {
+            id: true,
+            moduleKey: true,
+          },
+        });
+        definitionMap = new Map(definitions.map((item) => [item.moduleKey, item.id]));
+      }
+
+      const unresolved = moduleKeys.filter((moduleKey) => !definitionMap.has(moduleKey));
+      if (unresolved.length > 0) {
+        throw new AppError(`Unknown module keys: ${unresolved.join(', ')}`, 400);
+      }
     }
 
     await tx.appInstanceModule.deleteMany({
@@ -329,6 +375,7 @@ export class AppInstanceService {
         tier: data.tier,
         addons: data.addons,
         moduleKeys: data.moduleKeys,
+        businessCategory: appInstance.tenant.businessCategory,
       });
 
       return tx.appInstance.findUniqueOrThrow({
@@ -397,6 +444,11 @@ export class AppInstanceService {
       select: {
         tier: true,
         addons: true,
+        tenant: {
+          select: {
+            businessCategory: true,
+          },
+        },
         solution: {
           select: {
             code: true,
@@ -434,6 +486,7 @@ export class AppInstanceService {
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
         moduleKeys,
+        businessCategory: current.tenant.businessCategory,
       });
 
       return tx.appInstance.findUniqueOrThrow({
@@ -448,6 +501,58 @@ export class AppInstanceService {
   static async remove(id: string) {
     return prisma.appInstance.delete({
       where: { id },
+    });
+  }
+
+  static async syncBusinessCategoryModulesForTenant(
+    tenantId: string,
+    businessCategory: BusinessCategory,
+  ): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const appInstances = await tx.appInstance.findMany({
+        where: {
+          tenantId,
+          status: 'ACTIVE',
+        },
+        select: {
+          id: true,
+          tier: true,
+          addons: true,
+          solution: {
+            select: {
+              code: true,
+              name: true,
+            },
+          },
+          modules: {
+            where: {
+              isEnabled: true,
+            },
+            include: {
+              moduleDefinition: {
+                select: {
+                  moduleKey: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      for (const appInstance of appInstances) {
+        const solutionType = resolveSolutionModuleCatalogType(appInstance.solution);
+        if (solutionType !== 'POS') {
+          continue;
+        }
+
+        await AppInstanceService.syncAppInstanceModules(tx, appInstance.id, {
+          solutionType,
+          tier: appInstance.tier,
+          addons: appInstance.addons,
+          moduleKeys: appInstance.modules.map((item) => item.moduleDefinition.moduleKey),
+          businessCategory,
+        });
+      }
     });
   }
 }

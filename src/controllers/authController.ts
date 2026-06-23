@@ -38,6 +38,41 @@ async function createAuditLogSafely(input: {
   }
 }
 
+function normalizeSettingKey(input: string | null | undefined): string {
+  return (input ?? '').toString().trim().toLowerCase();
+}
+
+function parseBooleanSetting(input: string | null | undefined): boolean | null {
+  const normalized = (input ?? '').toString().trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (['1', 'true', 'yes', 'on', 'aktif'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off', 'nonaktif'].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+}
+
+function parseNumberSetting(input: string | null | undefined): number | null {
+  const raw = (input ?? '').toString().trim();
+  if (!raw) {
+    return null;
+  }
+
+  const value = Number(raw.replace(',', '.'));
+  if (Number.isNaN(value)) {
+    return null;
+  }
+
+  return value;
+}
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   console.log('[authController.login] request-received', {
     bodyKeys: Object.keys(req.body ?? {}),
@@ -84,9 +119,172 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError('User not authenticated', 401);
   }
 
+  const tenantId = (req.user.tenantId ?? '').toString();
+  const userId = (req.user.userId ?? '').toString();
+  if (!tenantId) {
+    throw new AppError('Tenant ID tidak ditemukan di token', 400);
+  }
+
+  const [tenant, user, settingsRows, resolved] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        address: true,
+        phone: true,
+        logoUrl: true,
+        showInventoryImages: true,
+        businessCategory: true,
+        updatedAt: true,
+      },
+    }),
+    userId
+      ? prisma.user.findFirst({
+          where: {
+            id: userId,
+            tenantId,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            branchId: true,
+            isActive: true,
+            updatedAt: true,
+          },
+        })
+      : Promise.resolve(null),
+    prisma.store_settings.findMany({
+      where: {
+        tenant_id: tenantId,
+        OR: [
+          {
+            key: {
+              in: [
+                'store_name',
+                'nama_toko',
+                'name',
+                'store_address',
+                'alamat',
+                'address',
+                'tax_enabled',
+                'enable_tax',
+                'include_tax',
+                'prices_include_tax',
+                'tax_rate',
+                'ppn_rate',
+                'vat_rate',
+                'tax_name',
+                'tax_label',
+                'npwp',
+                'tax_id',
+              ],
+            },
+          },
+          { key: { contains: 'tax', mode: 'insensitive' } },
+          { key: { contains: 'ppn', mode: 'insensitive' } },
+          { key: { contains: 'vat', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: [{ updated_at: 'desc' }, { created_at: 'desc' }],
+      select: {
+        key: true,
+        value: true,
+      },
+    }),
+    EntitlementService.resolveForTenant(tenantId),
+  ]);
+
+  if (!tenant) {
+    throw new AppError('Tenant tidak ditemukan', 404);
+  }
+
+  const settingsMap = new Map<string, string>();
+  for (const row of settingsRows) {
+    const key = normalizeSettingKey(row.key);
+    if (!key || settingsMap.has(key)) {
+      continue;
+    }
+    settingsMap.set(key, (row.value ?? '').toString().trim());
+  }
+
+  const storeName =
+    settingsMap.get('store_name') ||
+    settingsMap.get('nama_toko') ||
+    settingsMap.get('name') ||
+    tenant.name;
+
+  const storeAddress =
+    settingsMap.get('store_address') ||
+    settingsMap.get('alamat') ||
+    settingsMap.get('address') ||
+    tenant.address ||
+    null;
+
+  const taxSettings = {
+    enabled:
+      parseBooleanSetting(settingsMap.get('tax_enabled')) ??
+      parseBooleanSetting(settingsMap.get('enable_tax')),
+    includeTaxInPrice:
+      parseBooleanSetting(settingsMap.get('prices_include_tax')) ??
+      parseBooleanSetting(settingsMap.get('include_tax')),
+    rate:
+      parseNumberSetting(settingsMap.get('tax_rate')) ??
+      parseNumberSetting(settingsMap.get('ppn_rate')) ??
+      parseNumberSetting(settingsMap.get('vat_rate')),
+    name:
+      settingsMap.get('tax_name') ||
+      settingsMap.get('tax_label') ||
+      null,
+    taxId:
+      settingsMap.get('npwp') ||
+      settingsMap.get('tax_id') ||
+      null,
+    raw: Object.fromEntries(settingsMap.entries()),
+  };
+
   return res.status(200).json({
     success: true,
-    data: req.user,
+    data: {
+      user: {
+        id: user?.id ?? req.user.userId ?? null,
+        name: user?.name ?? null,
+        email: user?.email ?? req.user.email ?? null,
+        role: user?.role ?? req.user.role ?? null,
+        branchId: user?.branchId?.toString() ?? req.user.branchId ?? null,
+        tenantId,
+      },
+      tenant: {
+        id: tenant.id,
+        slug: tenant.slug,
+        name: tenant.name,
+        address: tenant.address,
+        phone: tenant.phone,
+        logoUrl: tenant.logoUrl,
+        showInventoryImages: tenant.showInventoryImages,
+        business_category: tenant.businessCategory,
+      },
+      profile: {
+        store_name: storeName,
+        address: storeAddress,
+        tax_settings: taxSettings,
+      },
+      active_modules: resolved.entitlements.active_modules,
+      feature_flags: resolved.entitlements.modules,
+      business_category: tenant.businessCategory,
+      subscription: resolved.subscription,
+      entitlements_revision: resolved.entitlements.revision,
+      resolved_at: resolved.entitlements.resolvedAt,
+      last_updated_at: new Date(
+        Math.max(
+          tenant.updatedAt.getTime(),
+          user?.updatedAt?.getTime() ?? 0,
+        ),
+      ).toISOString(),
+    },
   });
 });
 

@@ -14,6 +14,7 @@ import prisma from '../config/database';
 import { ObjectStorageService } from '../services/objectStorageService';
 import { Readable } from 'node:stream';
 import { emitTenantUpdated } from '../services/realtimeEmitter';
+import { AppInstanceService } from '../services/appInstanceService';
 
 function getServicePublicBaseUrl(req?: Request): string {
   const explicit = process.env.PUBLIC_BASE_URL?.trim();
@@ -210,6 +211,9 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
     where: { id: existing.id },
     data: {
       ...(typeof bodyParsed.data.name === 'string' ? { name: bodyParsed.data.name } : {}),
+      ...(bodyParsed.data.businessCategory !== undefined
+        ? { businessCategory: bodyParsed.data.businessCategory }
+        : {}),
       ...(bodyParsed.data.email !== undefined ? { email: bodyParsed.data.email } : {}),
       ...(bodyParsed.data.phone !== undefined ? { phone: bodyParsed.data.phone } : {}),
       ...(bodyParsed.data.address !== undefined ? { address: bodyParsed.data.address } : {}),
@@ -219,6 +223,16 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
         : {}),
     },
   });
+
+  if (
+    bodyParsed.data.businessCategory !== undefined &&
+    bodyParsed.data.businessCategory !== existing.businessCategory
+  ) {
+    await AppInstanceService.syncBusinessCategoryModulesForTenant(
+      updated.id,
+      updated.businessCategory ?? 'GENERAL',
+    );
+  }
 
   const erpConfigured = Boolean(process.env.ERP_API_BASE_URL?.trim() || process.env.ERP_API_URL?.trim());
   const authHeader = req.headers.authorization;
