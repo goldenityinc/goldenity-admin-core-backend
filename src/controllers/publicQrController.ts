@@ -315,18 +315,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       throw new AppError('Gagal membuat pesanan QR', 500);
     }
 
-    if (orderNote.isNotEmpty) {
-      try {
-        await tx.$queryRaw`
-          UPDATE sales_records
-          SET special_note = ${orderNote}, updated_at = NOW()
-          WHERE id = ${sale.id} AND tenant_id = ${tenantId}
-        `;
-      } catch (_) {
-        // Keep order creation resilient on tenants that have not added special_note yet.
-      }
-    }
-
     for (const item of normalizedItems) {
       await tx.$queryRaw`
         INSERT INTO sales_record_items (
@@ -374,6 +362,21 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   });
 
   const totalItems = items.reduce((sum, item) => sum + item.qty, 0);
+
+  // Keep order-note persistence best-effort and OUTSIDE transaction.
+  // In PostgreSQL, a failed statement inside a transaction marks it aborted.
+  if (orderNote.isNotEmpty) {
+    try {
+      await prisma.$queryRaw`
+        UPDATE sales_records
+        SET special_note = ${orderNote}, updated_at = NOW()
+        WHERE id = ${result.id} AND tenant_id = ${tenantId}
+      `;
+    } catch (_) {
+      // Backward compatible when sales_records.special_note is not available yet.
+    }
+  }
+
   const tableLabel = (result.table_number ?? '').toString().trim();
   emitToTenant(tenantId, 'incoming_qr_order', {
     tenantId,
