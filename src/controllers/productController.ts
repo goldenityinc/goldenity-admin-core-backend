@@ -79,6 +79,14 @@ function parseOptionalBigIntLike(value: unknown): bigint | null {
   return BigInt(normalized);
 }
 
+function parseOptionalUnit(value: unknown): string | null {
+  const normalized = (value ?? '').toString().trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.toLowerCase();
+}
+
 async function resolveProductCategoryName(
   tenantId: string,
   rawCategoryId: unknown,
@@ -250,6 +258,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   );
   const purchasePrice = body.purchasePrice ?? body.purchase_price;
   const isService = body.isService ?? body.is_service ?? false;
+  const unit = parseOptionalUnit(body.unit ?? body.unitName ?? body.unit_name) ?? 'pcs';
 
   const created = await ProductService.createProduct({
     id: productId,
@@ -257,6 +266,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     branchId,
     name: body.name,
     product_type: isService ? 'Jasa' : 'Barang',
+    unit,
     barcode: body.barcode ?? null,
     category: categoryName,
     price: body.price ?? 0,
@@ -315,6 +325,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
   const categoryRaw = parsed.data.category;
   const barcodeRaw = parsed.data.barcode;
   const nameRaw = parsed.data.name;
+  const unitRaw = parsed.data.unit ?? parsed.data.unitName ?? parsed.data.unit_name;
 
   const updatePayload = {
     ...(branchIdRaw !== undefined
@@ -331,6 +342,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     ...(categoryRaw !== undefined ? { category: categoryRaw } : {}),
     ...(barcodeRaw !== undefined ? { barcode: barcodeRaw } : {}),
     ...(nameRaw !== undefined ? { name: nameRaw } : {}),
+    ...(unitRaw !== undefined ? { unit: parseOptionalUnit(unitRaw) ?? 'pcs' } : {}),
   };
 
   if (Object.keys(updatePayload).length === 0) {

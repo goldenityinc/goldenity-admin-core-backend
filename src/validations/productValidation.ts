@@ -29,6 +29,9 @@ const optionalBooleanLike = z.preprocess((value) => {
 export const createProductSchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1, 'Product name is required'),
+  unit: optionalText,
+  unitName: optionalText,
+  unit_name: optionalText,
   branchId: bigintLikeSchema.optional(),
   branch_id: bigintLikeSchema.optional(),
   barcode: optionalText,

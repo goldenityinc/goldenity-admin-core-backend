@@ -17,6 +17,7 @@ export type ProductUpdateFields = {
   is_active?: boolean;
   image_url?: string;
   name?: string;
+  unit?: string;
   barcode?: string | null;
   category?: string | null;
   price?: number;
@@ -29,6 +30,7 @@ export type ProductCreateInput = {
   tenantId: string;
   branchId?: bigint | null;
   name: string;
+  unit?: string;
   product_type?: string;
   barcode?: string | null;
   category?: string | null;
@@ -99,6 +101,7 @@ export class ProductService {
           tenant_id: true,
           name: true,
           product_type: true,
+          unit: true,
           barcode: true,
           category: true,
           price: true,
@@ -175,6 +178,7 @@ export class ProductService {
       ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
       ...(fields.image_url !== undefined ? { image_url: fields.image_url } : {}),
       ...(fields.name !== undefined ? { name: fields.name } : {}),
+      ...(fields.unit !== undefined ? { unit: fields.unit } : {}),
       ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
       ...(fields.category !== undefined ? { category: fields.category } : {}),
       ...(fields.price !== undefined ? { price: fields.price } : {}),
@@ -201,6 +205,7 @@ export class ProductService {
         tenant_id: tenantId,
         name: input.name,
         product_type: input.product_type ?? 'Barang',
+        unit: (input.unit ?? 'pcs').toString().trim() || 'pcs',
         branchId: input.branchId,
         barcode: input.barcode ?? null,
         category: input.category ?? null,

@@ -35,38 +35,38 @@ model Tenant {
 }
 
 model tables {
-  id           BigInt      @id @default(autoincrement())
+  id           BigInt          @id @default(autoincrement())
   tenant_id    String
   table_number String
   capacity     Int
-  status       TableStatus @default(AVAILABLE)
-  created_at   DateTime?   @default(now())
-  updated_at   DateTime?   @default(now()) @updatedAt
-  tenant       Tenant      @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  status       TableStatus     @default(AVAILABLE)
+  created_at   DateTime?       @default(now())
+  updated_at   DateTime?       @default(now()) @updatedAt
+  tenant       Tenant          @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
   salesRecords sales_records[]
 
-  @@index([tenant_id])
   @@unique([tenant_id, table_number])
+  @@index([tenant_id])
 }
 
 model Branch {
-  id                 BigInt          @id @default(autoincrement())
-  tenantId           String          @map("tenant_id")
-  name               String
-  branchCode         String?         @unique @map("branch_code")
-  address            String?
-  phone              String?
-  isActive           Boolean         @default(true) @map("is_active")
-  isMainBranch       Boolean         @default(false) @map("is_main_branch")
-  isBlindCloseEnabled Boolean        @default(true) @map("is_blind_close_enabled")
-  createdAt          DateTime        @default(now()) @map("created_at")
-  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at")
-  tenant             Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  products           products[]
-  users              User[]
-  shifts             shifts[]
-  salesRecords       sales_records[] @relation("SalesRecordBranch")
-  pickupSalesRecords sales_records[] @relation("SalesRecordTargetPickupBranch")
+  id                  BigInt          @id @default(autoincrement())
+  tenantId            String          @map("tenant_id")
+  name                String
+  branchCode          String?         @unique @map("branch_code")
+  address             String?
+  phone               String?
+  isActive            Boolean         @default(true) @map("is_active")
+  isMainBranch        Boolean         @default(false) @map("is_main_branch")
+  isBlindCloseEnabled Boolean         @default(true) @map("is_blind_close_enabled")
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at")
+  tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products            products[]
+  users               User[]
+  shifts              shifts[]
+  salesRecords        sales_records[] @relation("SalesRecordBranch")
+  pickupSalesRecords  sales_records[] @relation("SalesRecordTargetPickupBranch")
 
   @@index([tenantId])
   @@index([tenantId, isActive])
@@ -74,26 +74,26 @@ model Branch {
 }
 
 model User {
-  id           String          @id @default(uuid())
-  firebaseUid  String?         @unique
-  email        String?         @unique
-  name         String
-  employeeType String          @default("Kasir") @map("employee_type")
-  baseSalary   Decimal         @default(0) @map("base_salary") @db.Decimal(14, 2)
-  commissionRate Decimal       @default(0) @map("commission_rate") @db.Decimal(14, 2)
-  role         UserRole        @default(CRM_STAFF)
-  tenantId     String
-  branchId     BigInt?         @map("branch_id")
-  isActive     Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  passwordHash String?
-  username     String?
-  customRoleId String?         @map("custom_role_id")
-  appAccesses  UserAppAccess[]
-  shifts       shifts[]
-  branch       Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id             String          @id @default(uuid())
+  firebaseUid    String?         @unique
+  email          String?         @unique
+  name           String
+  employeeType   String          @default("Kasir") @map("employee_type")
+  baseSalary     Decimal         @default(0) @map("base_salary") @db.Decimal(14, 2)
+  commissionRate Decimal         @default(0) @map("commission_rate") @db.Decimal(14, 2)
+  role           UserRole        @default(CRM_STAFF)
+  tenantId       String
+  branchId       BigInt?         @map("branch_id")
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  passwordHash   String?
+  username       String?
+  customRoleId   String?         @map("custom_role_id")
+  appAccesses    UserAppAccess[]
+  shifts         shifts[]
+  branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
   @@index([tenantId])
@@ -223,19 +223,19 @@ model UserAppAccess {
 }
 
 model app_users {
-  id             BigInt    @id @default(autoincrement())
-  tenant_id      String?
-  username       String
-  password       String?
-  name           String?
-  employee_type  String?   @default("Kasir")
-  base_salary    Decimal?  @default(0) @db.Decimal(14, 2)
-  commission_rate Decimal? @default(0) @db.Decimal(14, 2)
-  role           String?
-  custom_role_id String?
-  is_active      Boolean?  @default(true)
-  created_at     DateTime? @default(now())
-  updated_at     DateTime? @default(now())
+  id              BigInt    @id @default(autoincrement())
+  tenant_id       String?
+  username        String
+  password        String?
+  name            String?
+  employee_type   String?   @default("Kasir")
+  base_salary     Decimal?  @default(0) @db.Decimal(14, 2)
+  commission_rate Decimal?  @default(0) @db.Decimal(14, 2)
+  role            String?
+  custom_role_id  String?
+  is_active       Boolean?  @default(true)
+  created_at      DateTime? @default(now())
+  updated_at      DateTime? @default(now())
 
   @@index([tenant_id])
   @@index([username])
@@ -275,18 +275,18 @@ model daily_cash {
 }
 
 model expenses {
-  id            BigInt    @id @default(autoincrement())
-  tenant_id     String?
-  title         String    @default("Pengeluaran")
-  category      String    @default("Operasional")
-  expense_date  DateTime
-  amount        Decimal?  @db.Decimal
-  notes         String?
-  created_at    DateTime? @default(now())
-  updated_at    DateTime? @default(now())
-  status        String?
-  void_reason   String?
-  voided_at     DateTime? @db.Timestamptz(6)
+  id           BigInt    @id @default(autoincrement())
+  tenant_id    String?
+  title        String    @default("Pengeluaran")
+  category     String    @default("Operasional")
+  expense_date DateTime
+  amount       Decimal?  @db.Decimal
+  notes        String?
+  created_at   DateTime? @default(now())
+  updated_at   DateTime? @default(now())
+  status       String?
+  void_reason  String?
+  voided_at    DateTime? @db.Timestamptz(6)
 
   @@index([tenant_id])
   @@index([tenant_id, expense_date])
@@ -374,6 +374,7 @@ model products {
   tenant_id      String?
   name           String
   product_type   String    @default("Barang")
+  unit           String    @default("pcs")
   barcode        String?
   category       String?
   price          Float?    @default(0)
