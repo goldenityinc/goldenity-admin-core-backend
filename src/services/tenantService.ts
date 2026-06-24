@@ -12,6 +12,7 @@ export class TenantService {
     phone?: string;
     address?: string;
     logoUrl?: string;
+    qrisImageUrl?: string;
     adminEmail?: string;
     adminPassword?: string;
     businessCategory?: BusinessCategory;
@@ -37,6 +38,7 @@ export class TenantService {
           address: data.address,
           businessCategory: data.businessCategory ?? 'GENERAL',
           logoUrl: data.logoUrl,
+          qrisImageUrl: data.qrisImageUrl,
           isActive: data.isActive ?? true,
           showInventoryImages: data.showInventoryImages ?? true,
           branches: {
@@ -114,6 +116,7 @@ export class TenantService {
           phone: true,
           address: true,
           logoUrl: true,
+          qrisImageUrl: true,
           isActive: true,
           createdAt: true,
           updatedAt: true,

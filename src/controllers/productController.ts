@@ -326,6 +326,18 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
   const barcodeRaw = parsed.data.barcode;
   const nameRaw = parsed.data.name;
   const unitRaw = parsed.data.unit ?? parsed.data.unitName ?? parsed.data.unit_name;
+  const normalizedCategory =
+    categoryRaw === undefined || categoryRaw === null
+      ? undefined
+      : categoryRaw;
+  const normalizedBarcode =
+    barcodeRaw === undefined || barcodeRaw === null
+      ? undefined
+      : barcodeRaw;
+  const normalizedName =
+    nameRaw === undefined || nameRaw === null
+      ? undefined
+      : nameRaw;
 
   const updatePayload = {
     ...(branchIdRaw !== undefined
@@ -339,10 +351,12 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     ...(stockRaw !== undefined ? { stock: stockRaw } : {}),
     ...(priceRaw !== undefined ? { price: priceRaw } : {}),
     ...(purchasePriceRaw !== undefined ? { purchase_price: purchasePriceRaw } : {}),
-    ...(categoryRaw !== undefined ? { category: categoryRaw } : {}),
-    ...(barcodeRaw !== undefined ? { barcode: barcodeRaw } : {}),
-    ...(nameRaw !== undefined ? { name: nameRaw } : {}),
-    ...(unitRaw !== undefined ? { unit: parseOptionalUnit(unitRaw) ?? 'pcs' } : {}),
+    ...(normalizedCategory !== undefined ? { category: normalizedCategory } : {}),
+    ...(normalizedBarcode !== undefined ? { barcode: normalizedBarcode } : {}),
+    ...(normalizedName !== undefined ? { name: normalizedName } : {}),
+    ...(unitRaw !== undefined && unitRaw !== null
+      ? { unit: parseOptionalUnit(unitRaw) ?? 'pcs' }
+      : {}),
   };
 
   if (Object.keys(updatePayload).length === 0) {
