@@ -37,6 +37,7 @@ const transactionRecordSelect = Prisma.validator<Prisma.sales_recordsSelect>()({
   total_tax: true,
   total_profit: true,
   amount_paid: true,
+  payment_proof_url: true,
   branch: {
     select: {
       id: true,
