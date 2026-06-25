@@ -12,6 +12,7 @@ import { TenantService } from '../services/tenantService';
 import { ErpProvisionService } from '../services/erpProvisionService';
 import prisma from '../config/database';
 import { ObjectStorageService } from '../services/objectStorageService';
+import { uploadToS3 } from '../utils/s3Uploader';
 import { Readable } from 'node:stream';
 import { emitTenantUpdated } from '../services/realtimeEmitter';
 import { AppInstanceService } from '../services/appInstanceService';
@@ -80,6 +81,14 @@ function inferImageExtension(mimeType: string): string | null {
   if (mt === 'image/webp') return 'webp';
   if (mt === 'image/svg+xml') return 'svg';
   return null;
+}
+
+function getFirstUploadedFile(
+  req: Request,
+  fieldName: string,
+): Express.Multer.File | undefined {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  return files?.[fieldName]?.[0];
 }
 
 export const createTenant = asyncHandler(async (req: Request, res: Response) => {
@@ -207,6 +216,36 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
   const existing = await prisma.tenant.findUnique({ where: { id: paramParsed.data.tenantId } });
   if (!existing) throw new AppError('Tenant tidak ditemukan', 404);
 
+  const uploadedLogo = getFirstUploadedFile(req, 'logo');
+  const uploadedQris = getFirstUploadedFile(req, 'qris');
+
+  let logoUrl = bodyParsed.data.logoUrl;
+  let qrisImageUrl = bodyParsed.data.qrisImageUrl;
+  let logoObjectKey = existing.logoObjectKey;
+
+  if (uploadedLogo) {
+    const ext = inferImageExtension(uploadedLogo.mimetype);
+    if (!ext) {
+      throw new AppError('Format logo tidak didukung (png/jpg/webp/svg)', 400);
+    }
+
+    const key = `tenants/${existing.id}/logo-${Date.now()}.${ext}`;
+    const uploaded = await uploadToS3(uploadedLogo.buffer, key, uploadedLogo.mimetype);
+    logoUrl = uploaded.url;
+    logoObjectKey = uploaded.key;
+  }
+
+  if (uploadedQris) {
+    const ext = inferImageExtension(uploadedQris.mimetype);
+    if (!ext) {
+      throw new AppError('Format QRIS tidak didukung (png/jpg/webp/svg)', 400);
+    }
+
+    const key = `tenants/${existing.id}/qris-${Date.now()}.${ext}`;
+    const uploaded = await uploadToS3(uploadedQris.buffer, key, uploadedQris.mimetype);
+    qrisImageUrl = uploaded.url;
+  }
+
   const updated = await prisma.tenant.update({
     where: { id: existing.id },
     data: {
@@ -217,9 +256,9 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(bodyParsed.data.email !== undefined ? { email: bodyParsed.data.email } : {}),
       ...(bodyParsed.data.phone !== undefined ? { phone: bodyParsed.data.phone } : {}),
       ...(bodyParsed.data.address !== undefined ? { address: bodyParsed.data.address } : {}),
-      ...(bodyParsed.data.qrisImageUrl !== undefined
-        ? { qrisImageUrl: bodyParsed.data.qrisImageUrl }
-        : {}),
+      ...(logoUrl !== undefined ? { logoUrl } : {}),
+      ...(logoObjectKey !== undefined ? { logoObjectKey } : {}),
+      ...(qrisImageUrl !== undefined ? { qrisImageUrl } : {}),
       ...(typeof bodyParsed.data.isActive === 'boolean' ? { isActive: bodyParsed.data.isActive } : {}),
       ...(typeof bodyParsed.data.showInventoryImages === 'boolean'
         ? { showInventoryImages: bodyParsed.data.showInventoryImages }

@@ -4,6 +4,38 @@ import { AppError } from '../utils/AppError';
 import { ExpenseService } from '../services/expenseService';
 import { createExpenseSchema, updateExpenseSchema } from '../validations/expenseValidation';
 import { serializeForJson } from '../utils/serializeForJson';
+import { uploadToS3 } from '../utils/s3Uploader';
+
+function inferImageExtension(mimeType: string): string | null {
+  const normalized = mimeType.trim().toLowerCase();
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg';
+  if (normalized === 'image/gif') return 'gif';
+  return null;
+}
+
+async function resolveExpenseAttachmentUrl(req: Request): Promise<string | undefined> {
+  const existingUrl = (req.body?.attachment_url ?? req.body?.attachmentUrl ?? '').toString().trim();
+  const file = req.file as Express.Multer.File | undefined;
+
+  if (!file) {
+    return existingUrl || undefined;
+  }
+
+  if (!file.mimetype || !file.mimetype.toLowerCase().startsWith('image/')) {
+    throw new AppError('Lampiran pengeluaran harus berupa gambar', 400);
+  }
+
+  const extension = inferImageExtension(file.mimetype);
+  if (!extension) {
+    throw new AppError('Format lampiran pengeluaran tidak didukung', 400);
+  }
+
+  const fileName = `expenses/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const uploaded = await uploadToS3(file.buffer, fileName, file.mimetype);
+  return uploaded.url;
+}
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -44,7 +76,11 @@ export const createExpense = asyncHandler(async (req: Request, res: Response) =>
   }
 
   try {
-    const expense = await ExpenseService.createExpense(readTenantId(req), parsed.data);
+    const attachmentUrl = await resolveExpenseAttachmentUrl(req);
+    const expense = await ExpenseService.createExpense(readTenantId(req), {
+      ...parsed.data,
+      ...(attachmentUrl !== undefined ? { attachment_url: attachmentUrl } : {}),
+    });
 
     console.log(
       `[createExpense] Expense created successfully. ID=${expense.id}, Title="${expense.title}", TenantId=${readTenantId(req)}`
@@ -134,7 +170,11 @@ export const updateExpense = asyncHandler(async (req: Request, res: Response) =>
   }
 
   try {
-    const expense = await ExpenseService.updateExpense(tenantId, BigInt(rawId), parsed.data);
+    const attachmentUrl = await resolveExpenseAttachmentUrl(req);
+    const expense = await ExpenseService.updateExpense(tenantId, BigInt(rawId), {
+      ...parsed.data,
+      ...(attachmentUrl !== undefined ? { attachment_url: attachmentUrl } : {}),
+    });
 
     return res.status(200).json({
       success: true,

@@ -50,6 +50,7 @@ export class ExpenseService {
         expense_date: expenseDate,
         amount: new Prisma.Decimal(payload.amount),
         notes: payload.notes?.trim() || null,
+        attachment_url: payload.attachment_url?.trim() || null,
         status: payload.status ?? 'ACTIVE',
         created_at: new Date(),
         updated_at: new Date(),
@@ -173,6 +174,9 @@ export class ExpenseService {
     }
     if (payload.notes !== undefined) {
       updateData.notes = payload.notes?.trim() || null;
+    }
+    if (payload.attachment_url !== undefined) {
+      updateData.attachment_url = payload.attachment_url?.trim() || null;
     }
     if (payload.status !== undefined) {
       updateData.status = payload.status;

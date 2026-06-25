@@ -15,6 +15,7 @@ export const createExpenseSchema = z.object({
     .transform((val) => Number(val))
     .refine((val) => val > 0, 'Amount harus lebih dari 0'),
   notes: optionalText.describe('Catatan pengeluaran'),
+  attachment_url: optionalText.describe('URL lampiran pengeluaran'),
   status: z
     .enum(['ACTIVE', 'VOID', 'PENDING'])
     .default('ACTIVE')

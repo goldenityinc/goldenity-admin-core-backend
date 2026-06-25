@@ -13,6 +13,10 @@ const upload = multer({
 });
 
 const router = Router();
+const profileUpload = upload.fields([
+  { name: 'logo', maxCount: 1 },
+  { name: 'qris', maxCount: 1 },
+]);
 
 // Semua endpoint tenant onboarding wajib token valid.
 router.use(authMiddleware);
@@ -20,7 +24,8 @@ router.use(authMiddleware);
 // Restrict ke SUPER_ADMIN. Saat bootstrap awal, line roleMiddleware bisa dilepas sementara.
 router.get('/', roleMiddleware('SUPER_ADMIN'), getTenants);
 router.post('/', roleMiddleware('SUPER_ADMIN'), createTenant);
-router.put('/:tenantId', roleMiddleware('SUPER_ADMIN'), updateTenant);
+router.put('/:tenantId', roleMiddleware('SUPER_ADMIN'), profileUpload, updateTenant);
+router.put('/:tenantId/profile', roleMiddleware('SUPER_ADMIN'), profileUpload, updateTenant);
 router.post('/:tenantId/logo', roleMiddleware('SUPER_ADMIN'), upload.single('file'), uploadTenantLogo);
 router.get('/:tenantId/users', roleMiddleware('SUPER_ADMIN'), getTenantUsers);
 router.post('/:tenantId/users', roleMiddleware('SUPER_ADMIN'), createTenantUser);
