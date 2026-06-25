@@ -457,6 +457,7 @@ model sales_records {
   total_tax               BigInt?
   total_profit            BigInt?
   amount_paid             Decimal?    @default(0) @db.Decimal
+  payment_proof_url       String?     @db.Text
   branch_id               BigInt?
   shift_id                BigInt?
   table_id                BigInt?

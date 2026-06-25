@@ -209,6 +209,13 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const tableId = parseTableId(req.body.tableId ?? req.body.table_id);
   const branchId = parseOptionalBranchId(req.body.branchId ?? req.body.branch_id);
   const items = parseQrOrderItems(req.body.items);
+  const paymentProofUrl = (
+    req.body.payment_proof_url ??
+    req.body.paymentProofUrl ??
+    req.body.proof_url ??
+    req.body.proofUrl ??
+    ''
+  ).toString().trim() || null;
   const customerName = (req.body.customerName ?? req.body.customer_name ?? 'Guest').toString().trim();
   const orderNote = (
     req.body.orderNote ??
@@ -272,7 +279,18 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     const referenceId = `qr_${Date.now()}`;
     const receiptNumber = generateReceiptNumber();
 
-    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; receipt_number: string | null; total_price: string | null; order_status: string }>>`
+    const paymentProofColumnRows = await tx.$queryRaw<Array<{ exists: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sales_records'
+          AND column_name = 'payment_proof_url'
+      ) AS "exists"
+    `;
+    const supportsPaymentProofUrl = paymentProofColumnRows[0]?.exists === true;
+
+    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; receipt_number: string | null; total_price: string | null; order_status: string; payment_proof_url: string | null }>>`
       INSERT INTO sales_records (
         tenant_id,
         branch_id,
@@ -289,6 +307,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         cashier_name,
         items_json,
         amount_paid
+        ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
       )
       VALUES (
         ${tenantId},
@@ -306,8 +325,10 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         ${'Online Order'},
         ${JSON.stringify(normalizedItems)}::jsonb,
         ${0}
+        ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
       )
       RETURNING id, reference_id, receipt_number, cashier_name, total_price, order_status
+      ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
     `;
 
     const sale = saleRows[0];
@@ -358,6 +379,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       ...sale,
       table_number: tableRows[0]?.table_number ?? null,
       special_note: orderNote || null,
+      payment_proof_url: sale.payment_proof_url ?? paymentProofUrl ?? null,
     };
   });
 
@@ -365,7 +387,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 
   // Keep order-note persistence best-effort and OUTSIDE transaction.
   // In PostgreSQL, a failed statement inside a transaction marks it aborted.
-  if (orderNote.isNotEmpty) {
+  if (orderNote.length > 0) {
     try {
       await prisma.$queryRaw`
         UPDATE sales_records
@@ -389,6 +411,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     orderStatus: result.order_status,
     paymentStatus: 'PENDING_PAYMENT',
     paymentMethod: 'Bayar di Kasir',
+    paymentProofUrl: (result.payment_proof_url ?? '').toString().trim() || null,
+    payment_proof_url: (result.payment_proof_url ?? '').toString().trim() || null,
     customerName: customerName || 'Guest',
     orderNote,
     special_note: orderNote || null,
