@@ -5,6 +5,19 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { serializeForJson } from '../utils/serializeForJson';
 import { emitToTenant } from '../services/socketServer';
+import { AccountingPostingService } from '../services/accountingPostingService';
+import { AuditLogService } from '../services/auditLogService';
+
+const PAYMENT_METHOD_QRIS = 'QRIS';
+const PAYMENT_METHOD_CASHIER = 'CASHIER';
+
+function normalizePaymentMethod(value: unknown): 'QRIS' | 'CASHIER' {
+  const normalized = (value ?? '').toString().trim().toUpperCase();
+  if (normalized === PAYMENT_METHOD_QRIS) {
+    return PAYMENT_METHOD_QRIS;
+  }
+  return PAYMENT_METHOD_CASHIER;
+}
 
 type QrMenuItemRow = {
   id: string;
@@ -209,6 +222,9 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const tableId = parseTableId(req.body.tableId ?? req.body.table_id);
   const branchId = parseOptionalBranchId(req.body.branchId ?? req.body.branch_id);
   const items = parseQrOrderItems(req.body.items);
+  const paymentMethod = normalizePaymentMethod(
+    req.body.paymentMethod ?? req.body.payment_method,
+  );
   const paymentProofUrl = (
     req.body.payment_proof_url ??
     req.body.paymentProofUrl ??
@@ -278,6 +294,15 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 
     const referenceId = `qr_${Date.now()}`;
     const receiptNumber = generateReceiptNumber();
+    const isAutoPaidQris =
+      paymentMethod === PAYMENT_METHOD_QRIS &&
+      paymentProofUrl !== null &&
+      paymentProofUrl.trim().isNotEmpty;
+    const paymentMethodLabel =
+      paymentMethod === PAYMENT_METHOD_QRIS ? 'QRIS' : 'Bayar di Kasir';
+    const paymentStatus = isAutoPaidQris ? 'PAID' : 'PENDING_PAYMENT';
+    const orderStatus = isAutoPaidQris ? 'PREPARING' : 'PENDING';
+    const amountPaid = isAutoPaidQris ? total : 0;
 
     const paymentProofColumnRows = await tx.$queryRaw<Array<{ exists: boolean }>>`
       SELECT EXISTS (
@@ -315,19 +340,19 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         ${tableId},
         ${referenceId},
         ${receiptNumber},
-        ${'Bayar di Kasir'},
-        ${'PENDING_PAYMENT'},
+        ${paymentMethodLabel},
+        ${paymentStatus},
         ${'DINE_IN'}::"OrderType",
-        ${'PENDING'}::"OrderStatus",
+        ${orderStatus}::"OrderStatus",
         ${total},
         ${total},
         ${customerName || 'Guest'},
         ${'Online Order'},
         ${JSON.stringify(normalizedItems)}::jsonb,
-        ${0}
+        ${amountPaid}
         ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
       )
-      RETURNING id, reference_id, receipt_number, cashier_name, total_price, order_status
+      RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status, payment_status
       ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
     `;
 
@@ -396,6 +421,41 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       `;
     } catch (_) {
       // Backward compatible when sales_records.special_note is not available yet.
+    }
+  }
+
+  const isPaidOrder =
+    (result.payment_status ?? '').toString().trim().toUpperCase() === 'PAID';
+  if (isPaidOrder) {
+    try {
+      await AccountingPostingService.postSalesToJournal(
+        result.id.toString(),
+        tenantId,
+      );
+    } catch (postingError) {
+      console.warn(
+        '[publicQrController.createQrOrder] failed posting accounting journal:',
+        postingError instanceof Error ? postingError.message : postingError,
+      );
+    }
+
+    const invoiceNumber =
+      (result.receipt_number ?? result.reference_id ?? result.id)
+        .toString()
+        .trim() || result.id.toString();
+    try {
+      await AuditLogService.createLog({
+        tenantId,
+        userName: 'System',
+        actionType: 'ONLINE_ORDER_AUTO_PAID',
+        details:
+          `[System] Pesanan Online Berhasil Dibuat & Dibayar Otomatis via QRIS - Invoice: ${invoiceNumber}`,
+      });
+    } catch (auditError) {
+      console.warn(
+        '[publicQrController.createQrOrder] failed writing audit log:',
+        auditError instanceof Error ? auditError.message : auditError,
+      );
     }
   }
 

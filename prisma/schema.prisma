@@ -22,6 +22,8 @@ model Tenant {
   bridgeApiUrl        String?           @map("bridge_api_url")
   logoUrl             String?           @map("logo_url")
   qrisImageUrl        String?           @map("qris_image_url")
+  allowPayAtCashier   Boolean           @default(true) @map("allow_pay_at_cashier")
+  enableQrisOcr       Boolean           @default(true) @map("enable_qris_ocr")
   logoObjectKey       String?           @map("logo_object_key")
   showInventoryImages Boolean           @default(true) @map("show_inventory_images")
   businessCategory    BusinessCategory? @map("business_category")

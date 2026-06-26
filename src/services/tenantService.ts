@@ -13,6 +13,8 @@ export class TenantService {
     address?: string;
     logoUrl?: string;
     qrisImageUrl?: string;
+    allowPayAtCashier?: boolean;
+    enableQrisOcr?: boolean;
     adminEmail?: string;
     adminPassword?: string;
     businessCategory?: BusinessCategory;
@@ -39,6 +41,8 @@ export class TenantService {
           businessCategory: data.businessCategory ?? 'GENERAL',
           logoUrl: data.logoUrl,
           qrisImageUrl: data.qrisImageUrl,
+          allowPayAtCashier: data.allowPayAtCashier ?? true,
+          enableQrisOcr: data.enableQrisOcr ?? true,
           isActive: data.isActive ?? true,
           showInventoryImages: data.showInventoryImages ?? true,
           branches: {
@@ -117,6 +121,8 @@ export class TenantService {
           address: true,
           logoUrl: true,
           qrisImageUrl: true,
+          allowPayAtCashier: true,
+          enableQrisOcr: true,
           isActive: true,
           createdAt: true,
           updatedAt: true,

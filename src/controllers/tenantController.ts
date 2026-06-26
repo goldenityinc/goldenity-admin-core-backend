@@ -259,6 +259,12 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(logoUrl !== undefined ? { logoUrl } : {}),
       ...(logoObjectKey !== undefined ? { logoObjectKey } : {}),
       ...(qrisImageUrl !== undefined ? { qrisImageUrl } : {}),
+      ...(typeof bodyParsed.data.allowPayAtCashier === 'boolean'
+        ? { allowPayAtCashier: bodyParsed.data.allowPayAtCashier }
+        : {}),
+      ...(typeof bodyParsed.data.enableQrisOcr === 'boolean'
+        ? { enableQrisOcr: bodyParsed.data.enableQrisOcr }
+        : {}),
       ...(typeof bodyParsed.data.isActive === 'boolean' ? { isActive: bodyParsed.data.isActive } : {}),
       ...(typeof bodyParsed.data.showInventoryImages === 'boolean'
         ? { showInventoryImages: bodyParsed.data.showInventoryImages }

@@ -88,6 +88,8 @@ export const createTenantSchema = z.object({
   qrisImageUrl: optionalTrimmedString().pipe(
     z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional(),
   ),
+  allowPayAtCashier: optionalBooleanInput,
+  enableQrisOcr: optionalBooleanInput,
   adminEmail: optionalTrimmedString().pipe(z.string().email('Invalid admin email').optional()),
   adminPassword: optionalTrimmedString().pipe(
     z.string().min(8, 'Admin password must be at least 8 characters').optional(),
@@ -110,6 +112,8 @@ export const updateTenantSchema = z.object({
   address: z.string().min(5, 'Address must be at least 5 characters').optional().nullable(),
   logoUrl: z.string().url('logoUrl harus berupa URL valid').max(500).optional().nullable(),
   qrisImageUrl: z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional().nullable(),
+  allowPayAtCashier: optionalBooleanInput,
+  enableQrisOcr: optionalBooleanInput,
   isActive: optionalBooleanInput,
   showInventoryImages: optionalBooleanInput,
 });
