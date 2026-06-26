@@ -91,6 +91,60 @@ function getFirstUploadedFile(
   return files?.[fieldName]?.[0];
 }
 
+function parseBooleanLike(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const normalized = (value ?? '').toString().trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function normalizeTenantUpdateBody(rawBody: unknown): Record<string, unknown> {
+  const body = rawBody && typeof rawBody === 'object'
+    ? { ...(rawBody as Record<string, unknown>) }
+    : {};
+
+  const allowPayAtCashier =
+    parseBooleanLike(body.allowPayAtCashier) ??
+    parseBooleanLike(body.allow_pay_at_cashier);
+  if (typeof allowPayAtCashier === 'boolean') {
+    body.allowPayAtCashier = allowPayAtCashier;
+  }
+
+  const paymentProofMandatory =
+    parseBooleanLike(body.isPaymentProofMandatory) ??
+    parseBooleanLike(body.is_payment_proof_mandatory) ??
+    parseBooleanLike(body.enableQrisOcr) ??
+    parseBooleanLike(body.enable_qris_ocr);
+  if (typeof paymentProofMandatory === 'boolean') {
+    body.isPaymentProofMandatory = paymentProofMandatory;
+    body.enableQrisOcr = paymentProofMandatory;
+  }
+
+  const showInventoryImages =
+    parseBooleanLike(body.showInventoryImages) ??
+    parseBooleanLike(body.show_inventory_images);
+  if (typeof showInventoryImages === 'boolean') {
+    body.showInventoryImages = showInventoryImages;
+  }
+
+  const isActive = parseBooleanLike(body.isActive) ?? parseBooleanLike(body.is_active);
+  if (typeof isActive === 'boolean') {
+    body.isActive = isActive;
+  }
+
+  return body;
+}
+
 export const createTenant = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createTenantSchema.safeParse(req.body);
 
@@ -208,7 +262,8 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid tenantId', 400);
   }
 
-  const bodyParsed = updateTenantSchema.safeParse(req.body);
+  const normalizedBody = normalizeTenantUpdateBody(req.body);
+  const bodyParsed = updateTenantSchema.safeParse(normalizedBody);
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid tenant payload', 400);
   }
@@ -262,8 +317,10 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(typeof bodyParsed.data.allowPayAtCashier === 'boolean'
         ? { allowPayAtCashier: bodyParsed.data.allowPayAtCashier }
         : {}),
-      ...(typeof bodyParsed.data.enableQrisOcr === 'boolean'
-        ? { enableQrisOcr: bodyParsed.data.enableQrisOcr }
+      ...(typeof bodyParsed.data.isPaymentProofMandatory === 'boolean'
+        ? { isPaymentProofMandatory: bodyParsed.data.isPaymentProofMandatory }
+        : typeof bodyParsed.data.enableQrisOcr === 'boolean'
+        ? { isPaymentProofMandatory: bodyParsed.data.enableQrisOcr }
         : {}),
       ...(typeof bodyParsed.data.isActive === 'boolean' ? { isActive: bodyParsed.data.isActive } : {}),
       ...(typeof bodyParsed.data.showInventoryImages === 'boolean'

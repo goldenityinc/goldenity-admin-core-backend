@@ -89,6 +89,7 @@ export const createTenantSchema = z.object({
     z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional(),
   ),
   allowPayAtCashier: optionalBooleanInput,
+  isPaymentProofMandatory: optionalBooleanInput,
   enableQrisOcr: optionalBooleanInput,
   adminEmail: optionalTrimmedString().pipe(z.string().email('Invalid admin email').optional()),
   adminPassword: optionalTrimmedString().pipe(
@@ -113,6 +114,7 @@ export const updateTenantSchema = z.object({
   logoUrl: z.string().url('logoUrl harus berupa URL valid').max(500).optional().nullable(),
   qrisImageUrl: z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional().nullable(),
   allowPayAtCashier: optionalBooleanInput,
+  isPaymentProofMandatory: optionalBooleanInput,
   enableQrisOcr: optionalBooleanInput,
   isActive: optionalBooleanInput,
   showInventoryImages: optionalBooleanInput,
