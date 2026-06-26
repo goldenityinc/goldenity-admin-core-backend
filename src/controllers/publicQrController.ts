@@ -315,7 +315,17 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     `;
     const supportsPaymentProofUrl = paymentProofColumnRows[0]?.exists === true;
 
-    const saleRows = await tx.$queryRaw<Array<{ id: bigint; reference_id: string | null; receipt_number: string | null; total_price: string | null; order_status: string; payment_proof_url: string | null }>>`
+    const saleRows = await tx.$queryRaw<Array<{
+      id: bigint;
+      reference_id: string | null;
+      receipt_number: string | null;
+      cashier_name: string | null;
+      total_price: string | null;
+      total_amount: string | null;
+      order_status: string;
+      payment_status: string;
+      payment_proof_url: string | null;
+    }>>`
       INSERT INTO sales_records (
         tenant_id,
         branch_id,
