@@ -27,12 +27,14 @@ const transactionRecordSelect = Prisma.validator<Prisma.sales_recordsSelect>()({
   receipt_number: true,
   cashier_id: true,
   cashier_name: true,
+  cashier_note: true,
   mechanic_id: true,
   mechanic_name: true,
   mechanic_commission: true,
   payment_status: true,
   items_json: true,
   customer_name: true,
+  order_note: true,
   total_discount: true,
   total_tax: true,
   total_profit: true,
@@ -116,7 +118,18 @@ type TransactionRecordResponse = TransactionRecordRow & {
   >;
 };
 
+type TransactionNotesUpdate = {
+  cashier_note?: string | null;
+  order_note?: string | null;
+};
+
 export class TransactionService {
+  private static async ensureSalesRecordNoteColumns() {
+    await prisma.$executeRawUnsafe(`ALTER TABLE sales_records
+      ADD COLUMN IF NOT EXISTS cashier_note TEXT,
+      ADD COLUMN IF NOT EXISTS order_note TEXT`);
+  }
+
   private static async attachTransactionItems(
     tenantId: string,
     records: TransactionRecordRow[],
@@ -189,6 +202,11 @@ export class TransactionService {
       transaction_status: record.order_status,
       is_void: record.order_status === 'CANCELLED',
       isVoid: record.order_status === 'CANCELLED',
+      cashier_note: record.cashier_note ?? null,
+      cashierNote: record.cashier_note ?? null,
+      order_note: record.order_note ?? null,
+      special_note: record.order_note ?? null,
+      specialNote: record.order_note ?? null,
       table_number: record.table?.table_number ?? null,
       items: itemsByTransactionId.get(record.id.toString()) ?? [],
     }));
@@ -264,6 +282,8 @@ export class TransactionService {
     const safeLimit = Math.min(Math.max(1, limit), 200);
     const skip = (safePage - 1) * safeLimit;
 
+    await this.ensureSalesRecordNoteColumns();
+
     if (requireScopedBranch && branchId === null) {
       throw new AppError(
         'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
@@ -329,6 +349,8 @@ export class TransactionService {
       );
     }
 
+    await this.ensureSalesRecordNoteColumns();
+
     const record = await prisma.sales_records.findFirst({
       where: {
         id,
@@ -349,6 +371,49 @@ export class TransactionService {
     );
 
     return recordWithItems ?? null;
+  }
+
+  static async updateTransactionNotes(
+    tenantId: string,
+    id: bigint,
+    branchId: bigint | null,
+    notes: TransactionNotesUpdate,
+    requireScopedBranch = false,
+  ) {
+    if (requireScopedBranch && branchId === null) {
+      throw new AppError(
+        'Akses ditolak: konteks cabang wajib tersedia untuk akun ini',
+        403,
+      );
+    }
+
+    await this.ensureSalesRecordNoteColumns();
+
+    const data: Prisma.sales_recordsUpdateManyMutationInput = {
+      updated_at: new Date(),
+    };
+
+    if (Object.prototype.hasOwnProperty.call(notes, 'cashier_note')) {
+      data.cashier_note = notes.cashier_note ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(notes, 'order_note')) {
+      data.order_note = notes.order_note ?? null;
+    }
+
+    const updated = await prisma.sales_records.updateMany({
+      where: {
+        id,
+        tenant_id: tenantId,
+        ...(branchId !== null ? { branch_id: branchId } : {}),
+      },
+      data,
+    });
+
+    if (updated.count !== 1) {
+      return null;
+    }
+
+    return this.getTransactionById(tenantId, id, branchId, requireScopedBranch);
   }
 
   /**

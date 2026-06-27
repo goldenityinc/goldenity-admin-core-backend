@@ -449,12 +449,14 @@ model sales_records {
   receipt_number          String?
   cashier_id              String?
   cashier_name            String?
+  cashier_note            String?     @db.Text
   mechanic_id             String?
   mechanic_name           String?
   mechanic_commission     Decimal?    @default(0) @db.Decimal(14, 2)
   payment_status          String?
   items_json              Json?
   customer_name           String?
+  order_note              String?     @db.Text
   total_discount          BigInt?
   total_tax               BigInt?
   total_profit            BigInt?

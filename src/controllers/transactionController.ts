@@ -102,6 +102,19 @@ function parseOptionalEnum<T extends string>(
   return normalizedValue;
 }
 
+function readOptionalTextField(body: Request['body'], keys: string[]): string | undefined {
+  for (const key of keys) {
+    if (!body || !Object.prototype.hasOwnProperty.call(body, key)) {
+      continue;
+    }
+
+    const normalized = (body[key] ?? '').toString().trim();
+    return normalized || '';
+  }
+
+  return undefined;
+}
+
 /**
  * GET /api/v1/transactions
  *
@@ -171,6 +184,59 @@ export const getTransaction = asyncHandler(async (req: Request, res: Response) =
 
   return res.status(200).json({
     success: true,
+    data: serializeForJson(record),
+  });
+});
+
+export const updateTransactionNotes = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const branchId = resolveTransactionBranchFilter(req);
+  const role = normalizeRole(req.user?.role);
+
+  const rawId = req.params.id;
+  if (!rawId || !/^\d+$/.test(rawId)) {
+    throw new AppError('ID transaksi tidak valid', 400);
+  }
+
+  const cashierNote = readOptionalTextField(req.body, [
+    'cashier_note',
+    'cashierNote',
+    'table_note',
+    'tableNote',
+    'session_note',
+    'sessionNote',
+  ]);
+  const orderNote = readOptionalTextField(req.body, [
+    'order_note',
+    'orderNote',
+    'special_note',
+    'specialNote',
+    'notes',
+    'note',
+  ]);
+
+  if (cashierNote === undefined && orderNote === undefined) {
+    throw new AppError('Payload note transaksi tidak valid', 400);
+  }
+
+  const record = await TransactionService.updateTransactionNotes(
+    tenantId,
+    BigInt(rawId),
+    branchId,
+    {
+      ...(cashierNote !== undefined ? { cashier_note: cashierNote || null } : {}),
+      ...(orderNote !== undefined ? { order_note: orderNote || null } : {}),
+    },
+    role === 'CASHIER' || role === 'CRM_STAFF',
+  );
+
+  if (!record) {
+    throw new AppError('Transaksi tidak ditemukan', 404);
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Catatan transaksi berhasil diperbarui.',
     data: serializeForJson(record),
   });
 });
