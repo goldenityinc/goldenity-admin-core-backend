@@ -108,6 +108,17 @@ function parseBooleanLike(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function parseOptionalBranchId(value: unknown): bigint | null {
+  const raw = (value ?? '').toString().trim();
+  if (!raw) {
+    return null;
+  }
+  if (!/^\d+$/.test(raw)) {
+    throw new AppError('branch_id harus berupa angka', 400);
+  }
+  return BigInt(raw);
+}
+
 function normalizeTenantUpdateBody(rawBody: unknown): Record<string, unknown> {
   const body = rawBody && typeof rawBody === 'object'
     ? { ...(rawBody as Record<string, unknown>) }
@@ -273,6 +284,22 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
 
   const uploadedLogo = getFirstUploadedFile(req, 'logo');
   const uploadedQris = getFirstUploadedFile(req, 'qris');
+  const requestedBranchId = parseOptionalBranchId(
+    req.body?.branch_id ?? req.body?.branchId ?? req.query?.branch_id ?? req.query?.branchId,
+  );
+
+  const targetBranch = requestedBranchId
+    ? await prisma.branch.findFirst({
+        where: {
+          id: requestedBranchId,
+          tenantId: existing.id,
+        },
+      })
+    : null;
+
+  if (requestedBranchId && !targetBranch) {
+    throw new AppError('Branch tidak ditemukan untuk tenant ini', 404);
+  }
 
   let logoUrl = bodyParsed.data.logoUrl;
   let qrisImageUrl = bodyParsed.data.qrisImageUrl;
@@ -296,9 +323,19 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       throw new AppError('Format QRIS tidak didukung (png/jpg/webp/svg)', 400);
     }
 
-    const key = `tenants/${existing.id}/qris-${Date.now()}.${ext}`;
+    const qrisPrefix = targetBranch
+      ? `tenants/${existing.id}/branches/${targetBranch.id.toString()}`
+      : `tenants/${existing.id}`;
+    const key = `${qrisPrefix}/qris.${ext}`;
     const uploaded = await uploadToS3(uploadedQris.buffer, key, uploadedQris.mimetype);
     qrisImageUrl = uploaded.url;
+  }
+
+  if (targetBranch && qrisImageUrl !== undefined) {
+    await prisma.branch.update({
+      where: { id: targetBranch.id },
+      data: { qrisImageUrl },
+    });
   }
 
   const updated = await prisma.tenant.update({
@@ -313,7 +350,7 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(bodyParsed.data.address !== undefined ? { address: bodyParsed.data.address } : {}),
       ...(logoUrl !== undefined ? { logoUrl } : {}),
       ...(logoObjectKey !== undefined ? { logoObjectKey } : {}),
-      ...(qrisImageUrl !== undefined ? { qrisImageUrl } : {}),
+      ...(!targetBranch && qrisImageUrl !== undefined ? { qrisImageUrl } : {}),
       ...(typeof bodyParsed.data.allowPayAtCashier === 'boolean'
         ? { allowPayAtCashier: bodyParsed.data.allowPayAtCashier }
         : {}),

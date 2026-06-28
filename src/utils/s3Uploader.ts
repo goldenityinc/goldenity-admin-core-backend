@@ -1,4 +1,6 @@
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 type S3UploadResult = {
   key: string;
@@ -103,15 +105,29 @@ function buildProxyUrl(key: string): string {
   return `/images/${encodedKey}`;
 }
 
+function buildUniqueObjectKey(fileName: string): string {
+  const normalized = fileName.replace(/^\/+/, '').trim();
+  if (!normalized) {
+    throw new Error('Nama file upload tidak valid');
+  }
+
+  const directory = path.posix.dirname(normalized);
+  const baseName = path.posix.basename(normalized);
+  const uniqueBaseName = `${Date.now()}-${randomUUID()}-${baseName}`;
+
+  if (!directory || directory === '.') {
+    return uniqueBaseName;
+  }
+
+  return `${directory}/${uniqueBaseName}`;
+}
+
 export async function uploadToS3(
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
 ): Promise<S3UploadResult> {
-  const key = fileName.replace(/^\/+/, '').trim();
-  if (!key) {
-    throw new Error('Nama file upload tidak valid');
-  }
+  const key = buildUniqueObjectKey(fileName);
 
   const client = createS3Client();
   const cfg = getS3Config();

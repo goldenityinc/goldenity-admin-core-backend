@@ -59,6 +59,7 @@ model Branch {
   branchCode          String?         @unique @map("branch_code")
   address             String?
   phone               String?
+  qrisImageUrl        String?         @map("qris_image_url")
   isActive            Boolean         @default(true) @map("is_active")
   isMainBranch        Boolean         @default(false) @map("is_main_branch")
   isBlindCloseEnabled Boolean         @default(true) @map("is_blind_close_enabled")

@@ -163,6 +163,69 @@ export class AccountingReportService {
       startDate,
       endDate,
     );
+    await AccountingPostingService.ensureKasbonPaymentsPostedForDateRange(
+      tenantId,
+      startDate,
+      endDate,
+    );
+  }
+
+  private static async ensureEssentialAssetAccounts(
+    tenantId: string,
+    assetAccounts: ReportAccountLine[],
+  ): Promise<ReportAccountLine[]> {
+    const requiredAssetAccounts = await prisma.chartOfAccount.findMany({
+      where: {
+        tenantId,
+        isActive: true,
+        category: {
+          code: AccountCategoryType.ASSET,
+        },
+        OR: [
+          { code: '1110' },
+          { code: '1120' },
+          {
+            name: {
+              contains: 'piutang',
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        normalBalance: true,
+      },
+      orderBy: [{ code: 'asc' }, { name: 'asc' }],
+    });
+
+    if (requiredAssetAccounts.length === 0) {
+      return assetAccounts;
+    }
+
+    const existingIds = new Set(assetAccounts.map((line) => line.accountId));
+    const ensured = [...assetAccounts];
+
+    for (const account of requiredAssetAccounts) {
+      if (existingIds.has(account.id)) {
+        continue;
+      }
+
+      ensured.push({
+        accountId: account.id,
+        code: account.code,
+        name: account.name,
+        category: AccountCategoryType.ASSET,
+        normalBalance: account.normalBalance,
+        totalDebit: 0,
+        totalCredit: 0,
+        balance: 0,
+      });
+    }
+
+    return sortAccounts(ensured);
   }
 
   private static async loadAccountBalances(
@@ -348,8 +411,11 @@ export class AccountingReportService {
       branchId,
     );
 
-    const assetAccounts = this.mapReportLines(
+    const assetAccounts = await this.ensureEssentialAssetAccounts(
+      tenantId,
+      this.mapReportLines(
       rows.filter((row) => row.category === AccountCategoryType.ASSET),
+      ),
     );
     const liabilityAccounts = this.mapReportLines(
       rows.filter((row) => row.category === AccountCategoryType.LIABILITY),

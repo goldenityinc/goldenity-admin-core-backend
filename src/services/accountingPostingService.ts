@@ -7,6 +7,7 @@ import {
 import prisma from '../config/database';
 
 type SettlementAccountKind = 'cash' | 'bank';
+type SalesSettlementKind = 'cash' | 'receivable';
 
 type JournalLineDraft = {
   chartOfAccountId: string;
@@ -60,6 +61,26 @@ const SALES_FINAL_STATUSES = new Set([
   'success',
 ]);
 
+const KASBON_PAYMENT_KEYWORDS = [
+  'kasbon',
+  'piutang',
+  'hutang',
+  'utang',
+  'credit',
+  'kredit',
+  'tempo',
+];
+
+const KASBON_UNPAID_STATUSES = new Set([
+  'kasbon',
+  'belum lunas',
+  'unpaid',
+  'pending',
+  'pending_payment',
+  'partial',
+  'partially_paid',
+]);
+
 const EXPENSE_BLOCKED_STATUSES = new Set([
   'void',
   'voided',
@@ -111,10 +132,11 @@ export class AccountingPostingService {
         );
       }
 
-      const settlementAccount = await this.resolveSettlementAccount(
+      const settlementKind = this.inferSalesSettlementKind(sale);
+      const settlementAccount = await this.resolveSalesSettlementAccount(
         tx,
         tenantId,
-        sale.payment_method,
+        settlementKind,
       );
       const revenueAccount = await this.resolveAccount(tx, {
         tenantId,
@@ -129,7 +151,10 @@ export class AccountingPostingService {
       const lines: JournalLineDraft[] = [
         {
           chartOfAccountId: settlementAccount.id,
-          description: `Penerimaan ${this.describeSettlementAccountKind(sale.payment_method)}`,
+          description:
+            settlementKind === 'receivable'
+              ? 'Pengakuan piutang penjualan kasbon'
+              : `Penerimaan ${this.describeSalesSettlementKind(settlementKind)}`,
           debit: settlementAmount,
           credit: this.ZERO,
         },
@@ -396,6 +421,151 @@ export class AccountingPostingService {
     }
   }
 
+  static async postKasbonPaymentToJournal(paymentHistoryId: string, tenantId: string) {
+    const kasbonPaymentId = this.parseBigIntId(paymentHistoryId, 'paymentHistoryId');
+
+    return prisma.$transaction(async (tx) => {
+      const referenceId = `KASBON_PAYMENT:${paymentHistoryId}`;
+      const existingEntry = await this.findExistingEntry(
+        tx,
+        tenantId,
+        JournalEntrySourceType.ADJUSTMENT,
+        referenceId,
+      );
+      if (existingEntry) {
+        return existingEntry;
+      }
+
+      const payment = await tx.kas_bon_payment_history.findFirst({
+        where: {
+          id: kasbonPaymentId,
+          tenant_id: tenantId,
+        },
+      });
+
+      if (!payment) {
+        throw new Error(
+          `Kasbon payment ${paymentHistoryId} tidak ditemukan untuk tenant ${tenantId}.`,
+        );
+      }
+
+      const paidAmount = this.toDecimal(payment.paid_amount);
+      if (!paidAmount.gt(this.ZERO)) {
+        throw new Error(`Kasbon payment ${paymentHistoryId} memiliki nominal tidak valid.`);
+      }
+
+      const [cashAccount, receivableAccount, salesRecord] = await Promise.all([
+        this.resolveCashOnHandAccount(tx, tenantId),
+        this.resolveReceivableAccount(tx, tenantId),
+        tx.sales_records.findFirst({
+          where: {
+            id: payment.sales_record_id,
+            tenant_id: tenantId,
+          },
+          select: {
+            receipt_number: true,
+            reference_id: true,
+          },
+        }),
+      ]);
+
+      const lines: JournalLineDraft[] = [
+        {
+          chartOfAccountId: cashAccount.id,
+          description: 'Penerimaan kas pelunasan kasbon',
+          debit: paidAmount,
+          credit: this.ZERO,
+        },
+        {
+          chartOfAccountId: receivableAccount.id,
+          description: 'Pengurangan piutang usaha kasbon',
+          debit: this.ZERO,
+          credit: paidAmount,
+        },
+      ];
+
+      const totals = this.calculateTotals(lines);
+      this.assertBalanced(totals.totalDebit, totals.totalCredit, paymentHistoryId);
+
+      const entryNumber = await this.generateEntryNumber(tx, tenantId, 'KBP');
+      const entry = await tx.journalEntry.create({
+        data: {
+          tenantId,
+          entryNumber,
+          entryDate: payment.paid_at ?? payment.created_at ?? new Date(),
+          sourceType: JournalEntrySourceType.ADJUSTMENT,
+          referenceId,
+          referenceNumber:
+            salesRecord?.receipt_number ??
+            salesRecord?.reference_id ??
+            `KASBON-${payment.sales_record_id.toString()}-${payment.id.toString()}`,
+          description: `Pelunasan kasbon #${payment.id.toString()}`,
+          totalDebit: totals.totalDebit,
+          totalCredit: totals.totalCredit,
+          isPosted: true,
+          postedAt: new Date(),
+        },
+      });
+
+      await tx.journalLine.createMany({
+        data: lines.map((line, index) => ({
+          journalEntryId: entry.id,
+          chartOfAccountId: line.chartOfAccountId,
+          lineNumber: index + 1,
+          description: line.description,
+          debit: line.debit,
+          credit: line.credit,
+        })),
+      });
+
+      return this.loadJournalEntry(tx, entry.id);
+    });
+  }
+
+  static async ensureKasbonPaymentsPostedForDateRange(
+    tenantId: string,
+    startDate: Date | null,
+    endDate: Date,
+  ) {
+    const payments = await prisma.kas_bon_payment_history.findMany({
+      where: {
+        tenant_id: tenantId,
+        OR: [
+          {
+            paid_at: {
+              ...(startDate ? { gte: startDate } : {}),
+              lte: endDate,
+            },
+          },
+          {
+            paid_at: null,
+            created_at: {
+              ...(startDate ? { gte: startDate } : {}),
+              lte: endDate,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+      },
+      orderBy: {
+        created_at: 'asc',
+      },
+    });
+
+    for (const payment of payments) {
+      try {
+        await this.postKasbonPaymentToJournal(payment.id.toString(), tenantId);
+      } catch (error) {
+        if (this.isIgnorableKasbonPostingError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   private static async findExistingEntry(
     tx: Prisma.TransactionClient,
     tenantId: string,
@@ -510,9 +680,9 @@ export class AccountingPostingService {
         tenantId,
         categoryCode: AccountCategoryType.ASSET,
         preferredNames: ['bank', 'kas bank', 'rekening', 'giro'],
-        preferredCodes: ['1120', 'BANK', 'BANK-OPERASIONAL'],
+        preferredCodes: ['1130', 'BANK', 'BANK-OPERASIONAL'],
         fallbackName: 'Bank Operasional',
-        fallbackCode: '1120',
+        fallbackCode: '1130',
         normalBalance: AccountNormalBalance.DEBIT,
       });
     }
@@ -534,6 +704,48 @@ export class AccountingPostingService {
     notes: string | null,
   ) {
     return this.resolveSettlementAccount(tx, tenantId, notes);
+  }
+
+  private static async resolveSalesSettlementAccount(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    settlementKind: SalesSettlementKind,
+  ) {
+    if (settlementKind === 'receivable') {
+      return this.resolveReceivableAccount(tx, tenantId);
+    }
+
+    return this.resolveCashOnHandAccount(tx, tenantId);
+  }
+
+  private static async resolveCashOnHandAccount(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ) {
+    return this.resolveAccount(tx, {
+      tenantId,
+      categoryCode: AccountCategoryType.ASSET,
+      preferredNames: ['kas', 'cash', 'petty cash'],
+      preferredCodes: ['1110', '1101', 'CASH', 'PETTY-CASH'],
+      fallbackName: 'Kas',
+      fallbackCode: '1110',
+      normalBalance: AccountNormalBalance.DEBIT,
+    });
+  }
+
+  private static async resolveReceivableAccount(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+  ) {
+    return this.resolveAccount(tx, {
+      tenantId,
+      categoryCode: AccountCategoryType.ASSET,
+      preferredNames: ['piutang usaha', 'piutang dagang', 'accounts receivable'],
+      preferredCodes: ['1120', '1201', 'AR', 'PIUTANG'],
+      fallbackName: 'Piutang Usaha',
+      fallbackCode: '1120',
+      normalBalance: AccountNormalBalance.DEBIT,
+    });
   }
 
   private static async resolveAccount(
@@ -717,8 +929,47 @@ export class AccountingPostingService {
     return 'cash';
   }
 
-  private static describeSettlementAccountKind(paymentMethod: string | null) {
-    return this.inferSettlementKind(paymentMethod) === 'bank' ? 'bank' : 'kas';
+  private static inferSalesSettlementKind(sale: {
+    payment_method: string | null;
+    payment_status: string | null;
+    remaining_balance: Prisma.Decimal | null;
+    outstanding_balance: Prisma.Decimal | null;
+  }): SalesSettlementKind {
+    const hasOutstanding = this.toDecimal(sale.remaining_balance)
+      .plus(this.toDecimal(sale.outstanding_balance))
+      .gt(this.ZERO);
+
+    if (hasOutstanding) {
+      return 'receivable';
+    }
+
+    if (this.isKasbonLikePayment(sale.payment_method, sale.payment_status)) {
+      return 'receivable';
+    }
+
+    return 'cash';
+  }
+
+  private static isKasbonLikePayment(
+    paymentMethod: string | null,
+    paymentStatus: string | null,
+  ): boolean {
+    const normalizedMethod = this.normalizeText(paymentMethod);
+    const normalizedStatus = this.normalizeText(paymentStatus);
+
+    if (normalizedMethod && KASBON_PAYMENT_KEYWORDS.some((word) => normalizedMethod.includes(word))) {
+      return true;
+    }
+
+    if (normalizedStatus && KASBON_UNPAID_STATUSES.has(normalizedStatus)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private static describeSalesSettlementKind(settlementKind: SalesSettlementKind) {
+    return settlementKind === 'receivable' ? 'piutang usaha' : 'kas';
   }
 
   private static isIgnorableSalesPostingError(error: unknown) {
@@ -746,6 +997,15 @@ export class AccountingPostingService {
       message.includes('tidak boleh diposting') ||
       message.includes('nominal tidak valid')
     );
+  }
+
+  private static isIgnorableKasbonPostingError(error: unknown) {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+    return message.includes('memiliki nominal tidak valid');
   }
 
   private static normalizeText(value: string | null | undefined) {

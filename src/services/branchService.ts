@@ -37,6 +37,7 @@ type BranchPayload = {
   branchCode?: string | null;
   address?: string | null;
   phone?: string | null;
+  qrisImageUrl?: string | null;
   isActive?: boolean;
   isMainBranch?: boolean;
   isBlindCloseEnabled?: boolean;
@@ -47,6 +48,7 @@ type UpdateBranchPayload = {
   branchCode?: string | null;
   address?: string | null;
   phone?: string | null;
+  qrisImageUrl?: string | null;
   isActive?: boolean;
   isMainBranch?: boolean;
   isBlindCloseEnabled?: boolean;
@@ -59,6 +61,7 @@ type BranchRow = {
   branchCode: string | null;
   address: string | null;
   phone: string | null;
+  qrisImageUrl: string | null;
   isActive: boolean;
   isMainBranch: boolean;
   isBlindCloseEnabled: boolean;
@@ -80,6 +83,7 @@ export class BranchService {
           "branch_code",
           "address",
           "phone",
+          "qris_image_url",
           "is_active",
           "is_main_branch",
           "is_blind_close_enabled"
@@ -90,6 +94,7 @@ export class BranchService {
           ${payload.branchCode ?? null},
           ${payload.address ?? null},
           ${payload.phone ?? null},
+          ${payload.qrisImageUrl ?? null},
           ${payload.isActive ?? true},
           ${payload.isMainBranch ?? false},
           ${payload.isBlindCloseEnabled ?? true}
@@ -101,6 +106,7 @@ export class BranchService {
           "branch_code" AS "branchCode",
           "address",
           "phone",
+          "qris_image_url" AS "qrisImageUrl",
           "is_active" AS "isActive",
           "is_main_branch" AS "isMainBranch",
           "is_blind_close_enabled" AS "isBlindCloseEnabled",
@@ -123,6 +129,7 @@ export class BranchService {
         "branch_code" AS "branchCode",
         "address",
         "phone",
+        "qris_image_url" AS "qrisImageUrl",
         "is_active" AS "isActive",
         "is_main_branch" AS "isMainBranch",
         "is_blind_close_enabled" AS "isBlindCloseEnabled",
@@ -143,6 +150,7 @@ export class BranchService {
         "branch_code" AS "branchCode",
         "address",
         "phone",
+        "qris_image_url" AS "qrisImageUrl",
         "is_active" AS "isActive",
         "is_main_branch" AS "isMainBranch",
         "is_blind_close_enabled" AS "isBlindCloseEnabled",
@@ -172,6 +180,7 @@ export class BranchService {
           "branch_code" = ${payload.branchCode !== undefined ? payload.branchCode : existing.branchCode},
           "address" = ${payload.address !== undefined ? payload.address : existing.address},
           "phone" = ${payload.phone !== undefined ? payload.phone : existing.phone},
+          "qris_image_url" = ${payload.qrisImageUrl !== undefined ? payload.qrisImageUrl : existing.qrisImageUrl},
           "is_active" = ${payload.isActive ?? existing.isActive},
           "is_main_branch" = ${payload.isMainBranch ?? existing.isMainBranch},
           "is_blind_close_enabled" = ${payload.isBlindCloseEnabled ?? existing.isBlindCloseEnabled},
@@ -184,6 +193,7 @@ export class BranchService {
           "branch_code" AS "branchCode",
           "address",
           "phone",
+          "qris_image_url" AS "qrisImageUrl",
           "is_active" AS "isActive",
           "is_main_branch" AS "isMainBranch",
           "is_blind_close_enabled" AS "isBlindCloseEnabled",

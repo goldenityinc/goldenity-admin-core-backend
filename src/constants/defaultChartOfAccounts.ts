@@ -12,15 +12,15 @@ export type DefaultChartOfAccountEntry = {
 
 export const DEFAULT_CHART_OF_ACCOUNTS: DefaultChartOfAccountEntry[] = [
   {
-    code: '1101',
-    name: 'Kas Besar',
+    code: '1110',
+    name: 'Kas',
     category: 'ASSET',
     normalBalance: 'DEBIT',
-    description: 'Kas tunai utama operasional perusahaan.',
+    description: 'Kas tunai operasional perusahaan.',
     isSystem: true,
   },
   {
-    code: '1102',
+    code: '1130',
     name: 'Bank',
     category: 'ASSET',
     normalBalance: 'DEBIT',
@@ -28,7 +28,7 @@ export const DEFAULT_CHART_OF_ACCOUNTS: DefaultChartOfAccountEntry[] = [
     isSystem: true,
   },
   {
-    code: '1201',
+    code: '1120',
     name: 'Piutang Usaha',
     category: 'ASSET',
     normalBalance: 'DEBIT',
