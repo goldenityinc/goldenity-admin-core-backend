@@ -1,10 +1,17 @@
 import {
   AccountCategoryType,
   AccountNormalBalance,
+  JournalEntrySourceType,
   Prisma,
 } from '@prisma/client';
 import prisma from '../config/database';
 import AccountingPostingService from './accountingPostingService';
+
+type LegacyBranchReferenceIds = {
+  salesReferenceIds: string[];
+  expenseReferenceIds: string[];
+  kasbonAdjustmentReferenceIds: string[];
+};
 
 type AccountBalanceRow = {
   accountId: string;
@@ -227,6 +234,86 @@ export class AccountingReportService {
     return sortAccounts(ensured);
   }
 
+  private static async isSingleActiveBranchTenant(tenantId: string): Promise<boolean> {
+    const activeBranchCount = await prisma.branch.count({
+      where: {
+        tenantId,
+        isActive: true,
+      },
+    });
+
+    return activeBranchCount <= 1;
+  }
+
+  private static async loadLegacyBranchReferenceIds(
+    tenantId: string,
+    startDate: Date | null,
+    endDate: Date,
+    branchId: bigint,
+  ): Promise<LegacyBranchReferenceIds> {
+    const includeUnassignedExpenses = await this.isSingleActiveBranchTenant(tenantId);
+
+    const [salesRecords, expenseRecords] = await Promise.all([
+      prisma.sales_records.findMany({
+        where: {
+          tenant_id: tenantId,
+          branch_id: branchId,
+          created_at: {
+            ...(startDate ? { gte: startDate } : {}),
+            lte: endDate,
+          },
+        },
+        select: {
+          id: true,
+        },
+      }),
+      prisma.expenses.findMany({
+        where: {
+          tenant_id: tenantId,
+          created_at: {
+            ...(startDate ? { gte: startDate } : {}),
+            lte: endDate,
+          },
+          ...(includeUnassignedExpenses
+            ? {
+                OR: [{ branchId }, { branchId: null }],
+              }
+            : { branchId }),
+        },
+        select: {
+          id: true,
+        },
+      }),
+    ]);
+
+    const salesRecordIds = salesRecords.map((record) => record.id);
+    const kasbonPayments = salesRecordIds.length
+      ? await prisma.kas_bon_payment_history.findMany({
+          where: {
+            tenant_id: tenantId,
+            sales_record_id: {
+              in: salesRecordIds,
+            },
+            paid_at: {
+              ...(startDate ? { gte: startDate } : {}),
+              lte: endDate,
+            },
+          },
+          select: {
+            id: true,
+          },
+        })
+      : [];
+
+    return {
+      salesReferenceIds: salesRecords.map((record) => record.id.toString()),
+      expenseReferenceIds: expenseRecords.map((record) => record.id.toString()),
+      kasbonAdjustmentReferenceIds: kasbonPayments.map(
+        (payment) => `KASBON_PAYMENT:${payment.id.toString()}`,
+      ),
+    };
+  }
+
   private static async loadAccountBalances(
     tenantId: string,
     startDate: Date | null,
@@ -234,17 +321,68 @@ export class AccountingReportService {
     categories: AccountCategoryType[],
     branchId: bigint | null,
   ): Promise<AccountBalanceRow[]> {
+    const legacyReferenceIds =
+      branchId !== null
+        ? await this.loadLegacyBranchReferenceIds(
+            tenantId,
+            startDate,
+            endDate,
+            branchId,
+          )
+        : null;
+
+    const journalEntryWhere: Prisma.JournalEntryWhereInput = {
+      tenantId,
+      isPosted: true,
+      entryDate: {
+        ...(startDate ? { gte: startDate } : {}),
+        lte: endDate,
+      },
+      ...(branchId !== null
+        ? {
+            OR: [
+              { branchId },
+              ...(legacyReferenceIds?.salesReferenceIds.length
+                ? [
+                    {
+                      branchId: null,
+                      sourceType: JournalEntrySourceType.POS_SALE,
+                      referenceId: {
+                        in: legacyReferenceIds.salesReferenceIds,
+                      },
+                    },
+                  ]
+                : []),
+              ...(legacyReferenceIds?.expenseReferenceIds.length
+                ? [
+                    {
+                      branchId: null,
+                      sourceType: JournalEntrySourceType.EXPENSE,
+                      referenceId: {
+                        in: legacyReferenceIds.expenseReferenceIds,
+                      },
+                    },
+                  ]
+                : []),
+              ...(legacyReferenceIds?.kasbonAdjustmentReferenceIds.length
+                ? [
+                    {
+                      branchId: null,
+                      sourceType: JournalEntrySourceType.ADJUSTMENT,
+                      referenceId: {
+                        in: legacyReferenceIds.kasbonAdjustmentReferenceIds,
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          }
+        : {}),
+    };
+
     const lines = await prisma.journalLine.findMany({
       where: {
-        journalEntry: {
-          tenantId,
-          isPosted: true,
-          entryDate: {
-            ...(startDate ? { gte: startDate } : {}),
-            lte: endDate,
-          },
-          ...(branchId !== null ? { branchId } : {}),
-        },
+        journalEntry: journalEntryWhere,
         account: {
           category: {
             code: {
