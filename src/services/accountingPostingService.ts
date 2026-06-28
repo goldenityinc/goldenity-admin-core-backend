@@ -16,6 +16,18 @@ type JournalLineDraft = {
   credit: Prisma.Decimal;
 };
 
+type JournalEntryDraft = {
+  branchId: bigint | null;
+  entryDate: Date;
+  sourceType: JournalEntrySourceType;
+  referenceId: string;
+  referenceNumber: string;
+  description: string;
+  totalDebit: Prisma.Decimal;
+  totalCredit: Prisma.Decimal;
+  lines: JournalLineDraft[];
+};
+
 type AccountResolverOptions = {
   tenantId: string;
   categoryCode: AccountCategoryType;
@@ -96,16 +108,6 @@ export class AccountingPostingService {
     const salesRecordId = this.parseBigIntId(salesTransactionId, 'salesTransactionId');
 
     return prisma.$transaction(async (tx) => {
-      const existingEntry = await this.findExistingEntry(
-        tx,
-        tenantId,
-        JournalEntrySourceType.POS_SALE,
-        salesTransactionId,
-      );
-      if (existingEntry) {
-        return existingEntry;
-      }
-
       const sale = await tx.sales_records.findFirst({
         where: {
           id: salesRecordId,
@@ -119,128 +121,81 @@ export class AccountingPostingService {
         );
       }
 
-      this.assertSalesEligibleForPosting(sale);
+      const hasKasbonPayments =
+        (await tx.kas_bon_payment_history.count({
+          where: {
+            tenant_id: tenantId,
+            sales_record_id: salesRecordId,
+          },
+        })) > 0;
 
-      const settlementAmount = this.resolveSalesSettlementAmount(sale);
-      const discountAmount = this.toDecimal(sale.total_discount);
-      const taxAmount = this.toDecimal(sale.total_tax);
-      const revenueAmount = settlementAmount.plus(discountAmount).minus(taxAmount);
-
-      if (!revenueAmount.gt(this.ZERO)) {
-        throw new Error(
-          `Sales transaction ${salesTransactionId} menghasilkan nilai pendapatan tidak valid.`,
-        );
-      }
-
-      const settlementKind = this.inferSalesSettlementKind(sale);
-      const settlementAccount = await this.resolveSalesSettlementAccount(
+      const draft = await this.buildSalesJournalDraft(
         tx,
         tenantId,
-        settlementKind,
+        salesTransactionId,
+        sale,
+        hasKasbonPayments,
       );
-      const revenueAccount = await this.resolveAccount(tx, {
+
+      const existingEntry = await this.findExistingSalesEntry(
+        tx,
         tenantId,
-        categoryCode: AccountCategoryType.REVENUE,
-        preferredNames: ['pendapatan penjualan', 'sales revenue', 'penjualan'],
-        preferredCodes: ['4100', '4110', 'SALES', 'REV-SALES'],
-        fallbackName: 'Pendapatan Penjualan',
-        fallbackCode: '4110',
-        normalBalance: AccountNormalBalance.CREDIT,
-      });
-
-      const lines: JournalLineDraft[] = [
-        {
-          chartOfAccountId: settlementAccount.id,
-          description:
-            settlementKind === 'receivable'
-              ? 'Pengakuan piutang penjualan kasbon'
-              : `Penerimaan ${this.describeSalesSettlementKind(settlementKind)}`,
-          debit: settlementAmount,
-          credit: this.ZERO,
-        },
-        {
-          chartOfAccountId: revenueAccount.id,
-          description: 'Pengakuan pendapatan penjualan',
-          debit: this.ZERO,
-          credit: revenueAmount,
-        },
-      ];
-
-      if (discountAmount.gt(this.ZERO)) {
-        const discountAccount = await this.resolveAccount(tx, {
-          tenantId,
-          categoryCode: AccountCategoryType.EXPENSE,
-          preferredNames: ['diskon penjualan', 'sales discount', 'discount allowed'],
-          preferredCodes: ['5120', 'DISC-SALES', 'DISC'],
-          fallbackName: 'Diskon Penjualan',
-          fallbackCode: '5120',
-          normalBalance: AccountNormalBalance.DEBIT,
-        });
-
-        lines.push({
-          chartOfAccountId: discountAccount.id,
-          description: 'Diskon penjualan',
-          debit: discountAmount,
-          credit: this.ZERO,
-        });
+        salesTransactionId,
+        draft.referenceNumber,
+      );
+      if (existingEntry) {
+        return this.syncJournalEntry(tx, existingEntry.id, draft);
       }
 
-      if (taxAmount.gt(this.ZERO)) {
-        const taxAccount = await this.resolveAccount(tx, {
-          tenantId,
-          categoryCode: AccountCategoryType.LIABILITY,
-          preferredNames: ['utang ppn', 'ppn keluaran', 'tax payable', 'vat payable'],
-          preferredCodes: ['2110', 'TAX-OUT', 'VAT-PAY'],
-          fallbackName: 'Utang PPN',
-          fallbackCode: '2110',
-          normalBalance: AccountNormalBalance.CREDIT,
-        });
-
-        lines.push({
-          chartOfAccountId: taxAccount.id,
-          description: 'PPN keluaran',
-          debit: this.ZERO,
-          credit: taxAmount,
-        });
-      }
-
-      const totals = this.calculateTotals(lines);
-      this.assertBalanced(totals.totalDebit, totals.totalCredit, salesTransactionId);
-
-      const entryNumber = await this.generateEntryNumber(tx, tenantId, 'POS');
-      const entry = await tx.journalEntry.create({
-        data: {
-          tenantId,
-           branchId: sale.branch_id ?? null,
-          entryNumber,
-          entryDate: sale.created_at ?? new Date(),
-          sourceType: JournalEntrySourceType.POS_SALE,
-          referenceId: salesTransactionId,
-          referenceNumber:
-            sale.receipt_number ?? sale.reference_id ?? salesTransactionId,
-          description: `Posting otomatis penjualan POS ${
-            sale.receipt_number ?? sale.reference_id ?? salesTransactionId
-          }`,
-          totalDebit: totals.totalDebit,
-          totalCredit: totals.totalCredit,
-          isPosted: true,
-          postedAt: new Date(),
-        },
-      });
-
-      await tx.journalLine.createMany({
-        data: lines.map((line, index) => ({
-          journalEntryId: entry.id,
-          chartOfAccountId: line.chartOfAccountId,
-          lineNumber: index + 1,
-          description: line.description,
-          debit: line.debit,
-          credit: line.credit,
-        })),
-      });
-
-      return this.loadJournalEntry(tx, entry.id);
+      return this.createJournalEntry(tx, tenantId, 'POS', draft);
     });
+  }
+
+  static async resetLedgerForTenant(tenantId: string) {
+    const [salesCount, expenseCount, kasbonPaymentCount] = await Promise.all([
+      prisma.sales_records.count({ where: { tenant_id: tenantId } }),
+      prisma.expenses.count({ where: { tenant_id: tenantId } }),
+      prisma.kas_bon_payment_history.count({ where: { tenant_id: tenantId } }),
+    ]);
+
+    const journalEntryIds = await prisma.journalEntry.findMany({
+      where: { tenantId },
+      select: { id: true },
+    });
+
+    if (journalEntryIds.length > 0) {
+      await prisma.journalLine.deleteMany({
+        where: {
+          journalEntryId: {
+            in: journalEntryIds.map((entry) => entry.id),
+          },
+        },
+      });
+    }
+
+    await prisma.journalEntry.deleteMany({
+      where: { tenantId },
+    });
+
+    const rebuildUpperBound = new Date('2100-01-01T00:00:00.000Z');
+    await this.ensureSalesPostedForDateRange(tenantId, null, rebuildUpperBound);
+    await this.ensureExpensesPostedForDateRange(tenantId, null, rebuildUpperBound);
+    await this.ensureKasbonPaymentsPostedForDateRange(tenantId, null, rebuildUpperBound);
+
+    const rebuiltEntries = await prisma.journalEntry.count({
+      where: { tenantId },
+    });
+
+    return {
+      tenantId,
+      deletedEntries: journalEntryIds.length,
+      rebuiltEntries,
+      sourceCounts: {
+        sales: salesCount,
+        expenses: expenseCount,
+        kasbonPayments: kasbonPaymentCount,
+      },
+    };
   }
 
   static async ensureSalesPostedForDateRange(
@@ -588,6 +543,31 @@ export class AccountingPostingService {
     });
   }
 
+  private static async findExistingSalesEntry(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    referenceId: string,
+    referenceNumber: string,
+  ) {
+    return tx.journalEntry.findFirst({
+      where: {
+        tenantId,
+        sourceType: JournalEntrySourceType.POS_SALE,
+        OR: [
+          { referenceId },
+          ...(referenceNumber.trim().length > 0 ? [{ referenceNumber }] : []),
+        ],
+      },
+      include: {
+        lines: {
+          orderBy: { lineNumber: 'asc' },
+          include: { account: true },
+        },
+      },
+      orderBy: [{ postedAt: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
   private static async loadJournalEntry(tx: Prisma.TransactionClient, journalEntryId: string) {
     return tx.journalEntry.findUnique({
       where: { id: journalEntryId },
@@ -600,7 +580,85 @@ export class AccountingPostingService {
     });
   }
 
+  private static async createJournalEntry(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    entryNumberPrefix: string,
+    draft: JournalEntryDraft,
+  ) {
+    const entryNumber = await this.generateEntryNumber(tx, tenantId, entryNumberPrefix);
+    const entry = await tx.journalEntry.create({
+      data: {
+        tenantId,
+        branchId: draft.branchId,
+        entryNumber,
+        entryDate: draft.entryDate,
+        sourceType: draft.sourceType,
+        referenceId: draft.referenceId,
+        referenceNumber: draft.referenceNumber,
+        description: draft.description,
+        totalDebit: draft.totalDebit,
+        totalCredit: draft.totalCredit,
+        isPosted: true,
+        postedAt: new Date(),
+      },
+    });
+
+    await tx.journalLine.createMany({
+      data: draft.lines.map((line, index) => ({
+        journalEntryId: entry.id,
+        chartOfAccountId: line.chartOfAccountId,
+        lineNumber: index + 1,
+        description: line.description,
+        debit: line.debit,
+        credit: line.credit,
+      })),
+    });
+
+    return this.loadJournalEntry(tx, entry.id);
+  }
+
+  private static async syncJournalEntry(
+    tx: Prisma.TransactionClient,
+    journalEntryId: string,
+    draft: JournalEntryDraft,
+  ) {
+    await tx.journalEntry.update({
+      where: { id: journalEntryId },
+      data: {
+        branchId: draft.branchId,
+        entryDate: draft.entryDate,
+        sourceType: draft.sourceType,
+        referenceId: draft.referenceId,
+        referenceNumber: draft.referenceNumber,
+        description: draft.description,
+        totalDebit: draft.totalDebit,
+        totalCredit: draft.totalCredit,
+        isPosted: true,
+        postedAt: new Date(),
+      },
+    });
+
+    await tx.journalLine.deleteMany({
+      where: { journalEntryId },
+    });
+
+    await tx.journalLine.createMany({
+      data: draft.lines.map((line, index) => ({
+        journalEntryId,
+        chartOfAccountId: line.chartOfAccountId,
+        lineNumber: index + 1,
+        description: line.description,
+        debit: line.debit,
+        credit: line.credit,
+      })),
+    });
+
+    return this.loadJournalEntry(tx, journalEntryId);
+  }
+
   private static assertSalesEligibleForPosting(sale: {
+    payment_method: string | null;
     payment_status: string | null;
     remaining_balance: Prisma.Decimal | null;
     outstanding_balance: Prisma.Decimal | null;
@@ -614,9 +672,138 @@ export class AccountingPostingService {
     const hasOutstanding = this.toDecimal(sale.remaining_balance)
       .plus(this.toDecimal(sale.outstanding_balance))
       .gt(this.ZERO);
-    if (hasOutstanding && !SALES_FINAL_STATUSES.has(paymentStatus)) {
+    if (
+      hasOutstanding &&
+      !SALES_FINAL_STATUSES.has(paymentStatus) &&
+      !this.isKasbonLikePayment(sale.payment_method, sale.payment_status)
+    ) {
       throw new Error('Sales transaction masih memiliki outstanding balance dan belum final.');
     }
+  }
+
+  private static async buildSalesJournalDraft(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    salesTransactionId: string,
+    sale: {
+      branch_id: bigint | null;
+      created_at: Date | null;
+      receipt_number: string | null;
+      reference_id: string | null;
+      payment_method: string | null;
+      payment_status: string | null;
+      remaining_balance: Prisma.Decimal | null;
+      outstanding_balance: Prisma.Decimal | null;
+      total_amount: Prisma.Decimal | null;
+      total_price: Prisma.Decimal | null;
+      amount_paid: Prisma.Decimal | null;
+      total_discount: bigint | null;
+      total_tax: bigint | null;
+    },
+    forceReceivable: boolean,
+  ): Promise<JournalEntryDraft> {
+    this.assertSalesEligibleForPosting(sale);
+
+    const settlementAmount = this.resolveSalesSettlementAmount(sale);
+    const discountAmount = this.toDecimal(sale.total_discount);
+    const taxAmount = this.toDecimal(sale.total_tax);
+    const revenueAmount = settlementAmount.plus(discountAmount).minus(taxAmount);
+
+    if (!revenueAmount.gt(this.ZERO)) {
+      throw new Error(
+        `Sales transaction ${salesTransactionId} menghasilkan nilai pendapatan tidak valid.`,
+      );
+    }
+
+    const settlementKind = this.inferSalesSettlementKind(sale, forceReceivable);
+    const settlementAccount = await this.resolveSalesSettlementAccount(
+      tx,
+      tenantId,
+      settlementKind,
+    );
+    const revenueAccount = await this.resolveAccount(tx, {
+      tenantId,
+      categoryCode: AccountCategoryType.REVENUE,
+      preferredNames: ['pendapatan penjualan', 'sales revenue', 'penjualan'],
+      preferredCodes: ['4100', '4110', 'SALES', 'REV-SALES'],
+      fallbackName: 'Pendapatan Penjualan',
+      fallbackCode: '4110',
+      normalBalance: AccountNormalBalance.CREDIT,
+    });
+
+    const lines: JournalLineDraft[] = [
+      {
+        chartOfAccountId: settlementAccount.id,
+        description:
+          settlementKind === 'receivable'
+            ? 'Pengakuan piutang penjualan kasbon'
+            : `Penerimaan ${this.describeSalesSettlementKind(settlementKind)}`,
+        debit: settlementAmount,
+        credit: this.ZERO,
+      },
+      {
+        chartOfAccountId: revenueAccount.id,
+        description: 'Pengakuan pendapatan penjualan',
+        debit: this.ZERO,
+        credit: revenueAmount,
+      },
+    ];
+
+    if (discountAmount.gt(this.ZERO)) {
+      const discountAccount = await this.resolveAccount(tx, {
+        tenantId,
+        categoryCode: AccountCategoryType.EXPENSE,
+        preferredNames: ['diskon penjualan', 'sales discount', 'discount allowed'],
+        preferredCodes: ['5120', 'DISC-SALES', 'DISC'],
+        fallbackName: 'Diskon Penjualan',
+        fallbackCode: '5120',
+        normalBalance: AccountNormalBalance.DEBIT,
+      });
+
+      lines.push({
+        chartOfAccountId: discountAccount.id,
+        description: 'Diskon penjualan',
+        debit: discountAmount,
+        credit: this.ZERO,
+      });
+    }
+
+    if (taxAmount.gt(this.ZERO)) {
+      const taxAccount = await this.resolveAccount(tx, {
+        tenantId,
+        categoryCode: AccountCategoryType.LIABILITY,
+        preferredNames: ['utang ppn', 'ppn keluaran', 'tax payable', 'vat payable'],
+        preferredCodes: ['2110', 'TAX-OUT', 'VAT-PAY'],
+        fallbackName: 'Utang PPN',
+        fallbackCode: '2110',
+        normalBalance: AccountNormalBalance.CREDIT,
+      });
+
+      lines.push({
+        chartOfAccountId: taxAccount.id,
+        description: 'PPN keluaran',
+        debit: this.ZERO,
+        credit: taxAmount,
+      });
+    }
+
+    const totals = this.calculateTotals(lines);
+    this.assertBalanced(totals.totalDebit, totals.totalCredit, salesTransactionId);
+
+    const referenceNumber =
+      sale.receipt_number ?? sale.reference_id ?? salesTransactionId;
+
+    return {
+      branchId: sale.branch_id ?? null,
+      entryDate: sale.created_at ?? new Date(),
+      sourceType: JournalEntrySourceType.POS_SALE,
+      referenceId: salesTransactionId,
+      referenceNumber,
+      description: `Posting otomatis penjualan POS ${referenceNumber}`,
+      totalDebit: totals.totalDebit,
+      totalCredit: totals.totalCredit,
+      lines,
+    };
   }
 
   private static assertExpenseEligibleForPosting(expense: { status: string | null }) {
@@ -935,7 +1122,11 @@ export class AccountingPostingService {
     payment_status: string | null;
     remaining_balance: Prisma.Decimal | null;
     outstanding_balance: Prisma.Decimal | null;
-  }): SalesSettlementKind {
+  }, forceReceivable = false): SalesSettlementKind {
+    if (forceReceivable) {
+      return 'receivable';
+    }
+
     const hasOutstanding = this.toDecimal(sale.remaining_balance)
       .plus(this.toDecimal(sale.outstanding_balance))
       .gt(this.ZERO);
