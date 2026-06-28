@@ -41,9 +41,15 @@ export class ExpenseService {
       throw new AppError('Format tanggal pengeluaran tidak valid', 400);
     }
 
+    const branchId =
+      payload.branchId !== undefined
+        ? BigInt(payload.branchId.toString())
+        : null;
+
     const expense = await prisma.expenses.create({
       data: {
         tenant_id: tenantId,
+        branchId,
         // Extract from request body - CRITICAL: Don't use hardcoded defaults
         title: payload.title.trim(),
         category: payload.category.trim(),
@@ -171,6 +177,9 @@ export class ExpenseService {
     }
     if (payload.amount !== undefined) {
       updateData.amount = new Prisma.Decimal(payload.amount);
+    }
+    if (payload.branchId !== undefined) {
+      updateData.branchId = BigInt(payload.branchId.toString());
     }
     if (payload.notes !== undefined) {
       updateData.notes = payload.notes?.trim() || null;

@@ -1,7 +1,6 @@
 import {
   AccountCategoryType,
   AccountNormalBalance,
-  JournalEntrySourceType,
   Prisma,
 } from '@prisma/client';
 import prisma from '../config/database';
@@ -244,28 +243,7 @@ export class AccountingReportService {
             ...(startDate ? { gte: startDate } : {}),
             lte: endDate,
           },
-          ...(branchId !== null
-            ? {
-                sourceType: JournalEntrySourceType.POS_SALE,
-                referenceId: {
-                  in: (
-                    await prisma.sales_records.findMany({
-                      where: {
-                        tenant_id: tenantId,
-                        branch_id: branchId,
-                        created_at: {
-                          ...(startDate ? { gte: startDate } : {}),
-                          lte: endDate,
-                        },
-                      },
-                      select: {
-                        id: true,
-                      },
-                    })
-                  ).map((record) => record.id.toString()),
-                },
-              }
-            : {}),
+          ...(branchId !== null ? { branchId } : {}),
         },
         account: {
           category: {

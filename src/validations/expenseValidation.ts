@@ -6,6 +6,10 @@ const optionalText = z.string().optional().nullable();
 export const createExpenseSchema = z.object({
   title: nonEmptyString.describe('Judul pengeluaran'),
   category: nonEmptyString.describe('Kategori pengeluaran'),
+  branchId: z
+    .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
+    .optional()
+    .describe('ID cabang pengeluaran'),
   expense_date: z
     .string()
     .datetime()

@@ -211,6 +211,7 @@ export class AccountingPostingService {
       const entry = await tx.journalEntry.create({
         data: {
           tenantId,
+           branchId: sale.branch_id ?? null,
           entryNumber,
           entryDate: sale.created_at ?? new Date(),
           sourceType: JournalEntrySourceType.POS_SALE,
