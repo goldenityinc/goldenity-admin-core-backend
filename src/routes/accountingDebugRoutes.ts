@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { resetLedgerDebug } from '../controllers/accountingDebugController';
+import {
+  rebuildLedgerDebug,
+  resetLedgerDebug,
+} from '../controllers/accountingDebugController';
 import {
   authMiddleware,
   roleMiddleware,
@@ -15,5 +18,6 @@ router.use(
 );
 
 router.post('/reset-ledger', resetLedgerDebug);
+router.post('/rebuild-ledger', rebuildLedgerDebug);
 
 export default router;

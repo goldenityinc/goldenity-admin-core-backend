@@ -121,6 +121,15 @@ export class AccountingPostingService {
         );
       }
 
+      if (this.isSalesBlockedForPosting(sale)) {
+        await this.deleteJournalEntriesByFilters(tx, {
+          tenantId,
+          sourceType: JournalEntrySourceType.POS_SALE,
+          referenceIds: [salesTransactionId],
+        });
+        return null;
+      }
+
       const hasKasbonPayments =
         (await tx.kas_bon_payment_history.count({
           where: {
@@ -137,15 +146,12 @@ export class AccountingPostingService {
         hasKasbonPayments,
       );
 
-      const existingEntry = await this.findExistingSalesEntry(
-        tx,
+      await this.deleteJournalEntriesByFilters(tx, {
         tenantId,
-        salesTransactionId,
-        draft.referenceNumber,
-      );
-      if (existingEntry) {
-        return this.syncJournalEntry(tx, existingEntry.id, draft);
-      }
+        sourceType: JournalEntrySourceType.POS_SALE,
+        referenceIds: [salesTransactionId],
+        referenceNumbers: [draft.referenceNumber],
+      });
 
       return this.createJournalEntry(tx, tenantId, 'POS', draft);
     });
@@ -211,10 +217,17 @@ export class AccountingPostingService {
           lte: endDate,
         },
         NOT: {
-          payment_status: {
-            in: Array.from(SALES_BLOCKED_STATUSES),
-            mode: 'insensitive',
-          },
+          OR: [
+            {
+              payment_status: {
+                in: Array.from(SALES_BLOCKED_STATUSES),
+                mode: 'insensitive',
+              },
+            },
+            {
+              order_status: 'CANCELLED',
+            },
+          ],
         },
       },
       select: {
@@ -241,16 +254,6 @@ export class AccountingPostingService {
     const expenseId = this.parseBigIntId(expenseTransactionId, 'expenseTransactionId');
 
     return prisma.$transaction(async (tx) => {
-      const existingEntry = await this.findExistingEntry(
-        tx,
-        tenantId,
-        JournalEntrySourceType.EXPENSE,
-        expenseTransactionId,
-      );
-      if (existingEntry) {
-        return existingEntry;
-      }
-
       const expense = await tx.expenses.findFirst({
         where: {
           id: expenseId,
@@ -264,7 +267,14 @@ export class AccountingPostingService {
         );
       }
 
-      this.assertExpenseEligibleForPosting(expense);
+      if (this.isExpenseBlockedForPosting(expense)) {
+        await this.deleteJournalEntriesByFilters(tx, {
+          tenantId,
+          sourceType: JournalEntrySourceType.EXPENSE,
+          referenceIds: [expenseTransactionId],
+        });
+        return null;
+      }
 
       const expenseAmount = this.toDecimal(expense.amount);
       if (!expenseAmount.gt(this.ZERO)) {
@@ -305,6 +315,12 @@ export class AccountingPostingService {
 
       const totals = this.calculateTotals(lines);
       this.assertBalanced(totals.totalDebit, totals.totalCredit, expenseTransactionId);
+
+      await this.deleteJournalEntriesByFilters(tx, {
+        tenantId,
+        sourceType: JournalEntrySourceType.EXPENSE,
+        referenceIds: [expenseTransactionId],
+      });
 
       const entryNumber = await this.generateEntryNumber(tx, tenantId, 'EXP');
       const entry = await tx.journalEntry.create({
@@ -382,15 +398,6 @@ export class AccountingPostingService {
 
     return prisma.$transaction(async (tx) => {
       const referenceId = `KASBON_PAYMENT:${paymentHistoryId}`;
-      const existingEntry = await this.findExistingEntry(
-        tx,
-        tenantId,
-        JournalEntrySourceType.ADJUSTMENT,
-        referenceId,
-      );
-      if (existingEntry) {
-        return existingEntry;
-      }
 
       const payment = await tx.kas_bon_payment_history.findFirst({
         where: {
@@ -442,6 +449,12 @@ export class AccountingPostingService {
 
       const totals = this.calculateTotals(lines);
       this.assertBalanced(totals.totalDebit, totals.totalCredit, paymentHistoryId);
+
+      await this.deleteJournalEntriesByFilters(tx, {
+        tenantId,
+        sourceType: JournalEntrySourceType.ADJUSTMENT,
+        referenceIds: [referenceId],
+      });
 
       const entryNumber = await this.generateEntryNumber(tx, tenantId, 'KBP');
       const entry = await tx.journalEntry.create({
@@ -522,52 +535,6 @@ export class AccountingPostingService {
     }
   }
 
-  private static async findExistingEntry(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    sourceType: JournalEntrySourceType,
-    referenceId: string,
-  ) {
-    return tx.journalEntry.findFirst({
-      where: {
-        tenantId,
-        sourceType,
-        referenceId,
-      },
-      include: {
-        lines: {
-          orderBy: { lineNumber: 'asc' },
-          include: { account: true },
-        },
-      },
-    });
-  }
-
-  private static async findExistingSalesEntry(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    referenceId: string,
-    referenceNumber: string,
-  ) {
-    return tx.journalEntry.findFirst({
-      where: {
-        tenantId,
-        sourceType: JournalEntrySourceType.POS_SALE,
-        OR: [
-          { referenceId },
-          ...(referenceNumber.trim().length > 0 ? [{ referenceNumber }] : []),
-        ],
-      },
-      include: {
-        lines: {
-          orderBy: { lineNumber: 'asc' },
-          include: { account: true },
-        },
-      },
-      orderBy: [{ postedAt: 'asc' }, { createdAt: 'asc' }],
-    });
-  }
-
   private static async loadJournalEntry(tx: Prisma.TransactionClient, journalEntryId: string) {
     return tx.journalEntry.findUnique({
       where: { id: journalEntryId },
@@ -618,56 +585,21 @@ export class AccountingPostingService {
     return this.loadJournalEntry(tx, entry.id);
   }
 
-  private static async syncJournalEntry(
-    tx: Prisma.TransactionClient,
-    journalEntryId: string,
-    draft: JournalEntryDraft,
-  ) {
-    await tx.journalEntry.update({
-      where: { id: journalEntryId },
-      data: {
-        branchId: draft.branchId,
-        entryDate: draft.entryDate,
-        sourceType: draft.sourceType,
-        referenceId: draft.referenceId,
-        referenceNumber: draft.referenceNumber,
-        description: draft.description,
-        totalDebit: draft.totalDebit,
-        totalCredit: draft.totalCredit,
-        isPosted: true,
-        postedAt: new Date(),
-      },
-    });
-
-    await tx.journalLine.deleteMany({
-      where: { journalEntryId },
-    });
-
-    await tx.journalLine.createMany({
-      data: draft.lines.map((line, index) => ({
-        journalEntryId,
-        chartOfAccountId: line.chartOfAccountId,
-        lineNumber: index + 1,
-        description: line.description,
-        debit: line.debit,
-        credit: line.credit,
-      })),
-    });
-
-    return this.loadJournalEntry(tx, journalEntryId);
-  }
-
   private static assertSalesEligibleForPosting(sale: {
+    order_status?: string | null;
     payment_method: string | null;
     payment_status: string | null;
     remaining_balance: Prisma.Decimal | null;
     outstanding_balance: Prisma.Decimal | null;
   }) {
-    const paymentStatus = this.normalizeText(sale.payment_status);
-
-    if (SALES_BLOCKED_STATUSES.has(paymentStatus)) {
-      throw new Error(`Sales transaction dengan status ${paymentStatus} tidak boleh diposting.`);
+    if (this.isSalesBlockedForPosting(sale)) {
+      const blockedStatus =
+        this.normalizeText(sale.order_status) ||
+        this.normalizeText(sale.payment_status);
+      throw new Error(`Sales transaction dengan status ${blockedStatus} tidak boleh diposting.`);
     }
+
+    const paymentStatus = this.normalizeText(sale.payment_status);
 
     const hasOutstanding = this.toDecimal(sale.remaining_balance)
       .plus(this.toDecimal(sale.outstanding_balance))
@@ -806,13 +738,6 @@ export class AccountingPostingService {
     };
   }
 
-  private static assertExpenseEligibleForPosting(expense: { status: string | null }) {
-    const status = this.normalizeText(expense.status);
-    if (status && EXPENSE_BLOCKED_STATUSES.has(status)) {
-      throw new Error(`Expense dengan status ${status} tidak boleh diposting.`);
-    }
-  }
-
   private static resolveSalesSettlementAmount(sale: {
     total_amount: Prisma.Decimal | null;
     total_price: Prisma.Decimal | null;
@@ -827,6 +752,75 @@ export class AccountingPostingService {
     }
 
     return candidates[0];
+  }
+
+  private static isSalesBlockedForPosting(sale: {
+    order_status?: string | null;
+    payment_status?: string | null;
+  }) {
+    return [sale.order_status, sale.payment_status]
+      .map((value) => this.normalizeText(value))
+      .some((value) => value.length > 0 && SALES_BLOCKED_STATUSES.has(value));
+  }
+
+  private static isExpenseBlockedForPosting(expense: { status: string | null }) {
+    const status = this.normalizeText(expense.status);
+    return status.length > 0 && EXPENSE_BLOCKED_STATUSES.has(status);
+  }
+
+  private static async deleteJournalEntriesByFilters(
+    tx: Prisma.TransactionClient,
+    filters: {
+      tenantId: string;
+      sourceType: JournalEntrySourceType;
+      referenceIds?: string[];
+      referenceNumbers?: string[];
+    },
+  ) {
+    const referenceIds = (filters.referenceIds ?? []).filter((value) => value.trim().length > 0);
+    const referenceNumbers = (filters.referenceNumbers ?? []).filter(
+      (value) => value.trim().length > 0,
+    );
+    if (referenceIds.length === 0 && referenceNumbers.length === 0) {
+      return 0;
+    }
+
+    const entries = await tx.journalEntry.findMany({
+      where: {
+        tenantId: filters.tenantId,
+        sourceType: filters.sourceType,
+        OR: [
+          ...(referenceIds.length > 0 ? [{ referenceId: { in: referenceIds } }] : []),
+          ...(referenceNumbers.length > 0
+            ? [{ referenceNumber: { in: referenceNumbers } }]
+            : []),
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (entries.length === 0) {
+      return 0;
+    }
+
+    const entryIds = entries.map((entry) => entry.id);
+    await tx.journalLine.deleteMany({
+      where: {
+        journalEntryId: {
+          in: entryIds,
+        },
+      },
+    });
+    await tx.journalEntry.deleteMany({
+      where: {
+        id: {
+          in: entryIds,
+        },
+      },
+    });
+    return entryIds.length;
   }
 
   private static calculateTotals(lines: JournalLineDraft[]) {

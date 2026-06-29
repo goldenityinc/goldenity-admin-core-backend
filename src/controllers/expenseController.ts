@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
+import AccountingPostingService from '../services/accountingPostingService';
 import { ExpenseService } from '../services/expenseService';
 import { createExpenseSchema, updateExpenseSchema } from '../validations/expenseValidation';
 import { serializeForJson } from '../utils/serializeForJson';
@@ -175,6 +176,7 @@ export const updateExpense = asyncHandler(async (req: Request, res: Response) =>
       ...parsed.data,
       ...(attachmentUrl !== undefined ? { attachment_url: attachmentUrl } : {}),
     });
+    await AccountingPostingService.postExpenseToJournal(rawId, tenantId);
 
     return res.status(200).json({
       success: true,
@@ -203,6 +205,7 @@ export const voidExpense = asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const expense = await ExpenseService.voidExpense(tenantId, BigInt(rawId), voidReason);
+    await AccountingPostingService.postExpenseToJournal(rawId, tenantId);
 
     return res.status(200).json({
       success: true,

@@ -17,11 +17,14 @@ export const resetLedgerDebug = asyncHandler(async (req: Request, res: Response)
 
   return res.status(200).json({
     success: true,
-    message: 'Ledger tenant berhasil di-reset dan dibangun ulang.',
+    message: 'Ledger successfully rebuilt',
     data: result,
   });
 });
 
+export const rebuildLedgerDebug = resetLedgerDebug;
+
 export default {
   resetLedgerDebug,
+  rebuildLedgerDebug,
 };

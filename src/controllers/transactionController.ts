@@ -1,5 +1,6 @@
 import type { OrderStatus, OrderType } from '@prisma/client';
 import type { Request, Response } from 'express';
+import AccountingPostingService from '../services/accountingPostingService';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { TransactionService } from '../services/transactionService';
@@ -275,6 +276,7 @@ export const cancelTransaction = asyncHandler(async (req: Request, res: Response
       branchId,
       false,
     );
+    await AccountingPostingService.postSalesToJournal(rawId, tenantId);
 
     console.log(`[cancelTransaction] Transaction ${rawId} cancelled successfully for tenant ${tenantId}`);
 
