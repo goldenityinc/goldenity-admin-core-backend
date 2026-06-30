@@ -35,6 +35,31 @@ function resolveOptionalBranchId(query: Request['query']): bigint | null {
   return BigInt(branchIdRaw);
 }
 
+function sanitizeAccountingJsonValue(value: unknown): unknown {
+  if (value instanceof Prisma.Decimal) {
+    return value.toNumber();
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeAccountingJsonValue(entry));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        sanitizeAccountingJsonValue(entry),
+      ]),
+    );
+  }
+
+  return value;
+}
+
 function rethrowAccountingReportError(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2021' || error.code === 'P2022') {
@@ -80,7 +105,7 @@ export const getProfitAndLossReport = asyncHandler(
 
       return res.status(200).json({
         success: true,
-        data: report,
+        data: sanitizeAccountingJsonValue(report),
       });
     } catch (error) {
       rethrowAccountingReportError(error);
@@ -107,7 +132,7 @@ export const getBalanceSheetReport = asyncHandler(
 
       return res.status(200).json({
         success: true,
-        data: report,
+        data: sanitizeAccountingJsonValue(report),
       });
     } catch (error) {
       rethrowAccountingReportError(error);
@@ -147,7 +172,7 @@ export const getPayrollReport = asyncHandler(
 
       return res.status(200).json({
         success: true,
-        data: report,
+        data: sanitizeAccountingJsonValue(report),
       });
     } catch (error) {
       rethrowAccountingReportError(error);

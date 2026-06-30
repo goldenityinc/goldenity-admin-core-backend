@@ -158,11 +158,15 @@ export class AccountingPostingService {
   }
 
   static async resetLedgerForTenant(tenantId: string) {
-    const [salesCount, expenseCount, kasbonPaymentCount] = await Promise.all([
-      prisma.sales_records.count({ where: { tenant_id: tenantId } }),
-      prisma.expenses.count({ where: { tenant_id: tenantId } }),
-      prisma.kas_bon_payment_history.count({ where: { tenant_id: tenantId } }),
-    ]);
+    const salesCount = await prisma.sales_records.count({
+      where: { tenant_id: tenantId },
+    });
+    const expenseCount = await prisma.expenses.count({
+      where: { tenant_id: tenantId },
+    });
+    const kasbonPaymentCount = await prisma.kas_bon_payment_history.count({
+      where: { tenant_id: tenantId },
+    });
 
     const journalEntryIds = await prisma.journalEntry.findMany({
       where: { tenantId },
