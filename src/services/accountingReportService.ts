@@ -101,6 +101,12 @@ type PayrollReport = {
   mechanicCommissions: PayrollMechanicCommissionLine[];
 };
 
+type LedgerEnsureCoverage = {
+  startMs: number | null;
+  endMs: number;
+  syncedAtMs: number;
+};
+
 const ZERO = new Prisma.Decimal(0);
 const BALANCE_TOLERANCE = 0.005;
 
@@ -154,26 +160,130 @@ function sortAccounts(lines: ReportAccountLine[]): ReportAccountLine[] {
 }
 
 export class AccountingReportService {
+  private static readonly LEDGER_ENSURE_TTL_MS = 45_000;
+  private static readonly ledgerEnsureCoverageByTenant =
+    new Map<string, LedgerEnsureCoverage>();
+  private static readonly ledgerEnsureInFlightByTenant =
+    new Map<string, Promise<void>>();
+
+  private static normalizeEnsureRange(startDate: Date | null, endDate: Date) {
+    return {
+      startMs: startDate ? startDate.getTime() : null,
+      endMs: endDate.getTime(),
+    };
+  }
+
+  private static isCoverageStale(coverage: LedgerEnsureCoverage) {
+    return Date.now() - coverage.syncedAtMs > this.LEDGER_ENSURE_TTL_MS;
+  }
+
+  private static coverageContainsRange(
+    coverage: LedgerEnsureCoverage,
+    startMs: number | null,
+    endMs: number,
+  ) {
+    if (coverage.endMs < endMs) {
+      return false;
+    }
+
+    if (coverage.startMs === null) {
+      return true;
+    }
+
+    if (startMs === null) {
+      return false;
+    }
+
+    return coverage.startMs <= startMs;
+  }
+
+  private static mergeCoverage(
+    current: LedgerEnsureCoverage | undefined,
+    startMs: number | null,
+    endMs: number,
+  ): LedgerEnsureCoverage {
+    if (!current) {
+      return {
+        startMs,
+        endMs,
+        syncedAtMs: Date.now(),
+      };
+    }
+
+    const mergedStartMs =
+      current.startMs === null || startMs === null
+        ? null
+        : Math.min(current.startMs, startMs);
+
+    return {
+      startMs: mergedStartMs,
+      endMs: Math.max(current.endMs, endMs),
+      syncedAtMs: Date.now(),
+    };
+  }
+
   private static async ensureLedgerData(
     tenantId: string,
     startDate: Date | null,
     endDate: Date,
   ) {
-    await AccountingPostingService.ensureSalesPostedForDateRange(
-      tenantId,
-      startDate,
-      endDate,
-    );
-    await AccountingPostingService.ensureExpensesPostedForDateRange(
-      tenantId,
-      startDate,
-      endDate,
-    );
-    await AccountingPostingService.ensureKasbonPaymentsPostedForDateRange(
-      tenantId,
-      startDate,
-      endDate,
-    );
+    const { startMs, endMs } = this.normalizeEnsureRange(startDate, endDate);
+    const cachedCoverage = this.ledgerEnsureCoverageByTenant.get(tenantId);
+
+    if (
+      cachedCoverage &&
+      !this.isCoverageStale(cachedCoverage) &&
+      this.coverageContainsRange(cachedCoverage, startMs, endMs)
+    ) {
+      return;
+    }
+
+    const currentInFlight = this.ledgerEnsureInFlightByTenant.get(tenantId);
+    if (currentInFlight) {
+      await currentInFlight;
+      const refreshedCoverage = this.ledgerEnsureCoverageByTenant.get(tenantId);
+      if (
+        refreshedCoverage &&
+        !this.isCoverageStale(refreshedCoverage) &&
+        this.coverageContainsRange(refreshedCoverage, startMs, endMs)
+      ) {
+        return;
+      }
+    }
+
+    const ensureTask = (async () => {
+      await AccountingPostingService.ensureSalesPostedForDateRange(
+        tenantId,
+        startDate,
+        endDate,
+      );
+      await AccountingPostingService.ensureExpensesPostedForDateRange(
+        tenantId,
+        startDate,
+        endDate,
+      );
+      await AccountingPostingService.ensureKasbonPaymentsPostedForDateRange(
+        tenantId,
+        startDate,
+        endDate,
+      );
+
+      const currentCoverage = this.ledgerEnsureCoverageByTenant.get(tenantId);
+      this.ledgerEnsureCoverageByTenant.set(
+        tenantId,
+        this.mergeCoverage(currentCoverage, startMs, endMs),
+      );
+    })();
+
+    this.ledgerEnsureInFlightByTenant.set(tenantId, ensureTask);
+
+    try {
+      await ensureTask;
+    } finally {
+      if (this.ledgerEnsureInFlightByTenant.get(tenantId) === ensureTask) {
+        this.ledgerEnsureInFlightByTenant.delete(tenantId);
+      }
+    }
   }
 
   private static async ensureEssentialAssetAccounts(
