@@ -4,6 +4,8 @@ import { AppError } from '../utils/AppError';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppInstanceService } from '../services/appInstanceService';
 import { ErpProvisionService } from '../services/erpProvisionService';
+import { EntitlementService } from '../services/entitlementService';
+import { emitTenantUpdated } from '../services/realtimeEmitter';
 import {
   appInstanceIdParamSchema,
   createAppInstanceSchema,
@@ -126,11 +128,25 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
     throw new AppError('App instance not found', 404);
   }
 
-  const updated = await AppInstanceService.update(paramParsed.data.id, bodyParsed.data);
+  const updated = await AppInstanceService.update(
+    paramParsed.data.id,
+    bodyParsed.data,
+    existing.tenant.id,
+  );
   const warning = await syncErpOrganizationProfile(
     updated,
     typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
   );
+
+  const resolvedEntitlements = await EntitlementService.resolveForTenant(updated.tenant.id);
+  emitTenantUpdated(req, updated.tenant.id, {
+    action: 'SUBSCRIPTION_UPDATED',
+    entitlementsRevision: resolvedEntitlements.entitlements.revision,
+    activeModules: resolvedEntitlements.entitlements.active_modules,
+    featureFlags: resolvedEntitlements.entitlements.modules,
+    subscription: resolvedEntitlements.subscription,
+    appInstanceId: updated.id,
+  });
 
   return res.status(200).json({
     success: true,

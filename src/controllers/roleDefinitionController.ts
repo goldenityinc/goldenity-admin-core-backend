@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { AppError } from '../utils/AppError';
 import * as svc from '../services/roleDefinitionService';
 import { ROLE_PERMISSION_MODULE_KEYS } from '../constants/roleModules';
+import { EntitlementService } from '../services/entitlementService';
+import { emitTenantUpdated } from '../services/realtimeEmitter';
 
 // ─── Validation schemas ────────────────────────────────────────────────────
 
@@ -51,6 +53,16 @@ const resolveTenantId = (req: Request): string => {
   return req.user!.tenantId;
 };
 
+async function emitRoleSync(req: Request, tenantId: string, action: string): Promise<void> {
+  const resolved = await EntitlementService.resolveForTenant(tenantId);
+  emitTenantUpdated(req, tenantId, {
+    action,
+    entitlementsRevision: resolved.entitlements.revision,
+    activeModules: resolved.entitlements.active_modules,
+    featureFlags: resolved.entitlements.modules,
+  });
+}
+
 // ─── Controllers ───────────────────────────────────────────────────────────
 
 export const listRoles = async (req: Request, res: Response, next: NextFunction) => {
@@ -68,6 +80,7 @@ export const createRole = async (req: Request, res: Response, next: NextFunction
     if (!parsed.success) throw new AppError(parsed.error.errors[0].message, 400);
     const { name, description, permissions } = parsed.data;
     const role = await svc.createCustomRole(tenantId, name, permissions, description);
+    await emitRoleSync(req, tenantId, 'ROLE_CREATED');
     res.status(201).json({ success: true, data: role });
   } catch (e) { next(e); }
 };
@@ -102,6 +115,7 @@ export const updateRole = async (req: Request, res: Response, next: NextFunction
     }
     const updated = await svc.updateCustomRole(tenantId, req.params.id, parsed.data);
     if (!updated) throw new AppError('Role not found', 404);
+    await emitRoleSync(req, tenantId, 'ROLE_UPDATED');
     res.json({ success: true, data: updated });
   } catch (e) { next(e); }
 };
@@ -115,6 +129,7 @@ export const deleteRole = async (req: Request, res: Response, next: NextFunction
       throw new AppError('Role bawaan sistem tidak dapat dihapus', 403);
     const deleted = await svc.deleteCustomRole(tenantId, req.params.id);
     if (!deleted) throw new AppError('Role not found', 404);
+    await emitRoleSync(req, tenantId, 'ROLE_DELETED');
     res.json({ success: true, message: 'Role deleted' });
   } catch (e) { next(e); }
 };
@@ -129,6 +144,7 @@ export const assignRole = async (req: Request, res: Response, next: NextFunction
       customRoleId ?? null,
     );
     if (!updated) throw new AppError('User or CustomRole not found', 404);
+    await emitRoleSync(req, tenantId, 'ROLE_ASSIGNED');
     res.json({ success: true, data: updated });
   } catch (e) { next(e); }
 };
@@ -137,6 +153,7 @@ export const seedRoles = async (req: Request, res: Response, next: NextFunction)
   try {
     const tenantId = resolveTenantId(req);
     await svc.seedDefaultRoles(tenantId);
+    await emitRoleSync(req, tenantId, 'ROLE_SEEDED');
     res.json({ success: true, message: 'Default roles seeded (Admin, Kasir, Pajak)' });
   } catch (e) { next(e); }
 };

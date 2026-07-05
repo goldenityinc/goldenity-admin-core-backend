@@ -91,7 +91,7 @@ export class EntitlementService {
     // Fetch tenant to get business_category
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { businessCategory: true },
+      select: { businessCategory: true, updatedAt: true },
     });
 
     const appInstance =
@@ -157,6 +157,19 @@ export class EntitlementService {
         appInstanceId: null,
       };
     }
+
+    const [latestCustomRoleUpdate, latestUserUpdate] = await Promise.all([
+      prisma.customRole.findFirst({
+        where: { tenantId },
+        orderBy: { updatedAt: 'desc' },
+        select: { updatedAt: true },
+      }),
+      prisma.user.findFirst({
+        where: { tenantId },
+        orderBy: { updatedAt: 'desc' },
+        select: { updatedAt: true },
+      }),
+    ]);
 
     const subscription: ResolvedSubscription = {
       tier: appInstance.tier ?? null,
@@ -238,7 +251,13 @@ export class EntitlementService {
       .map(([moduleKey]) => moduleKey)
       .sort();
 
-    const revisionCandidates = [appInstance.updatedAt, ...enabledAssignments.map((item) => item.updatedAt)];
+    const revisionCandidates = [
+      tenant?.updatedAt,
+      appInstance.updatedAt,
+      ...enabledAssignments.map((item) => item.updatedAt),
+      latestCustomRoleUpdate?.updatedAt,
+      latestUserUpdate?.updatedAt,
+    ].filter((item): item is Date => item instanceof Date);
     const entitlements: TenantEntitlementsDto = {
       revision: computeRevision(revisionCandidates),
       resolvedAt: new Date().toISOString(),

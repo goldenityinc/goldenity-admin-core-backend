@@ -437,7 +437,8 @@ export class AppInstanceService {
 
   static async update(
     id: string,
-    data: AppInstanceUpdatePayload
+    data: AppInstanceUpdatePayload,
+    tenantId: string,
   ) {
     const current = await prisma.appInstance.findUnique({
       where: { id },
@@ -471,8 +472,8 @@ export class AppInstanceService {
     } = data;
 
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.appInstance.update({
-        where: { id },
+      const updateResult = await tx.appInstance.updateMany({
+        where: { id, tenantId },
         data: {
           ...restData,
           dbConnectionString: null,
@@ -480,6 +481,10 @@ export class AppInstanceService {
           ...(endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(endDate) } : {}),
         },
       });
+
+      if (updateResult.count === 0) {
+        throw new AppError('App instance not found', 404);
+      }
 
       await AppInstanceService.syncAppInstanceModules(tx, id, {
         solutionType: resolveSolutionModuleCatalogType(current.solution),
