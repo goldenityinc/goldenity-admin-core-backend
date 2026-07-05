@@ -16,6 +16,44 @@ import {
 
 type AppInstanceResponsePayload = Awaited<ReturnType<typeof AppInstanceService.create>>;
 
+function normalizeAppInstancePayload(rawBody: unknown): Record<string, unknown> {
+  if (!rawBody || typeof rawBody !== 'object') {
+    return {};
+  }
+
+  const body = { ...(rawBody as Record<string, unknown>) };
+
+  if (!Array.isArray(body.moduleKeys)) {
+    const source =
+      (body.featureFlags && typeof body.featureFlags === 'object'
+        ? (body.featureFlags as Record<string, unknown>)
+        : null) ??
+      (body.modules && typeof body.modules === 'object'
+        ? (body.modules as Record<string, unknown>)
+        : null);
+
+    if (source) {
+      const keys = Object.entries(source)
+        .filter(([, value]) => {
+          if (typeof value === 'boolean') {
+            return value;
+          }
+          if (value && typeof value === 'object') {
+            const enabled = (value as Record<string, unknown>).enabled;
+            return enabled === true;
+          }
+          return false;
+        })
+        .map(([key]) => key)
+        .filter((key) => key.startsWith('module_'));
+
+      body.moduleKeys = keys;
+    }
+  }
+
+  return body;
+}
+
 async function syncErpOrganizationProfile(
   appInstance: AppInstanceResponsePayload,
   authHeader: string | undefined,
@@ -48,7 +86,7 @@ async function syncErpOrganizationProfile(
 }
 
 export const createAppInstance = asyncHandler(async (req: Request, res: Response) => {
-  const bodyParsed = createAppInstanceSchema.safeParse(req.body);
+  const bodyParsed = createAppInstanceSchema.safeParse(normalizeAppInstancePayload(req.body));
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid app instance payload', 400);
   }
@@ -118,7 +156,7 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
     throw new AppError(paramParsed.error.issues[0]?.message ?? 'Invalid app instance id', 400);
   }
 
-  const bodyParsed = updateAppInstanceSchema.safeParse(req.body);
+  const bodyParsed = updateAppInstanceSchema.safeParse(normalizeAppInstancePayload(req.body));
   if (!bodyParsed.success) {
     throw new AppError(bodyParsed.error.issues[0]?.message ?? 'Invalid app instance payload', 400);
   }

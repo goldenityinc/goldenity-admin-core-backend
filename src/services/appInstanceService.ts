@@ -229,16 +229,20 @@ export class AppInstanceService {
     }
 
     const catalog = getPosModuleCatalogMap();
-    const assignments = resolveLegacyModuleAssignments({
-      tier: input.tier,
-      addons: input.addons,
-    }) as Record<string, AppInstanceModuleAssignment>;
+    const hasExplicitModuleKeys = Array.isArray(input.moduleKeys);
+    const assignments = (hasExplicitModuleKeys
+      ? {}
+      : resolveLegacyModuleAssignments({
+          tier: input.tier,
+          addons: input.addons,
+        })) as Record<string, AppInstanceModuleAssignment>;
 
     const categoryDefaultModuleKeys = getBusinessCategoryDefaultModuleKeys(
       input.businessCategory,
     );
     const resolvedModuleKeys = AppInstanceService.resolveModuleKeysWithDependencies(
       normalizeModuleKeys([
+        ...Object.keys(assignments),
         ...(input.moduleKeys ?? []),
         ...categoryDefaultModuleKeys,
       ]),
