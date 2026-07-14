@@ -97,10 +97,6 @@ function toModuleDisplayName(moduleKey: string): string {
     .join(' ');
 }
 
-function mergeModuleKeySets(existing: string[] | undefined, incoming: string[] | undefined): string[] {
-  return normalizeModuleKeys([...(existing ?? []), ...(incoming ?? [])]);
-}
-
 function mergeRecord(
   base: Record<string, unknown> | undefined,
   override: Record<string, unknown> | undefined,
@@ -568,11 +564,10 @@ export class AppInstanceService {
       ...restData
     } = data;
 
-    const existingModuleKeys = current.modules.map((item) => item.moduleDefinition.moduleKey);
-    const mergedModuleKeys =
+    const resolvedModuleKeys =
       moduleKeys === undefined
         ? undefined
-        : mergeModuleKeySets(existingModuleKeys, moduleKeys);
+        : normalizeModuleKeys(moduleKeys);
 
     const updated = await prisma.$transaction(async (tx) => {
       const updateResult = await tx.appInstance.updateMany({
@@ -593,7 +588,7 @@ export class AppInstanceService {
         solutionType: resolveSolutionModuleCatalogType(current.solution),
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
-        moduleKeys: mergedModuleKeys,
+        moduleKeys: resolvedModuleKeys,
         businessCategory: current.tenant.businessCategory,
       });
 

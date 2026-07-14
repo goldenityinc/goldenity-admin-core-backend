@@ -24,6 +24,20 @@ function normalizeAppInstancePayload(rawBody: unknown): Record<string, unknown> 
   const body = { ...(rawBody as Record<string, unknown>) };
 
   if (!Array.isArray(body.moduleKeys)) {
+    const fromArraySource =
+      (Array.isArray(body.activeModules) ? body.activeModules : null) ??
+      (Array.isArray(body.modules) ? body.modules : null);
+
+    if (fromArraySource) {
+      const keys = fromArraySource
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+
+      body.moduleKeys = keys;
+      return body;
+    }
+
     const source =
       (body.featureFlags && typeof body.featureFlags === 'object'
         ? (body.featureFlags as Record<string, unknown>)
