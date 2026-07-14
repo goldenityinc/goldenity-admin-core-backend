@@ -202,13 +202,18 @@ export class AuthService {
     });
 
     const allowedSolutions = loginUser?.allowedSolutions ?? [];
-    const isTenantAdmin = normalizeRole(resolvedLoginRecord.role) === 'TENANT_ADMIN';
-    if (
-      credentials.solution &&
-      !isTenantAdmin &&
-      allowedSolutions.length > 0 &&
-      !allowedSolutions.includes(credentials.solution)
-    ) {
+    const requestedSolution = credentials.solution?.trim().toUpperCase();
+    const normalizedAllowedSolutions = allowedSolutions
+      .map((item) => item.trim().toUpperCase())
+      .filter((item) => item.length > 0);
+
+    console.log('LOGIN ATTEMPT:', {
+      email: credentials.username,
+      requestedSolution,
+      userAllowedSolutions: allowedSolutions,
+    });
+
+    if (requestedSolution && !normalizedAllowedSolutions.includes(requestedSolution)) {
       throw new AppError('User tidak memiliki akses ke portal ini', 403);
     }
 
