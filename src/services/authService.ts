@@ -202,8 +202,10 @@ export class AuthService {
     });
 
     const allowedSolutions = loginUser?.allowedSolutions ?? [];
+    const isTenantAdmin = normalizeRole(resolvedLoginRecord.role) === 'TENANT_ADMIN';
     if (
       credentials.solution &&
+      !isTenantAdmin &&
       allowedSolutions.length > 0 &&
       !allowedSolutions.includes(credentials.solution)
     ) {

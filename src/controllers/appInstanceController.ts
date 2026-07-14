@@ -45,7 +45,7 @@ function normalizeAppInstancePayload(rawBody: unknown): Record<string, unknown> 
           return false;
         })
         .map(([key]) => key)
-        .filter((key) => key.startsWith('module_'));
+        .filter((key) => key.trim().length > 0);
 
       body.moduleKeys = keys;
     }

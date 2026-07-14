@@ -76,6 +76,22 @@ function normalizeModuleKeys(moduleKeys: string[] | undefined): string[] {
   return [...new Set(moduleKeys.map((item) => item.trim()).filter((item) => item.length > 0))];
 }
 
+function toModuleDisplayName(moduleKey: string): string {
+  const normalized = moduleKey.trim();
+  if (!normalized) {
+    return 'Unknown Module';
+  }
+
+  return normalized
+    .replace(/^module_/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function mergeModuleKeySets(existing: string[] | undefined, incoming: string[] | undefined): string[] {
   return normalizeModuleKeys([...(existing ?? []), ...(incoming ?? [])]);
 }
@@ -190,9 +206,41 @@ export class AppInstanceService {
   }): Promise<AppInstanceModuleCatalogItem[]> {
     if (options?.solutionCode) {
       const catalogType = resolveSolutionModuleCatalogType({ code: options.solutionCode });
-      if (catalogType !== 'POS') {
-        return [];
+      if (catalogType === 'POS') {
+        const items = await prisma.moduleDefinition.findMany({
+          select: {
+            moduleKey: true,
+            displayName: true,
+            description: true,
+            status: true,
+          },
+          orderBy: [{ category: 'asc' }, { displayName: 'asc' }],
+        });
+
+        return items.map((item) => ({
+          key: item.moduleKey,
+          name: item.displayName,
+          description: item.description,
+          status: item.status,
+        }));
       }
+
+      const items = await prisma.moduleDefinition.findMany({
+        select: {
+          moduleKey: true,
+          displayName: true,
+          description: true,
+          status: true,
+        },
+        orderBy: [{ category: 'asc' }, { displayName: 'asc' }],
+      });
+
+      return items.map((item) => ({
+        key: item.moduleKey,
+        name: item.displayName,
+        description: item.description,
+        status: item.status,
+      }));
     }
 
     if (options?.solutionId) {
@@ -205,10 +253,6 @@ export class AppInstanceService {
         throw new AppError('Solution not found', 404);
       }
 
-      const catalogType = resolveSolutionModuleCatalogType(solution);
-      if (catalogType !== 'POS') {
-        return [];
-      }
     }
 
     const items = await prisma.moduleDefinition.findMany({
@@ -237,7 +281,14 @@ export class AppInstanceService {
     businessCategory?: BusinessCategory | null;
   }): Record<string, AppInstanceModuleAssignment> {
     if (input.solutionType !== 'POS') {
-      return {};
+      return Object.fromEntries(
+        normalizeModuleKeys(input.moduleKeys).map((moduleKey) => [
+          moduleKey,
+          {
+            source: 'MANUAL_OVERRIDE' as const,
+          },
+        ]),
+      );
     }
 
     const catalog = getPosModuleCatalogMap();
@@ -310,9 +361,22 @@ export class AppInstanceService {
         .map((moduleKey) => catalogMap.get(moduleKey))
         .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
-      if (missingCatalogEntries.length > 0) {
+      const genericMissingEntries = missing
+        .filter((moduleKey) => !catalogMap.has(moduleKey))
+        .map((moduleKey) => ({
+          moduleKey,
+          displayName: toModuleDisplayName(moduleKey),
+          category: input.solutionType === 'SCHOOL_ERP' ? 'school_erp' : 'general',
+          description: `${toModuleDisplayName(moduleKey)} module`,
+          isCore: false,
+          status: 'ACTIVE' as const,
+          dependencies: [] as string[],
+          defaultConfig: undefined,
+        }));
+
+      if (missingCatalogEntries.length > 0 || genericMissingEntries.length > 0) {
         await tx.moduleDefinition.createMany({
-          data: missingCatalogEntries.map((entry) => ({
+          data: [...missingCatalogEntries, ...genericMissingEntries].map((entry) => ({
             moduleKey: entry.moduleKey,
             displayName: entry.displayName,
             category: entry.category,
