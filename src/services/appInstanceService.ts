@@ -491,12 +491,6 @@ export class AppInstanceService {
       throw new AppError('App instance not found', 404);
     }
 
-    const existingModuleKeys = current.modules.map((item) => item.moduleDefinition.moduleKey);
-    const mergedModuleKeys =
-      moduleKeys === undefined
-        ? undefined
-        : mergeModuleKeySets(existingModuleKeys, moduleKeys);
-
     const {
       endDate,
       syncMode,
@@ -504,6 +498,12 @@ export class AppInstanceService {
       moduleKeys,
       ...restData
     } = data;
+
+    const existingModuleKeys = current.modules.map((item) => item.moduleDefinition.moduleKey);
+    const mergedModuleKeys =
+      moduleKeys === undefined
+        ? undefined
+        : mergeModuleKeySets(existingModuleKeys, moduleKeys);
 
     const updated = await prisma.$transaction(async (tx) => {
       const updateResult = await tx.appInstance.updateMany({
