@@ -17,6 +17,7 @@ router.post('/login', login);
 router.post('/login-tenant', login);
 router.post('/verify', verify);
 router.get('/me', verifyToken, me);
+router.get('/tenant/status', verifyToken, me);
 router.put('/change-password', verifyToken, changePassword);
 router.post('/logout', verifyToken, logout);
 router.get('/subscription', verifyToken, getSubscription);

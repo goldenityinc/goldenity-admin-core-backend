@@ -177,7 +177,7 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
   );
 
   const resolvedEntitlements = await EntitlementService.resolveForTenant(updated.tenant.id);
-  emitTenantUpdated(req, updated.tenant.id, {
+  await emitTenantUpdated(req, updated.tenant.id, {
     action: 'SUBSCRIPTION_UPDATED',
     entitlementsRevision: resolvedEntitlements.entitlements.revision,
     activeModules: resolvedEntitlements.entitlements.active_modules,

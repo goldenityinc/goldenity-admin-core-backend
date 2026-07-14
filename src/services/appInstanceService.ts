@@ -17,7 +17,7 @@ export type AppInstanceModuleCatalogItem = {
   status: string;
 };
 
-type SolutionModuleCatalogType = 'POS' | 'ERP' | 'OTHER';
+type SolutionModuleCatalogType = 'POS' | 'ERP' | 'SCHOOL_ERP' | 'OTHER';
 
 type AppInstanceWritePayload = {
   tenantId: string;
@@ -76,6 +76,10 @@ function normalizeModuleKeys(moduleKeys: string[] | undefined): string[] {
   return [...new Set(moduleKeys.map((item) => item.trim()).filter((item) => item.length > 0))];
 }
 
+function mergeModuleKeySets(existing: string[] | undefined, incoming: string[] | undefined): string[] {
+  return normalizeModuleKeys([...(existing ?? []), ...(incoming ?? [])]);
+}
+
 function mergeRecord(
   base: Record<string, unknown> | undefined,
   override: Record<string, unknown> | undefined,
@@ -113,6 +117,10 @@ function resolveSolutionModuleCatalogType(input: {
     return 'ERP';
   }
 
+  if (normalizedCode === 'SCHOOL_ERP') {
+    return 'SCHOOL_ERP';
+  }
+
   const normalizedName = input.name?.trim().toUpperCase() ?? '';
   if (normalizedName.includes('POS')) {
     return 'POS';
@@ -120,6 +128,10 @@ function resolveSolutionModuleCatalogType(input: {
 
   if (normalizedName.includes('ERP')) {
     return 'ERP';
+  }
+
+  if (normalizedName.includes('SCHOOL')) {
+    return 'SCHOOL_ERP';
   }
 
   return 'OTHER';
@@ -449,6 +461,18 @@ export class AppInstanceService {
       select: {
         tier: true,
         addons: true,
+        modules: {
+          where: {
+            isEnabled: true,
+          },
+          include: {
+            moduleDefinition: {
+              select: {
+                moduleKey: true,
+              },
+            },
+          },
+        },
         tenant: {
           select: {
             businessCategory: true,
@@ -467,6 +491,12 @@ export class AppInstanceService {
       throw new AppError('App instance not found', 404);
     }
 
+    const existingModuleKeys = current.modules.map((item) => item.moduleDefinition.moduleKey);
+    const mergedModuleKeys =
+      moduleKeys === undefined
+        ? undefined
+        : mergeModuleKeySets(existingModuleKeys, moduleKeys);
+
     const {
       endDate,
       syncMode,
@@ -477,7 +507,7 @@ export class AppInstanceService {
 
     const updated = await prisma.$transaction(async (tx) => {
       const updateResult = await tx.appInstance.updateMany({
-        where: { id, tenantId },
+        where: { id: id, tenantId: tenantId },
         data: {
           ...restData,
           dbConnectionString: null,
@@ -494,7 +524,7 @@ export class AppInstanceService {
         solutionType: resolveSolutionModuleCatalogType(current.solution),
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
-        moduleKeys,
+        moduleKeys: mergedModuleKeys,
         businessCategory: current.tenant.businessCategory,
       });
 

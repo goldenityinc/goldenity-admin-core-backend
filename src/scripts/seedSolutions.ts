@@ -18,6 +18,11 @@ const seeds: SolutionSeed[] = [
     description: 'Enterprise resource planning for finance, inventory, procurement, and operations.',
   },
   {
+    name: 'School ERP',
+    code: 'SCHOOL_ERP',
+    description: 'School management suite for academic operations, finance, and administration.',
+  },
+  {
     name: 'Clinic Management',
     code: 'CLINIC',
     description: 'Healthcare operations suite for appointments, patient records, and billing workflows.',

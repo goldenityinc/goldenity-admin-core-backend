@@ -14,10 +14,10 @@ export function emitTenantUpdated(
   req: Request,
   tenantId: string,
   payload: Record<string, unknown>,
-): void {
+): Promise<void> {
   const resolvedTenantId = resolveTenantId(req, tenantId);
   if (!resolvedTenantId) {
-    return;
+    return Promise.resolve();
   }
 
   emitToTenant(resolvedTenantId, 'tenant_updated', {
@@ -25,6 +25,8 @@ export function emitTenantUpdated(
     ...payload,
     timestamp: nowIso(),
   });
+
+  return Promise.resolve();
 }
 
 export function emitUserChanged(

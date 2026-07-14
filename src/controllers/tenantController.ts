@@ -174,7 +174,7 @@ export const createTenant = asyncHandler(async (req: Request, res: Response) => 
     const authHeader = req.headers.authorization;
     const shouldProvisionErp =
       erpConfigured &&
-      (normalizedSolution === 'ERP' || normalizedSolution === 'BOTH');
+      (normalizedSolution === 'ERP' || normalizedSolution === 'SCHOOL_ERP' || normalizedSolution === 'BOTH');
     let erpStatus: 'success' | 'failed_or_skipped' = 'failed_or_skipped';
     let erpWarning: string | null = null;
 
