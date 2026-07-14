@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import { AuditLogService } from '../services/auditLogService';
 import { AuthService } from '../services/authService';
@@ -73,6 +74,31 @@ function parseNumberSetting(input: string | null | undefined): number | null {
   return value;
 }
 
+function parseActiveModules(input: string | null | undefined): string[] {
+  const raw = (input ?? '').toString().trim();
+  if (!raw) {
+    return [];
+  }
+
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => (typeof item === 'string' ? item.trim() : ''))
+          .filter((item) => item.length > 0);
+      }
+    } catch {
+      // Fall through to comma-separated parsing.
+    }
+  }
+
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 export const login = asyncHandler(async (req: Request, res: Response) => {
   console.log('[authController.login] request-received', {
     bodyKeys: Object.keys(req.body ?? {}),
@@ -111,6 +137,78 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     tenant: result.tenant,
     entitlements: result.entitlements,
     subscription: result.subscription,
+  });
+});
+
+export const verify = asyncHandler(async (req: Request, res: Response) => {
+  const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+  const password = (req.body?.password ?? '').toString();
+
+  if (!email || !password) {
+    throw new AppError('email dan password wajib diisi', 400);
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { email },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      tenantId: true,
+      passwordHash: true,
+      tenant: {
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+        },
+      },
+    },
+  });
+
+  if (!user || !user.passwordHash) {
+    throw new AppError('Username atau password tidak valid', 401);
+  }
+
+  const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+  if (!passwordMatches) {
+    throw new AppError('Username atau password tidak valid', 401);
+  }
+
+  if (!user.tenant?.isActive) {
+    throw new AppError('Tenant tidak aktif', 403);
+  }
+
+  const subscriptions = await prisma.$queryRaw<Array<{ activeModules: string | null }>>`
+    SELECT "activeModules"
+    FROM "subscriptions"
+    WHERE "tenantId" = ${user.tenantId}
+      AND UPPER("solution") = 'SCHOOL_ERP'
+      AND UPPER("status") = 'ACTIVE'
+    ORDER BY "updatedAt" DESC
+    LIMIT 1
+  `;
+
+  const subscription = subscriptions[0];
+  if (!subscription) {
+    throw new AppError('Unauthorized for this product', 403);
+  }
+
+  const activeModules = parseActiveModules(subscription.activeModules);
+
+  return res.status(200).json({
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      tenantId: user.tenantId,
+    },
+    tenant: {
+      status: 'ACTIVE',
+      activeModules,
+    },
   });
 });
 
