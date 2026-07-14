@@ -82,6 +82,7 @@ model User {
   firebaseUid    String?         @unique
   email          String?         @unique
   name           String
+  allowedSolutions String[]      @default([]) @map("allowed_solutions")
   employeeType   String          @default("Kasir") @map("employee_type")
   baseSalary     Decimal         @default(0) @map("base_salary") @db.Decimal(14, 2)
   commissionRate Decimal         @default(0) @map("commission_rate") @db.Decimal(14, 2)

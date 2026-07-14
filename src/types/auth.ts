@@ -2,6 +2,7 @@ export type JwtAuthPayload = {
   userId: string;
   tenantId: string;
   role?: string;
+  allowedSolutions?: string[];
   branchId?: string;
   branchCode?: string;
   isHQ?: boolean;
@@ -37,6 +38,7 @@ export type LoginResponseDto = {
     username: string;
     role: string;
     tenantId: string;
+    allowedSolutions?: string[];
     branchId?: string | null;
     isHQ?: boolean;
     customRoleId?: string | null;
@@ -74,6 +76,7 @@ export function isJwtAuthPayload(value: unknown): value is JwtAuthPayload {
     typeof candidate.userId === 'string' && candidate.userId.length > 0 &&
     typeof candidate.tenantId === 'string' && candidate.tenantId.length > 0 &&
     (candidate.role === undefined || typeof candidate.role === 'string') &&
+    (candidate.allowedSolutions === undefined || (Array.isArray(candidate.allowedSolutions) && candidate.allowedSolutions.every((item) => typeof item === 'string'))) &&
     (candidate.branchId === undefined || typeof candidate.branchId === 'string') &&
     (candidate.branchCode === undefined || typeof candidate.branchCode === 'string') &&
     (candidate.isHQ === undefined || typeof candidate.isHQ === 'boolean') &&

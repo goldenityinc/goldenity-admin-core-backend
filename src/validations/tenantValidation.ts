@@ -63,6 +63,25 @@ const optionalBooleanInput = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
+const optionalSolutionArraySchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (!Array.isArray(value)) {
+      return value;
+    }
+
+    return [...new Set(
+      value
+        .map((item) => (typeof item === 'string' ? item.trim().toUpperCase() : ''))
+        .filter((item) => item.length > 0),
+    )];
+  },
+  z.array(z.string().min(1, 'allowedSolutions entries must be non-empty strings')).optional(),
+);
+
 export const createTenantSchema = z.object({
   name: z.string().min(2, 'Tenant name must be at least 2 characters'),
   businessCategory: z.enum(BUSINESS_CATEGORY_VALUES).optional(),
@@ -135,6 +154,7 @@ export const createUserSchema = z.object({
   ),
   baseSalary: optionalDecimalInput,
   commissionRate: optionalDecimalInput,
+  allowedSolutions: optionalSolutionArraySchema,
   role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
   branchId: optionalNullableBranchIdSchema,
   isActive: z.boolean().optional(),
@@ -161,6 +181,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
   branchId: optionalNullableBranchIdSchema,
+  allowedSolutions: optionalSolutionArraySchema,
   employeeType: optionalTrimmedString().pipe(
     z.string().min(2, 'employeeType must be at least 2 characters').optional(),
   ),

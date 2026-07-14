@@ -400,6 +400,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response) => {
   const bodyParsed = updateUserSchema.safeParse({
     role: normalizedIncomingRole,
     branchId: (req.body as { branchId?: unknown }).branchId,
+    allowedSolutions: (req.body as { allowedSolutions?: unknown }).allowedSolutions,
     employeeType: (req.body as { employeeType?: unknown }).employeeType,
     baseSalary: (req.body as { baseSalary?: unknown }).baseSalary,
     commissionRate: (req.body as { commissionRate?: unknown }).commissionRate,

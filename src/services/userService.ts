@@ -32,10 +32,23 @@ type TenantUrlCandidate = {
 type UserMutationPayload = {
   role?: UserRole;
   branchId?: string | null;
+  allowedSolutions?: string[];
   employeeType?: string;
   baseSalary?: number;
   commissionRate?: number;
 };
+
+function normalizeAllowedSolutions(allowedSolutions: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(allowedSolutions)) {
+    return undefined;
+  }
+
+  return [...new Set(
+    allowedSolutions
+      .map((item) => item.trim().toUpperCase())
+      .filter((item) => item.length > 0),
+  )];
+}
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
@@ -185,6 +198,7 @@ export class UserService {
     email?: string;
     password: string;
     name: string;
+    allowedSolutions?: string[];
     employeeType?: string;
     baseSalary?: number;
     commissionRate?: number;
@@ -202,6 +216,7 @@ export class UserService {
     }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
+    const allowedSolutions = normalizeAllowedSolutions(data.allowedSolutions) ?? [];
 
     const resolvedRole = ((data.role ?? 'TENANT_ADMIN') as string).toUpperCase() as UserRole;
     const resolvedBranchId = await this.resolveUserBranchAssignment(
@@ -222,6 +237,7 @@ export class UserService {
           firebaseUid: null,
           email: data.email ?? null,
           name: data.name,
+          allowedSolutions,
           employeeType: data.employeeType ?? 'Kasir',
           baseSalary: data.baseSalary ?? 0,
           commissionRate: data.commissionRate ?? 0,
@@ -456,12 +472,14 @@ export class UserService {
       payload.branchId,
       user.branchId,
     );
+    const nextAllowedSolutions = normalizeAllowedSolutions(payload.allowedSolutions);
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
         role: nextRole,
         branchId: nextBranchId,
+        ...(nextAllowedSolutions !== undefined ? { allowedSolutions: nextAllowedSolutions } : {}),
         ...(payload.employeeType !== undefined ? { employeeType: payload.employeeType } : {}),
         ...(payload.baseSalary !== undefined ? { baseSalary: payload.baseSalary } : {}),
         ...(payload.commissionRate !== undefined ? { commissionRate: payload.commissionRate } : {}),

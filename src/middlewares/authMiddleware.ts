@@ -15,6 +15,7 @@ declare global {
         email?: string;
         tenantId: string;
         role?: string;
+        allowedSolutions?: string[];
         branchId?: string;
         branchCode?: string;
         isHQ?: boolean;
@@ -54,6 +55,7 @@ export const verifyToken = (req: Request, _res: Response, next: NextFunction) =>
       userId: decoded.userId,
       tenantId: decoded.tenantId,
       role: decoded.role,
+      allowedSolutions: decoded.allowedSolutions,
       branchId: decoded.branchId,
       branchCode: decoded.branchCode,
       isHQ: decoded.isHQ,
@@ -116,6 +118,7 @@ export const authMiddleware = async (
             userId: decoded.userId,
             tenantId: decoded.tenantId,
             role: decoded.role,
+            allowedSolutions: decoded.allowedSolutions,
             branchId: decoded.branchId,
             branchCode: decoded.branchCode,
             isHQ: decoded.isHQ,

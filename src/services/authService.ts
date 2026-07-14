@@ -91,6 +91,7 @@ export class AuthService {
     logLoginTrace('start', {
       username: credentials.username,
       tenantSlug: credentials.tenantSlug,
+      solution: credentials.solution,
     });
 
     if (!jwtSecret) {
@@ -190,6 +191,25 @@ export class AuthService {
       throw new AppError('Tenant sudah tidak aktif', 403);
     }
 
+    const loginUser = await prisma.user.findFirst({
+      where: {
+        id: resolvedLoginRecord.userId,
+        tenantId: resolvedLoginRecord.tenantId,
+      },
+      select: {
+        allowedSolutions: true,
+      },
+    });
+
+    const allowedSolutions = loginUser?.allowedSolutions ?? [];
+    if (
+      credentials.solution &&
+      allowedSolutions.length > 0 &&
+      !allowedSolutions.includes(credentials.solution)
+    ) {
+      throw new AppError('User tidak memiliki akses ke portal ini', 403);
+    }
+
     const resolvedBranchContext = await this.resolveBranchForLogin(
       resolvedLoginRecord,
     );
@@ -237,6 +257,7 @@ export class AuthService {
       userId: resolvedLoginRecord.userId,
       tenantId: resolvedLoginRecord.tenantId,
       role: resolvedLoginRecord.role ?? undefined,
+      allowedSolutions,
       branchId: resolvedBranch?.id ?? undefined,
       branchCode: resolvedBranch?.branchCode ?? undefined,
       isHQ: resolvedBranchContext.isHQ || undefined,
@@ -272,6 +293,7 @@ export class AuthService {
         username: credentials.username,
         role: resolvedLoginRecord.role ?? 'CRM_STAFF',
         tenantId: resolvedLoginRecord.tenantId,
+        allowedSolutions,
         branchId: resolvedBranch?.id ?? null,
         isHQ: resolvedBranchContext.isHQ,
         customRoleId: resolvedLoginRecord.customRoleId,
