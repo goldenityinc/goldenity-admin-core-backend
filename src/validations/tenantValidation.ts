@@ -181,6 +181,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   role: z.enum(['TENANT_ADMIN', 'CRM_MANAGER', 'CRM_STAFF', 'READ_ONLY']).optional(),
   branchId: optionalNullableBranchIdSchema,
+  email: optionalTrimmedString().pipe(z.string().email('Invalid user email').optional()),
   allowedSolutions: optionalSolutionArraySchema,
   employeeType: optionalTrimmedString().pipe(
     z.string().min(2, 'employeeType must be at least 2 characters').optional(),
@@ -191,6 +192,7 @@ export const updateUserSchema = z.object({
     (data) =>
       data.role !== undefined ||
       data.branchId !== undefined ||
+      data.email !== undefined ||
       data.employeeType !== undefined ||
       data.baseSalary !== undefined ||
       data.commissionRate !== undefined,

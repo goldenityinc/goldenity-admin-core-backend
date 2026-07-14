@@ -32,6 +32,7 @@ type TenantUrlCandidate = {
 type UserMutationPayload = {
   role?: UserRole;
   branchId?: string | null;
+  email?: string;
   allowedSolutions?: string[];
   employeeType?: string;
   baseSalary?: number;
@@ -472,13 +473,31 @@ export class UserService {
       payload.branchId,
       user.branchId,
     );
+    const nextEmail = payload.email?.trim().toLowerCase();
     const nextAllowedSolutions = normalizeAllowedSolutions(payload.allowedSolutions);
+
+    if (nextEmail !== undefined) {
+      const conflictingUser = await prisma.user.findFirst({
+        where: {
+          email: nextEmail,
+          id: { not: userId },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (conflictingUser) {
+        throw new AppError('Email sudah digunakan user lain', 409);
+      }
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
         role: nextRole,
         branchId: nextBranchId,
+        ...(nextEmail !== undefined ? { email: nextEmail } : {}),
         ...(nextAllowedSolutions !== undefined ? { allowedSolutions: nextAllowedSolutions } : {}),
         ...(payload.employeeType !== undefined ? { employeeType: payload.employeeType } : {}),
         ...(payload.baseSalary !== undefined ? { baseSalary: payload.baseSalary } : {}),
