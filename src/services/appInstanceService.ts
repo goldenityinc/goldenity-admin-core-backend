@@ -1,4 +1,9 @@
-import { Prisma, type BusinessCategory, type ModuleAssignmentSource } from '@prisma/client';
+import {
+  Prisma,
+  type AppModule,
+  type BusinessCategory,
+  type ModuleAssignmentSource,
+} from '@prisma/client';
 import prisma from '../config/database';
 import { getPosModuleCatalogMap, resolveLegacyModuleAssignments } from '../constants/moduleCatalog';
 import { getBusinessCategoryDefaultModuleKeys } from '../constants/businessCategory';
@@ -343,7 +348,7 @@ export class AppInstanceService {
       ? await tx.moduleDefinition.findMany({
           where: {
             moduleKey: {
-              in: moduleKeys,
+              in: moduleKeys as AppModule[],
             },
           },
           select: {
@@ -353,7 +358,7 @@ export class AppInstanceService {
         })
       : [];
 
-    let definitionMap = new Map(definitions.map((item) => [item.moduleKey, item.id]));
+    let definitionMap = new Map(definitions.map((item) => [item.moduleKey as string, item.id]));
     const missing = moduleKeys.filter((moduleKey) => !definitionMap.has(moduleKey));
     if (missing.length > 0) {
       const catalogMap = getPosModuleCatalogMap();
@@ -377,7 +382,7 @@ export class AppInstanceService {
       if (missingCatalogEntries.length > 0 || genericMissingEntries.length > 0) {
         await tx.moduleDefinition.createMany({
           data: [...missingCatalogEntries, ...genericMissingEntries].map((entry) => ({
-            moduleKey: entry.moduleKey,
+            moduleKey: entry.moduleKey as AppModule,
             displayName: entry.displayName,
             category: entry.category,
             description: entry.description,
@@ -392,7 +397,7 @@ export class AppInstanceService {
         definitions = await tx.moduleDefinition.findMany({
           where: {
             moduleKey: {
-              in: moduleKeys,
+              in: moduleKeys as AppModule[],
             },
           },
           select: {
@@ -400,7 +405,7 @@ export class AppInstanceService {
             moduleKey: true,
           },
         });
-        definitionMap = new Map(definitions.map((item) => [item.moduleKey, item.id]));
+        definitionMap = new Map(definitions.map((item) => [item.moduleKey as string, item.id]));
       }
 
       const unresolved = moduleKeys.filter((moduleKey) => !definitionMap.has(moduleKey));

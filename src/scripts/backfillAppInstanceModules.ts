@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type AppModule } from '@prisma/client';
 import prisma from '../config/database';
 import {
   POS_MODULE_CATALOG,
@@ -17,7 +17,7 @@ function toNullableInputJson(
 async function main() {
   for (const moduleDefinition of POS_MODULE_CATALOG) {
     await prisma.moduleDefinition.upsert({
-      where: { moduleKey: moduleDefinition.moduleKey },
+      where: { moduleKey: moduleDefinition.moduleKey as AppModule },
       update: {
         displayName: moduleDefinition.displayName,
         category: moduleDefinition.category,
@@ -28,7 +28,7 @@ async function main() {
         defaultConfig: toNullableInputJson(moduleDefinition.defaultConfig),
       },
       create: {
-        moduleKey: moduleDefinition.moduleKey,
+        moduleKey: moduleDefinition.moduleKey as AppModule,
         displayName: moduleDefinition.displayName,
         category: moduleDefinition.category,
         description: moduleDefinition.description,
@@ -43,7 +43,7 @@ async function main() {
   const moduleDefinitions = await prisma.moduleDefinition.findMany({
     select: { id: true, moduleKey: true },
   });
-  const moduleDefinitionByKey = new Map(
+  const moduleDefinitionByKey = new Map<string, string>(
     moduleDefinitions.map((definition) => [definition.moduleKey, definition.id]),
   );
 

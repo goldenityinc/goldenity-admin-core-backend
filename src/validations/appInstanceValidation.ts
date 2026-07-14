@@ -1,11 +1,14 @@
 import { z } from 'zod';
+import { AppModule } from '@prisma/client';
 import { SUBSCRIPTION_ADDON_VALUES } from '../constants/subscriptionAddons';
+
+const appModuleSchema = z.nativeEnum(AppModule);
 
 export const createAppInstanceSchema = z.object({
   tenantId: z.string().uuid('tenantId must be a valid UUID'),
   solutionId: z.string().uuid('solutionId must be a valid UUID'),
   tier: z.enum(['Standard', 'Professional', 'Enterprise', 'Custom']),
-  moduleKeys: z.array(z.string().min(1, 'moduleKeys entries must be non-empty strings')).optional(),
+  moduleKeys: z.array(appModuleSchema).optional(),
   addons: z.array(z.enum(SUBSCRIPTION_ADDON_VALUES)).optional(),
   syncMode: z.enum(['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER']).optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
@@ -22,7 +25,7 @@ export const createAppInstanceSchema = z.object({
 
 export const updateAppInstanceSchema = z.object({
   tier: z.enum(['Standard', 'Professional', 'Enterprise', 'Custom']).optional(),
-  moduleKeys: z.array(z.string().min(1, 'moduleKeys entries must be non-empty strings')).optional(),
+  moduleKeys: z.array(appModuleSchema).optional(),
   addons: z.array(z.enum(SUBSCRIPTION_ADDON_VALUES)).optional(),
   syncMode: z.enum(['CLOUD_FIRST', 'LOCAL_FIRST', 'LOCAL_SERVER']).optional(),
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
