@@ -8,6 +8,7 @@ export type JwtAuthPayload = {
   isHQ?: boolean;
   tier?: string | null;
   addons?: string[];
+  subscriptionEndDate?: string | null;
   entitlementsRevision?: number;
   activeModules?: string[];
 };
@@ -62,6 +63,7 @@ export type LoginResponseDto = {
     tier?: string | null;
     addons?: string[];
     endDate?: string | null;
+    subscriptionEndDate?: string | null;
   };
 };
 
@@ -82,6 +84,7 @@ export function isJwtAuthPayload(value: unknown): value is JwtAuthPayload {
     (candidate.isHQ === undefined || typeof candidate.isHQ === 'boolean') &&
     (candidate.tier === undefined || candidate.tier === null || typeof candidate.tier === 'string') &&
     (candidate.addons === undefined || (Array.isArray(candidate.addons) && candidate.addons.every((item) => typeof item === 'string'))) &&
+    (candidate.subscriptionEndDate === undefined || candidate.subscriptionEndDate === null || typeof candidate.subscriptionEndDate === 'string') &&
     (candidate.entitlementsRevision === undefined || typeof candidate.entitlementsRevision === 'number') &&
     (candidate.activeModules === undefined || (Array.isArray(candidate.activeModules) && candidate.activeModules.every((item) => typeof item === 'string')))
   );

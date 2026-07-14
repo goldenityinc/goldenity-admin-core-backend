@@ -222,16 +222,6 @@ export class AuthService {
     );
     const resolvedBranch = resolvedBranchContext.branch;
 
-    // PENGECEKAN SUBSCRIPTION (Masa Aktif) DITAMBAHKAN DI SINI! 🔥
-    if (resolvedLoginRecord.endDate) {
-      const currentDate = new Date();
-      const expirationDate = new Date(resolvedLoginRecord.endDate);
-      
-      if (currentDate > expirationDate) {
-        throw new AppError('Masa langganan aplikasi Anda telah habis. Silakan hubungi admin untuk perpanjangan.', 403);
-      }
-    }
-
     if (!resolvedLoginRecord.tenantSlug) {
       throw new AppError('Konfigurasi slug tenant tidak ditemukan untuk login', 500);
     }
@@ -249,6 +239,21 @@ export class AuthService {
         resolvedLoginRecord.subscriptionAddons ??
         [],
     );
+    const subscriptionEndDate =
+      resolvedEntitlements.subscription.endDate ??
+      resolvedLoginRecord.endDate?.toISOString() ??
+      null;
+
+    // Prioritize POS active app instance end date from entitlement resolution.
+    if (subscriptionEndDate) {
+      const currentDate = new Date();
+      const expirationDate = new Date(subscriptionEndDate);
+
+      if (currentDate > expirationDate) {
+        throw new AppError('Masa langganan aplikasi Anda telah habis. Silakan hubungi admin untuk perpanjangan.', 403);
+      }
+    }
+
     const tenant = await prisma.tenant.findUnique({
       where: { id: resolvedLoginRecord.tenantId },
       select: {
@@ -270,6 +275,7 @@ export class AuthService {
       isHQ: resolvedBranchContext.isHQ || undefined,
       tier,
       addons,
+      subscriptionEndDate,
       entitlementsRevision: resolvedEntitlements.entitlements.revision,
       activeModules: resolvedEntitlements.entitlements.active_modules,
     };
@@ -323,15 +329,14 @@ export class AuthService {
           (tenant?.showInventoryImages ??
             resolvedLoginRecord.tenantShowInventoryImages) !== false,
         syncMode: resolvedLoginRecord.syncMode ?? 'CLOUD_FIRST',
+        subscriptionEndDate,
       },
       entitlements: resolvedEntitlements.entitlements,
       subscription: {
         tier,
         addons,
-        endDate:
-          resolvedEntitlements.subscription.endDate ??
-          resolvedLoginRecord.endDate?.toISOString() ??
-          null,
+        endDate: subscriptionEndDate,
+        subscriptionEndDate,
       },
     };
   }
@@ -341,13 +346,14 @@ export class AuthService {
     return subscription?.tier ?? null;
   }
 
-  static async resolveSubscriptionForTenant(tenantId: string): Promise<{ tier: string | null; addons: string[] } | null> {
+  static async resolveSubscriptionForTenant(tenantId: string): Promise<{ tier: string | null; addons: string[]; endDate: string | null } | null> {
     try {
-      const rows = await prisma.$queryRawUnsafe<Array<{ tier: string | null; addons: string[] | null }>>(
+      const rows = await prisma.$queryRawUnsafe<Array<{ tier: string | null; addons: string[] | null; endDate: Date | null }>>(
         `
         SELECT
           ai."tier"::text AS tier,
-          COALESCE(ai."addons", ARRAY[]::text[]) AS addons
+          COALESCE(ai."addons", ARRAY[]::text[]) AS addons,
+          ai."endDate" AS "endDate"
         FROM app_instances ai
         LEFT JOIN solutions s ON s.id = ai."solutionId"
         WHERE ai."tenantId" = $1
@@ -371,6 +377,7 @@ export class AuthService {
       return {
         tier: row.tier ?? null,
         addons: normalizeSubscriptionAddons(row.addons),
+        endDate: row.endDate ? row.endDate.toISOString() : null,
       };
     } catch {
       return null;

@@ -376,6 +376,7 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
       feature_flags: resolved.entitlements.modules,
       business_category: tenant.businessCategory,
       subscription: resolved.subscription,
+      subscriptionEndDate: resolved.subscription.endDate,
       entitlements_revision: resolved.entitlements.revision,
       resolved_at: resolved.entitlements.resolvedAt,
       last_updated_at: new Date(
@@ -401,16 +402,21 @@ export const getSubscription = asyncHandler(async (req: Request, res: Response) 
   const subscription = await AuthService.resolveSubscriptionForTenant(tenantId);
   const tier = subscription?.tier ?? null;
   const addons = subscription?.addons ?? [];
+  const endDate = subscription?.endDate ?? null;
 
   return res.status(200).json({
     success: true,
     user: {
       tier,
       addons,
+      endDate,
+      subscriptionEndDate: endDate,
     },
     subscription: {
       tier,
       addons,
+      endDate,
+      subscriptionEndDate: endDate,
     },
   });
 });
