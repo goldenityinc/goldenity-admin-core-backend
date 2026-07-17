@@ -26,6 +26,7 @@ type QrMenuItemRow = {
   product_type: string | null;
   price: number | null;
   stock: number | null;
+  is_stock_tracked?: boolean | null;
   image_url: string | null;
   is_service?: boolean | null;
 };
@@ -118,7 +119,7 @@ export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
     .trim();
 
   const rows = await prisma.$queryRaw<QrMenuItemRow[]>`
-    SELECT id, name, category, product_type, price, stock, image_url, is_service
+    SELECT id, name, category, product_type, price, stock, is_stock_tracked, image_url, is_service
     FROM products
     WHERE tenant_id = ${tenantId}
       AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
@@ -129,6 +130,7 @@ export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
       )
       AND (
         COALESCE(is_service, false) = true
+        OR COALESCE(is_stock_tracked, true) = false
         OR COALESCE(stock, 0) > 0
       )
     ORDER BY name ASC
@@ -137,13 +139,14 @@ export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
   const fallbackRows = rows.length > 0
     ? rows
     : await prisma.$queryRaw<QrMenuItemRow[]>`
-        SELECT id, name, category, product_type, price, stock, image_url, is_service
+      SELECT id, name, category, product_type, price, stock, is_stock_tracked, image_url, is_service
         FROM products
         WHERE tenant_id = ${tenantId}
           AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
           AND COALESCE(is_active, true) = true
           AND (
             COALESCE(is_service, false) = true
+            OR COALESCE(is_stock_tracked, true) = false
             OR COALESCE(stock, 0) > 0
           )
         ORDER BY name ASC
@@ -190,7 +193,10 @@ export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
       categoryId,
       categoryName,
       price: Number(row.price || 0),
-      isAvailable: Number(row.stock || 0) > 0 || row.is_service === true,
+      isAvailable:
+        row.is_service === true ||
+        row.is_stock_tracked === false ||
+        Number(row.stock || 0) > 0,
       stock: Number(row.stock || 0),
       imageUrl: row.image_url || null,
       sortOrder: 0,
@@ -258,8 +264,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     }
 
     const productIds = items.map((item) => item.productId);
-    const products = await tx.$queryRaw<Array<{ id: string; name: string; price: number | null; is_service: boolean | null; stock: number | null }>>`
-      SELECT id, name, price, is_service, stock
+    const products = await tx.$queryRaw<Array<{ id: string; name: string; price: number | null; is_service: boolean | null; is_stock_tracked: boolean | null; stock: number | null }>>`
+      SELECT id, name, price, is_service, is_stock_tracked, stock
       FROM products
       WHERE tenant_id = ${tenantId}
         AND id IN (${Prisma.join(productIds)})
@@ -275,7 +281,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         throw new AppError(`Produk tidak ditemukan: ${item.productId}`, 404);
       }
 
-      if (!(product.is_service === true) && Number(product.stock ?? 0) < item.qty) {
+      const isStockTracked = product.is_stock_tracked !== false;
+      if (!(product.is_service === true) && isStockTracked && Number(product.stock ?? 0) < item.qty) {
         throw new AppError(`Stok tidak cukup untuk produk ${product.name}`, 400);
       }
 
@@ -289,6 +296,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         customPrice: unitPrice,
         note: item.note ?? null,
         isService: product.is_service === true,
+        isStockTracked,
       };
     });
 
@@ -334,6 +342,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         receipt_number,
         payment_method,
         payment_status,
+        notes,
         order_type,
         order_status,
         total_price,
@@ -352,6 +361,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         ${receiptNumber},
         ${paymentMethodLabel},
         ${paymentStatus},
+        ${orderNote || null},
         ${'DINE_IN'}::"OrderType",
         ${orderStatus}::"OrderStatus",
         ${total},
@@ -380,7 +390,9 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           product_name,
           qty,
           custom_price,
+          notes,
           note,
+          item_note,
           is_service
         )
         VALUES (
@@ -391,11 +403,13 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           ${item.qty},
           ${item.customPrice},
           ${item.note},
+          ${item.note},
+          ${item.note},
           ${item.isService}
         )
       `;
 
-      if (!item.isService) {
+      if (!item.isService && item.isStockTracked) {
         await tx.$queryRaw`
           UPDATE products
           SET stock = COALESCE(stock, 0) - ${item.qty}, updated_at = NOW()

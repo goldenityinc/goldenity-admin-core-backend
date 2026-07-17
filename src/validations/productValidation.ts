@@ -42,6 +42,8 @@ export const createProductSchema = z.object({
   purchasePrice: z.number().finite().nonnegative().optional().nullable(),
   purchase_price: z.number().finite().nonnegative().optional().nullable(),
   stock: z.number().int().nonnegative().optional(),
+  isStockTracked: z.boolean().optional(),
+  is_stock_tracked: z.boolean().optional(),
   isService: z.boolean().optional(),
   is_service: z.boolean().optional(),
   supplierName: optionalText,

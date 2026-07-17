@@ -7,8 +7,10 @@ const saleItemSchema = z.object({
   productId: z.string().trim().min(1).optional(),
   productName: z.string().trim().min(1).optional(),
   qty: z.coerce.number().int().min(1).default(1),
+  notes: z.string().trim().min(1).optional().nullable(),
   note: z.string().trim().min(1).optional().nullable(),
   isService: z.boolean().optional().default(false),
+  isStockTracked: z.boolean().optional(),
   isCustomItem: z.boolean().optional().default(false),
   customName: z.string().trim().min(1).optional().nullable(),
   customPrice: decimalLikeSchema.optional().nullable(),
@@ -75,6 +77,7 @@ export const createSaleSchema = z.object({
   totalTax: bigintLikeSchema.optional().nullable(),
   totalProfit: bigintLikeSchema.optional().nullable(),
   amountPaid: decimalLikeSchema.optional().nullable(),
+  notes: z.string().trim().min(1).optional().nullable(),
   items: z.array(saleItemSchema).min(1, 'At least one sale item is required'),
 }).superRefine((data, ctx) => {
   const orderType = data.orderType ?? data.order_type;

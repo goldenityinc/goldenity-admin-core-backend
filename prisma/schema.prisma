@@ -389,6 +389,7 @@ model products {
   price          Float?    @default(0)
   purchase_price Float?
   stock          Int?      @default(0)
+  is_stock_tracked Boolean @default(true)
   is_available   Boolean?  @default(true)
   is_service     Boolean?  @default(false)
   supplier_name  String?
@@ -420,6 +421,7 @@ model sales_record_items {
   product_name    String?
   qty             Int       @default(1)
   custom_price    Decimal?  @db.Decimal(14, 2)
+  notes           String?
   note            String?
   item_note       String?
   is_service      Boolean   @default(false)
@@ -454,6 +456,7 @@ model sales_records {
   cashier_id              String?
   cashier_name            String?
   cashier_note            String?     @db.Text
+  notes                   String?
   mechanic_id             String?
   mechanic_name           String?
   mechanic_commission     Decimal?    @default(0) @db.Decimal(14, 2)

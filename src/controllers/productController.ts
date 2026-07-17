@@ -258,6 +258,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
   );
   const purchasePrice = body.purchasePrice ?? body.purchase_price;
   const isService = body.isService ?? body.is_service ?? false;
+  const isStockTracked = body.isStockTracked ?? body.is_stock_tracked ?? !isService;
   const unit = parseOptionalUnit(body.unit ?? body.unitName ?? body.unit_name) ?? 'pcs';
 
   const created = await ProductService.createProduct({
@@ -272,6 +273,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     price: body.price ?? 0,
     purchase_price: isService ? 0 : purchasePrice ?? null,
     stock: isService ? 0 : body.stock ?? 0,
+    is_stock_tracked: isStockTracked,
     is_available: true,
     is_service: isService,
     supplier_name: body.supplierName ?? body.supplier_name ?? null,
@@ -319,6 +321,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
   const branchIdRaw = parsed.data.branchId ?? parsed.data.branch_id;
   const isAvailableRaw = parsed.data.is_available ?? parsed.data.isAvailable;
   const isActiveRaw = parsed.data.is_active ?? parsed.data.isActive;
+  const isStockTrackedRaw = parsed.data.isStockTracked ?? parsed.data.is_stock_tracked;
   const stockRaw = parsed.data.stock;
   const priceRaw = parsed.data.price;
   const purchasePriceRaw = parsed.data.purchasePrice ?? parsed.data.purchase_price;
@@ -348,6 +351,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       : {}),
     ...(isAvailableRaw !== undefined ? { is_available: Boolean(isAvailableRaw) } : {}),
     ...(isActiveRaw !== undefined ? { is_active: Boolean(isActiveRaw) } : {}),
+    ...(isStockTrackedRaw !== undefined ? { is_stock_tracked: Boolean(isStockTrackedRaw) } : {}),
     ...(stockRaw !== undefined ? { stock: stockRaw } : {}),
     ...(priceRaw !== undefined ? { price: priceRaw } : {}),
     ...(purchasePriceRaw !== undefined ? { purchase_price: purchasePriceRaw } : {}),

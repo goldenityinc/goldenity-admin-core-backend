@@ -499,8 +499,37 @@ export class TransactionService {
           },
         });
 
+        const productIds = Array.from(
+          new Set(
+            soldItems
+              .map((item) => item.product_id?.trim())
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+
+        const trackedProducts = productIds.length > 0
+          ? await tx.products.findMany({
+              where: {
+                tenant_id: tenantId,
+                id: { in: productIds },
+              },
+              select: {
+                id: true,
+                is_stock_tracked: true,
+              },
+            })
+          : [];
+
+        const isStockTrackedByProductId = new Map(
+          trackedProducts.map((product) => [product.id, product.is_stock_tracked !== false]),
+        );
+
         for (const item of soldItems) {
           if (item.is_service || !item.product_id) {
+            continue;
+          }
+
+          if (isStockTrackedByProductId.get(item.product_id) === false) {
             continue;
           }
 

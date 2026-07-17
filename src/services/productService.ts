@@ -15,6 +15,7 @@ export type ProductUpdateFields = {
   branchId?: bigint | null;
   is_available?: boolean;
   is_active?: boolean;
+  is_stock_tracked?: boolean;
   image_url?: string;
   name?: string;
   unit?: string;
@@ -39,6 +40,7 @@ export type ProductCreateInput = {
   stock?: number;
   is_available?: boolean;
   is_service?: boolean;
+  is_stock_tracked?: boolean;
   supplier_name?: string | null;
   image_url?: string | null;
   is_active?: boolean;
@@ -107,6 +109,7 @@ export class ProductService {
           price: true,
           purchase_price: true,
           stock: true,
+          is_stock_tracked: true,
           is_service: true,
           supplier_name: true,
           image_url: true,
@@ -176,6 +179,7 @@ export class ProductService {
       ...(fields.branchId !== undefined ? { branchId: fields.branchId } : {}),
       ...(fields.is_available !== undefined ? { is_available: fields.is_available } : {}),
       ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
+      ...(fields.is_stock_tracked !== undefined ? { is_stock_tracked: fields.is_stock_tracked } : {}),
       ...(fields.image_url !== undefined ? { image_url: fields.image_url } : {}),
       ...(fields.name !== undefined ? { name: fields.name } : {}),
       ...(fields.unit !== undefined ? { unit: fields.unit } : {}),
@@ -212,6 +216,7 @@ export class ProductService {
         price: input.price ?? 0,
         purchase_price: input.purchase_price ?? null,
         stock: input.stock ?? 0,
+        is_stock_tracked: input.is_stock_tracked ?? true,
         is_available: input.is_available ?? true,
         is_service: input.is_service ?? false,
         supplier_name: input.supplier_name ?? null,

@@ -38,6 +38,7 @@ type SaleRow = {
   receipt_number: string | null;
   cashier_id: string | null;
   cashier_name: string | null;
+  notes: string | null;
   mechanic_id: string | null;
   mechanic_name: string | null;
   mechanic_commission: Prisma.Decimal | null;
@@ -58,6 +59,7 @@ type SaleItemRow = {
   product_name: string | null;
   qty: number;
   custom_price: Prisma.Decimal | null;
+  notes: string | null;
   note: string | null;
   item_note: string | null;
   is_service: boolean;
@@ -114,6 +116,7 @@ function toOptionalDate(value: string | Date | null | undefined): Date | null | 
 
 function normalizeSaleItem(item: SaleItemPayload) {
   const customPrice = toOptionalDecimal(item.customPrice ?? undefined);
+  const resolvedItemNote = item.notes ?? item.note ?? null;
   const normalizedProductName = item.isCustomItem
     ? (item.customName ?? '').trim()
     : (item.productName?.trim() || null);
@@ -133,8 +136,11 @@ function normalizeSaleItem(item: SaleItemPayload) {
     product_name: normalizedProductName,
     qty: item.qty,
     custom_price: resolvedCustomPrice,
-    note: item.note ?? null,
+    notes: resolvedItemNote,
+    note: resolvedItemNote,
+    item_note: resolvedItemNote,
     is_service: item.isService ?? false,
+    is_stock_tracked: item.isStockTracked,
     is_custom_item: item.isCustomItem ?? false,
     custom_name: item.isCustomItem ? normalizedProductName : item.customName ?? null,
     mechanic_id: mechanicId,
@@ -247,6 +253,7 @@ export class SalesService {
           "receipt_number",
           "cashier_id",
           "cashier_name",
+          "notes",
           "mechanic_id",
           "mechanic_name",
           "mechanic_commission",
@@ -282,6 +289,7 @@ export class SalesService {
           ${resolvedReceiptNumber},
           ${payload.cashierId ?? null},
           ${payload.cashierName ?? null},
+          ${payload.notes ?? null},
           ${payload.mechanicId ?? null},
           ${payload.mechanicName ?? null},
           ${toOptionalDecimal(payload.mechanicCommission ?? undefined)},
@@ -291,6 +299,7 @@ export class SalesService {
             productName: item.product_name,
             qty: item.qty,
             customPrice: item.custom_price?.toString() ?? null,
+            notes: item.notes,
             note: item.note,
             isService: item.is_service,
             isCustomItem: item.is_custom_item,
@@ -322,7 +331,9 @@ export class SalesService {
             "is_custom_item",
             "custom_name",
             "custom_price",
+            "notes",
             "note",
+            "item_note",
             "is_service",
             "mechanic_id",
             "employee_id"
@@ -336,7 +347,9 @@ export class SalesService {
             ${item.is_custom_item},
             ${item.custom_name},
             ${item.custom_price},
+            ${item.notes},
             ${item.note},
+            ${item.item_note},
             ${item.is_service},
             ${item.mechanic_id},
             ${item.employee_id}
@@ -371,7 +384,32 @@ export class SalesService {
       }
 
       const stockUpdates: StockDeductionEntry[] = [];
+      const trackedProductRows = stockDeductionMap.size > 0
+        ? await tx.products.findMany({
+            where: {
+              tenant_id: tenantId,
+              id: {
+                in: Array.from(stockDeductionMap.keys()),
+              },
+            },
+            select: {
+              id: true,
+              is_stock_tracked: true,
+            },
+          })
+        : [];
+
+      const trackedProductIds = new Set(
+        trackedProductRows
+          .filter((product) => product.is_stock_tracked !== false)
+          .map((product) => product.id),
+      );
+
       for (const [productId, qty] of stockDeductionMap.entries()) {
+        if (!trackedProductIds.has(productId)) {
+          continue;
+        }
+
         await tx.products.updateMany({
           where: {
             tenant_id: tenantId,
