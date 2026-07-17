@@ -107,6 +107,9 @@ export const createTenantSchema = z.object({
   qrisImageUrl: optionalTrimmedString().pipe(
     z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional(),
   ),
+  receiptFooter: optionalTrimmedString().pipe(
+    z.string().max(500, 'receiptFooter maksimal 500 karakter').optional(),
+  ),
   allowPayAtCashier: optionalBooleanInput,
   isPaymentProofMandatory: optionalBooleanInput,
   enableQrisOcr: optionalBooleanInput,
@@ -132,6 +135,7 @@ export const updateTenantSchema = z.object({
   address: z.string().min(5, 'Address must be at least 5 characters').optional().nullable(),
   logoUrl: z.string().url('logoUrl harus berupa URL valid').max(500).optional().nullable(),
   qrisImageUrl: z.string().url('qrisImageUrl harus berupa URL valid').max(500).optional().nullable(),
+  receiptFooter: z.string().max(500, 'receiptFooter maksimal 500 karakter').optional().nullable(),
   allowPayAtCashier: optionalBooleanInput,
   isPaymentProofMandatory: optionalBooleanInput,
   enableQrisOcr: optionalBooleanInput,

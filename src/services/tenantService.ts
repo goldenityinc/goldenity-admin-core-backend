@@ -13,6 +13,7 @@ export class TenantService {
     address?: string;
     logoUrl?: string;
     qrisImageUrl?: string;
+    receiptFooter?: string;
     allowPayAtCashier?: boolean;
     isPaymentProofMandatory?: boolean;
     enableQrisOcr?: boolean;
@@ -42,6 +43,7 @@ export class TenantService {
           businessCategory: data.businessCategory ?? 'GENERAL',
           logoUrl: data.logoUrl,
           qrisImageUrl: data.qrisImageUrl,
+          receiptFooter: data.receiptFooter,
           allowPayAtCashier: data.allowPayAtCashier ?? true,
           isPaymentProofMandatory:
             data.isPaymentProofMandatory ?? data.enableQrisOcr ?? true,
@@ -123,6 +125,7 @@ export class TenantService {
           address: true,
           logoUrl: true,
           qrisImageUrl: true,
+          receiptFooter: true,
           allowPayAtCashier: true,
           isPaymentProofMandatory: true,
           isActive: true,

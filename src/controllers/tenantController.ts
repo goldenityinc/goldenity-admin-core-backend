@@ -108,6 +108,14 @@ function parseBooleanLike(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function normalizeOptionalText(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = value.toString().trim();
+  return normalized.length == 0 ? null : normalized;
+}
+
 function parseOptionalBranchId(value: unknown): bigint | null {
   const raw = (value ?? '').toString().trim();
   if (!raw) {
@@ -151,6 +159,12 @@ function normalizeTenantUpdateBody(rawBody: unknown): Record<string, unknown> {
   const isActive = parseBooleanLike(body.isActive) ?? parseBooleanLike(body.is_active);
   if (typeof isActive === 'boolean') {
     body.isActive = isActive;
+  }
+
+  const receiptFooterRaw = body.receiptFooter ?? body.receipt_footer;
+  if (receiptFooterRaw !== undefined) {
+    const normalizedReceiptFooter = normalizeOptionalText(receiptFooterRaw);
+    body.receiptFooter = normalizedReceiptFooter;
   }
 
   return body;
@@ -351,6 +365,9 @@ export const updateTenant = asyncHandler(async (req: Request, res: Response) => 
       ...(logoUrl !== undefined ? { logoUrl } : {}),
       ...(logoObjectKey !== undefined ? { logoObjectKey } : {}),
       ...(!targetBranch && qrisImageUrl !== undefined ? { qrisImageUrl } : {}),
+      ...(bodyParsed.data.receiptFooter !== undefined
+        ? { receiptFooter: bodyParsed.data.receiptFooter }
+        : {}),
       ...(typeof bodyParsed.data.allowPayAtCashier === 'boolean'
         ? { allowPayAtCashier: bodyParsed.data.allowPayAtCashier }
         : {}),
