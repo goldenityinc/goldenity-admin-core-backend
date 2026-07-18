@@ -15,9 +15,11 @@ export type ProductUpdateFields = {
   branchId?: bigint | null;
   is_available?: boolean;
   is_active?: boolean;
+  is_service?: boolean;
   is_stock_tracked?: boolean;
   image_url?: string;
   name?: string;
+  product_type?: string;
   unit?: string;
   barcode?: string | null;
   category?: string | null;
@@ -179,9 +181,11 @@ export class ProductService {
       ...(fields.branchId !== undefined ? { branchId: fields.branchId } : {}),
       ...(fields.is_available !== undefined ? { is_available: fields.is_available } : {}),
       ...(fields.is_active !== undefined ? { is_active: fields.is_active } : {}),
+      ...(fields.is_service !== undefined ? { is_service: fields.is_service } : {}),
       ...(fields.is_stock_tracked !== undefined ? { is_stock_tracked: fields.is_stock_tracked } : {}),
       ...(fields.image_url !== undefined ? { image_url: fields.image_url } : {}),
       ...(fields.name !== undefined ? { name: fields.name } : {}),
+      ...(fields.product_type !== undefined ? { product_type: fields.product_type } : {}),
       ...(fields.unit !== undefined ? { unit: fields.unit } : {}),
       ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
       ...(fields.category !== undefined ? { category: fields.category } : {}),

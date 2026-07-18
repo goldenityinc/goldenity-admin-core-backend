@@ -87,6 +87,22 @@ function parseOptionalUnit(value: unknown): string | null {
   return normalized.toLowerCase();
 }
 
+function normalizeProductTypeLabel(value: unknown, fallbackIsService = false): string {
+  const normalized = (value ?? '').toString().trim().toLowerCase();
+  if (normalized === 'jasa' || normalized.includes('jasa')) {
+    return 'Jasa';
+  }
+  if (
+    normalized === 'non stok' ||
+    normalized === 'non-stok' ||
+    normalized === 'non_stock' ||
+    normalized === 'nonstock'
+  ) {
+    return 'Non Stok';
+  }
+  return fallbackIsService ? 'Jasa' : 'Barang';
+}
+
 async function resolveProductCategoryName(
   tenantId: string,
   rawCategoryId: unknown,
@@ -257,8 +273,14 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     body.category,
   );
   const purchasePrice = body.purchasePrice ?? body.purchase_price;
+  const rawProductType = body.productType ?? body.product_type;
   const isService = body.isService ?? body.is_service ?? false;
-  const isStockTracked = body.isStockTracked ?? body.is_stock_tracked ?? !isService;
+  const normalizedProductType = normalizeProductTypeLabel(
+    rawProductType,
+    isService,
+  );
+  const resolvedIsService = normalizedProductType === 'Jasa' || isService;
+  const isStockTracked = body.isStockTracked ?? body.is_stock_tracked ?? (normalizedProductType === 'Non Stok' ? false : !resolvedIsService);
   const unit = parseOptionalUnit(body.unit ?? body.unitName ?? body.unit_name) ?? 'pcs';
 
   const created = await ProductService.createProduct({
@@ -266,16 +288,16 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     tenantId,
     branchId,
     name: body.name,
-    product_type: isService ? 'Jasa' : 'Barang',
+    product_type: normalizedProductType,
     unit,
     barcode: body.barcode ?? null,
     category: categoryName,
     price: body.price ?? 0,
-    purchase_price: isService ? 0 : purchasePrice ?? null,
-    stock: isService ? 0 : body.stock ?? 0,
+    purchase_price: resolvedIsService ? 0 : purchasePrice ?? null,
+    stock: resolvedIsService || !isStockTracked ? 0 : body.stock ?? 0,
     is_stock_tracked: isStockTracked,
     is_available: true,
-    is_service: isService,
+    is_service: resolvedIsService,
     supplier_name: body.supplierName ?? body.supplier_name ?? null,
     image_url: body.imageUrl ?? body.image_url ?? null,
     is_active: body.isActive ?? body.is_active ?? true,
@@ -321,7 +343,9 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
   const branchIdRaw = parsed.data.branchId ?? parsed.data.branch_id;
   const isAvailableRaw = parsed.data.is_available ?? parsed.data.isAvailable;
   const isActiveRaw = parsed.data.is_active ?? parsed.data.isActive;
+  const productTypeRaw = parsed.data.productType ?? parsed.data.product_type;
   const isStockTrackedRaw = parsed.data.isStockTracked ?? parsed.data.is_stock_tracked;
+  const isServiceRaw = parsed.data.isService ?? parsed.data.is_service;
   const stockRaw = parsed.data.stock;
   const priceRaw = parsed.data.price;
   const purchasePriceRaw = parsed.data.purchasePrice ?? parsed.data.purchase_price;
@@ -341,6 +365,22 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     nameRaw === undefined || nameRaw === null
       ? undefined
       : nameRaw;
+  const normalizedProductType =
+    productTypeRaw === undefined || productTypeRaw === null
+      ? undefined
+      : normalizeProductTypeLabel(productTypeRaw);
+  const resolvedIsService =
+    normalizedProductType === 'Jasa'
+      ? true
+      : isServiceRaw === undefined
+        ? existing.is_service === true
+        : Boolean(isServiceRaw);
+  const resolvedIsStockTracked =
+    isStockTrackedRaw === undefined
+      ? (normalizedProductType === 'Non Stok'
+          ? false
+          : (normalizedProductType === 'Jasa' ? false : existing.is_stock_tracked !== false))
+      : Boolean(isStockTrackedRaw);
 
   const updatePayload = {
     ...(branchIdRaw !== undefined
@@ -351,7 +391,13 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       : {}),
     ...(isAvailableRaw !== undefined ? { is_available: Boolean(isAvailableRaw) } : {}),
     ...(isActiveRaw !== undefined ? { is_active: Boolean(isActiveRaw) } : {}),
-    ...(isStockTrackedRaw !== undefined ? { is_stock_tracked: Boolean(isStockTrackedRaw) } : {}),
+    ...(normalizedProductType !== undefined ? { product_type: normalizedProductType } : {}),
+    ...(isServiceRaw !== undefined || normalizedProductType === 'Jasa'
+      ? { is_service: resolvedIsService }
+      : {}),
+    ...(isStockTrackedRaw !== undefined || normalizedProductType !== undefined
+      ? { is_stock_tracked: resolvedIsStockTracked } 
+      : {}),
     ...(stockRaw !== undefined ? { stock: stockRaw } : {}),
     ...(priceRaw !== undefined ? { price: priceRaw } : {}),
     ...(purchasePriceRaw !== undefined ? { purchase_price: purchasePriceRaw } : {}),
@@ -360,6 +406,9 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     ...(normalizedName !== undefined ? { name: normalizedName } : {}),
     ...(unitRaw !== undefined && unitRaw !== null
       ? { unit: parseOptionalUnit(unitRaw) ?? 'pcs' }
+      : {}),
+    ...((stockRaw === undefined && !resolvedIsStockTracked)
+      ? { stock: 0 }
       : {}),
   };
 

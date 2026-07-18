@@ -32,6 +32,8 @@ export const createProductSchema = z.object({
   unit: optionalText,
   unitName: optionalText,
   unit_name: optionalText,
+  productType: optionalText,
+  product_type: optionalText,
   branchId: bigintLikeSchema.optional(),
   branch_id: bigintLikeSchema.optional(),
   barcode: optionalText,
