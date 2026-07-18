@@ -252,16 +252,77 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   ).toString().trim();
 
   const result = await prisma.$transaction(async (tx) => {
+    type ExistingSaleRow = {
+      id: bigint;
+      branch_id: bigint | null;
+      reference_id: string | null;
+      receipt_number: string | null;
+      cashier_name: string | null;
+      total_price: string | null;
+      total_amount: string | null;
+      order_status: string;
+      payment_status: string | null;
+      payment_proof_url: string | null;
+      items_json: Prisma.JsonValue | null;
+    };
+
+    type UpsertedSaleRow = {
+      id: bigint;
+      reference_id: string | null;
+      receipt_number: string | null;
+      cashier_name: string | null;
+      total_price: string | null;
+      total_amount: string | null;
+      order_status: string;
+      payment_status: string;
+      payment_proof_url: string | null;
+    };
+
     const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string; table_number: string | null }>>`
       SELECT id, status, table_number
       FROM tables
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
       LIMIT 1
+      FOR UPDATE
     `;
 
     if (!tableRows[0]) {
       throw new AppError('Meja tidak ditemukan untuk tenant ini', 404);
     }
+
+    // Lock current active/unpaid order for this table to avoid race conditions under heavy load.
+    const existingSaleRows = await tx.$queryRaw<ExistingSaleRow[]>`
+      SELECT
+        id,
+        branch_id,
+        reference_id,
+        receipt_number,
+        cashier_name,
+        total_price,
+        total_amount,
+        order_status::text AS order_status,
+        payment_status,
+        items_json
+      FROM sales_records
+      WHERE tenant_id = ${tenantId}
+        AND table_id = ${tableId}
+        AND (
+          UPPER(COALESCE(payment_status, '')) IN ('UNPAID', 'PENDING_PAYMENT')
+          OR UPPER(COALESCE(order_status::text, '')) IN (
+            'PENDING',
+            'PENDING_PAYMENT',
+            'PREPARING',
+            'READY_FOR_PICKUP',
+            'ACTIVE',
+            'UNPAID'
+          )
+        )
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+      FOR UPDATE
+    `;
+    const existingSale = existingSaleRows[0] ?? null;
+    const effectiveBranchId = existingSale?.branch_id ?? branchId ?? null;
 
     const productIds = items.map((item) => item.productId);
     const products = await tx.$queryRaw<Array<{ id: string; name: string; price: number | null; is_service: boolean | null; is_stock_tracked: boolean | null; stock: number | null }>>`
@@ -269,7 +330,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       FROM products
       WHERE tenant_id = ${tenantId}
         AND id IN (${Prisma.join(productIds)})
-        AND (${branchId ?? null}::bigint IS NULL OR branch_id = ${branchId ?? null})
+        AND (${effectiveBranchId}::bigint IS NULL OR branch_id = ${effectiveBranchId})
     `;
 
     const productMap = new Map(products.map((row) => [row.id, row]));
@@ -305,7 +366,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     const isAutoPaidQris =
       paymentMethod === PAYMENT_METHOD_QRIS &&
       paymentProofUrl !== null &&
-      paymentProofUrl.trim().isNotEmpty;
+      paymentProofUrl.trim().length > 0;
     const paymentMethodLabel =
       paymentMethod === PAYMENT_METHOD_QRIS ? 'QRIS' : 'Bayar di Kasir';
     const paymentStatus = isAutoPaidQris ? 'PAID' : 'PENDING_PAYMENT';
@@ -323,60 +384,83 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     `;
     const supportsPaymentProofUrl = paymentProofColumnRows[0]?.exists === true;
 
-    const saleRows = await tx.$queryRaw<Array<{
-      id: bigint;
-      reference_id: string | null;
-      receipt_number: string | null;
-      cashier_name: string | null;
-      total_price: string | null;
-      total_amount: string | null;
-      order_status: string;
-      payment_status: string;
-      payment_proof_url: string | null;
-    }>>`
-      INSERT INTO sales_records (
-        tenant_id,
-        branch_id,
-        table_id,
-        reference_id,
-        receipt_number,
-        payment_method,
-        payment_status,
-        notes,
-        order_type,
-        order_status,
-        total_price,
-        total_amount,
-        customer_name,
-        cashier_name,
-        items_json,
-        amount_paid
-        ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
-      )
-      VALUES (
-        ${tenantId},
-        ${branchId ?? null},
-        ${tableId},
-        ${referenceId},
-        ${receiptNumber},
-        ${paymentMethodLabel},
-        ${paymentStatus},
-        ${orderNote || null},
-        ${'DINE_IN'}::"OrderType",
-        ${orderStatus}::"OrderStatus",
-        ${total},
-        ${total},
-        ${customerName || 'Guest'},
-        ${'Online Order'},
-        ${JSON.stringify(normalizedItems)}::jsonb,
-        ${amountPaid}
-        ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
-      )
-      RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status, payment_status
-      ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
-    `;
+    let sale: UpsertedSaleRow | null = null;
+    let orderAction: 'NEW_ORDER' | 'APPENDED_TO_EXISTING' = 'NEW_ORDER';
 
-    const sale = saleRows[0];
+    if (existingSale) {
+      orderAction = 'APPENDED_TO_EXISTING';
+
+      const existingTotal = Number(existingSale.total_price ?? existingSale.total_amount ?? 0);
+      const mergedTotal = existingTotal + total;
+      const existingItemsJson = Array.isArray(existingSale.items_json)
+        ? existingSale.items_json
+        : [];
+      const mergedItemsJson = [
+        ...existingItemsJson,
+        ...normalizedItems,
+      ];
+
+      const updatedSaleRows = await tx.$queryRaw<UpsertedSaleRow[]>`
+        UPDATE sales_records
+        SET
+          total_price = ${mergedTotal},
+          total_amount = ${mergedTotal},
+          items_json = ${JSON.stringify(mergedItemsJson)}::jsonb,
+          updated_at = NOW()
+        WHERE id = ${existingSale.id}
+          AND tenant_id = ${tenantId}
+        RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status::text AS order_status, payment_status
+        ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.sql`, NULL::text AS payment_proof_url`}
+      `;
+
+      sale = updatedSaleRows[0] ?? null;
+    } else {
+      const saleRows = await tx.$queryRaw<UpsertedSaleRow[]>`
+        INSERT INTO sales_records (
+          tenant_id,
+          branch_id,
+          table_id,
+          reference_id,
+          receipt_number,
+          payment_method,
+          payment_status,
+          notes,
+          order_type,
+          order_status,
+          total_price,
+          total_amount,
+          customer_name,
+          cashier_name,
+          items_json,
+          amount_paid
+          ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
+        )
+        VALUES (
+          ${tenantId},
+          ${branchId ?? null},
+          ${tableId},
+          ${referenceId},
+          ${receiptNumber},
+          ${paymentMethodLabel},
+          ${paymentStatus},
+          ${orderNote || null},
+          ${'DINE_IN'}::"OrderType",
+          ${orderStatus}::"OrderStatus",
+          ${total},
+          ${total},
+          ${customerName || 'Guest'},
+          ${'Online Order'},
+          ${JSON.stringify(normalizedItems)}::jsonb,
+          ${amountPaid}
+          ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
+        )
+        RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status::text AS order_status, payment_status
+        ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.sql`, NULL::text AS payment_proof_url`}
+      `;
+
+      sale = saleRows[0] ?? null;
+    }
+
     if (!sale) {
       throw new AppError('Gagal membuat pesanan QR', 500);
     }
@@ -429,6 +513,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       table_number: tableRows[0]?.table_number ?? null,
       special_note: orderNote || null,
       payment_proof_url: sale.payment_proof_url ?? paymentProofUrl ?? null,
+      orderAction,
     };
   });
 
@@ -438,11 +523,24 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   // In PostgreSQL, a failed statement inside a transaction marks it aborted.
   if (orderNote.length > 0) {
     try {
-      await prisma.$queryRaw`
-        UPDATE sales_records
-        SET special_note = ${orderNote}, updated_at = NOW()
-        WHERE id = ${result.id} AND tenant_id = ${tenantId}
-      `;
+      if (result.orderAction === 'APPENDED_TO_EXISTING') {
+        await prisma.$queryRaw`
+          UPDATE sales_records
+          SET
+            special_note = CASE
+              WHEN COALESCE(special_note, '') = '' THEN ${orderNote}
+              ELSE special_note || E'\n---\n' || ${orderNote}
+            END,
+            updated_at = NOW()
+          WHERE id = ${result.id} AND tenant_id = ${tenantId}
+        `;
+      } else {
+        await prisma.$queryRaw`
+          UPDATE sales_records
+          SET special_note = ${orderNote}, updated_at = NOW()
+          WHERE id = ${result.id} AND tenant_id = ${tenantId}
+        `;
+      }
     } catch (_) {
       // Backward compatible when sales_records.special_note is not available yet.
     }
@@ -501,6 +599,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     orderNote,
     special_note: orderNote || null,
     specialNote: orderNote || null,
+    orderAction: result.orderAction,
+    order_action: result.orderAction,
     totalItems,
     grandTotal: Number(result.total_price ?? 0),
     items: items.map((item) => ({
@@ -524,6 +624,10 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 
   return res.status(201).json({
     success: true,
-    data: serializeForJson(result),
+    orderAction: result.orderAction,
+    data: serializeForJson({
+      ...result,
+      orderAction: result.orderAction,
+    }),
   });
 });
