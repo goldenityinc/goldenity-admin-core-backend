@@ -279,6 +279,9 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     rawProductType,
     isService,
   );
+  const persistedProductType = normalizedProductType === 'Non Stok'
+    ? 'Barang'
+    : normalizedProductType;
   const resolvedIsService = normalizedProductType === 'Jasa' || isService;
   const isStockTracked = body.isStockTracked ?? body.is_stock_tracked ?? (normalizedProductType === 'Non Stok' ? false : !resolvedIsService);
   const unit = parseOptionalUnit(body.unit ?? body.unitName ?? body.unit_name) ?? 'pcs';
@@ -288,7 +291,7 @@ export const createProduct = asyncHandler(async (req: Request, res: Response) =>
     tenantId,
     branchId,
     name: body.name,
-    product_type: normalizedProductType,
+    product_type: persistedProductType,
     unit,
     barcode: body.barcode ?? null,
     category: categoryName,
@@ -369,6 +372,10 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
     productTypeRaw === undefined || productTypeRaw === null
       ? undefined
       : normalizeProductTypeLabel(productTypeRaw);
+  const persistedProductType =
+    normalizedProductType === 'Non Stok'
+      ? 'Barang'
+      : normalizedProductType;
   const resolvedIsService =
     normalizedProductType === 'Jasa'
       ? true
@@ -391,7 +398,7 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       : {}),
     ...(isAvailableRaw !== undefined ? { is_available: Boolean(isAvailableRaw) } : {}),
     ...(isActiveRaw !== undefined ? { is_active: Boolean(isActiveRaw) } : {}),
-    ...(normalizedProductType !== undefined ? { product_type: normalizedProductType } : {}),
+    ...(persistedProductType !== undefined ? { product_type: persistedProductType } : {}),
     ...(isServiceRaw !== undefined || normalizedProductType === 'Jasa'
       ? { is_service: resolvedIsService }
       : {}),
