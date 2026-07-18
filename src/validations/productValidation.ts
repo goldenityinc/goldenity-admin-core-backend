@@ -18,7 +18,20 @@ const bigintLikeSchema = z.preprocess(
   ]),
 );
 
-const optionalText = z.string().trim().min(1).optional().nullable();
+const optionalText = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length == 0 ? null : trimmed;
+  },
+  z.string().trim().min(1).optional().nullable(),
+);
 
 const optionalBooleanLike = z.preprocess((value) => {
   if (value === 'true') return true;
