@@ -1,0 +1,2 @@
+ALTER TABLE "sales_record_items"
+ADD COLUMN IF NOT EXISTS "batch_sequence" INTEGER NOT NULL DEFAULT 1;

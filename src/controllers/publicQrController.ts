@@ -34,8 +34,12 @@ type QrMenuItemRow = {
 type QrOrderItemInput = {
   productId: string;
   qty: number;
-  note?: string;
+  note?: string | null;
   customPrice?: number;
+};
+
+type QrOrderBatchItem = QrOrderItemInput & {
+  batch_sequence: number;
 };
 
 function parseOptionalBranchId(value: unknown): bigint | undefined {
@@ -102,6 +106,47 @@ function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
       customPrice,
     };
   });
+}
+
+function resolveCurrentBatchSequence(itemsJson: Prisma.JsonValue | null): number {
+  if (!Array.isArray(itemsJson)) {
+    return 0;
+  }
+
+  let highest = 0;
+
+  for (const rawItem of itemsJson) {
+    if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+      continue;
+    }
+
+    const item = rawItem as Record<string, unknown>;
+    const batchCandidate =
+      item.batch_sequence ??
+      item.batchSequence ??
+      item.batch ??
+      item.sequence;
+    const parsedBatch =
+      typeof batchCandidate === 'number'
+        ? batchCandidate
+        : Number((batchCandidate ?? '').toString().trim());
+
+    if (Number.isFinite(parsedBatch) && parsedBatch > highest) {
+      highest = parsedBatch;
+    }
+  }
+
+  return highest;
+}
+
+function stampBatchSequence(
+  items: QrOrderItemInput[],
+  batchSequence: number,
+): QrOrderBatchItem[] {
+  return items.map((item) => ({
+    ...item,
+    batch_sequence: batchSequence,
+  }));
 }
 
 function generateReceiptNumber(): string {
@@ -228,6 +273,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const tableId = parseTableId(req.body.tableId ?? req.body.table_id);
   const branchId = parseOptionalBranchId(req.body.branchId ?? req.body.branch_id);
   const items = parseQrOrderItems(req.body.items);
+  const orderType = 'DINE_IN';
   const paymentMethod = normalizePaymentMethod(
     req.body.paymentMethod ?? req.body.payment_method,
   );
@@ -255,6 +301,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     type ExistingSaleRow = {
       id: bigint;
       branch_id: bigint | null;
+      table_id: bigint | null;
+      order_type: string | null;
       reference_id: string | null;
       receipt_number: string | null;
       cashier_name: string | null;
@@ -295,6 +343,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       SELECT
         id,
         branch_id,
+        table_id,
+        order_type::text AS order_type,
         reference_id,
         receipt_number,
         cashier_name,
@@ -386,20 +436,20 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 
     let sale: UpsertedSaleRow | null = null;
     let orderAction: 'NEW_ORDER' | 'APPENDED_TO_EXISTING' = 'NEW_ORDER';
+    const currentBatchSequence = existingSale
+      ? Math.max(resolveCurrentBatchSequence(existingSale.items_json), 1) + 1
+      : 1;
+    const batchItems = stampBatchSequence(normalizedItems, currentBatchSequence);
+    const existingItemsJson = Array.isArray(existingSale?.items_json)
+      ? (existingSale.items_json as QrOrderBatchItem[])
+      : [];
+    const mergedItemsJson = [...existingItemsJson, ...batchItems];
 
     if (existingSale) {
       orderAction = 'APPENDED_TO_EXISTING';
 
       const existingTotal = Number(existingSale.total_price ?? existingSale.total_amount ?? 0);
       const mergedTotal = existingTotal + total;
-      const existingItemsJson = Array.isArray(existingSale.items_json)
-        ? existingSale.items_json
-        : [];
-      const mergedItemsJson = [
-        ...existingItemsJson,
-        ...normalizedItems,
-      ];
-
       const updatedSaleRows = await tx.$queryRaw<UpsertedSaleRow[]>`
         UPDATE sales_records
         SET
@@ -444,13 +494,13 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           ${paymentMethodLabel},
           ${paymentStatus},
           ${orderNote || null},
-          ${'DINE_IN'}::"OrderType",
+          ${orderType}::"OrderType",
           ${orderStatus}::"OrderStatus",
           ${total},
           ${total},
           ${customerName || 'Guest'},
           ${'Online Order'},
-          ${JSON.stringify(normalizedItems)}::jsonb,
+          ${JSON.stringify(batchItems)}::jsonb,
           ${amountPaid}
           ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
         )
@@ -477,7 +527,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           notes,
           note,
           item_note,
-          is_service
+          is_service,
+          batch_sequence
         )
         VALUES (
           ${tenantId},
@@ -489,7 +540,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           ${item.note},
           ${item.note},
           ${item.note},
-          ${item.isService}
+          ${item.isService},
+          ${currentBatchSequence}
         )
       `;
 
@@ -510,10 +562,15 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 
     return {
       ...sale,
+      table_id: tableId,
       table_number: tableRows[0]?.table_number ?? null,
+      order_type: orderType,
       special_note: orderNote || null,
       payment_proof_url: sale.payment_proof_url ?? paymentProofUrl ?? null,
       orderAction,
+      current_batch_sequence: currentBatchSequence,
+      new_items: batchItems,
+      items_json: mergedItemsJson,
     };
   });
 
@@ -588,8 +645,11 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     referenceId: result.reference_id,
     receiptNumber: result.receipt_number,
     tableId,
+    table_id: tableId.toString(),
     tableName: tableLabel || tableId.toString(),
+    table_number: tableLabel || tableId.toString(),
     orderType: 'DINE_IN',
+    order_type: result.order_type ?? orderType,
     orderStatus: result.order_status,
     paymentStatus: 'PENDING_PAYMENT',
     paymentMethod: 'Bayar di Kasir',
@@ -603,22 +663,11 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     order_action: result.orderAction,
     totalItems,
     grandTotal: Number(result.total_price ?? 0),
-    items: items.map((item) => ({
-      product_id: item.productId,
-      qty: item.qty,
-      custom_price: item.customPrice ?? 0,
-      note: item.note ?? '',
-      item_note: item.note ?? '',
-      notes: item.note ?? '',
-    })),
-    items_json: items.map((item) => ({
-      product_id: item.productId,
-      qty: item.qty,
-      custom_price: item.customPrice ?? 0,
-      note: item.note ?? '',
-      item_note: item.note ?? '',
-      notes: item.note ?? '',
-    })),
+    current_batch_sequence: result.current_batch_sequence,
+    new_items: result.new_items,
+    items: result.new_items,
+    items_json: result.items_json,
+    batch_sequence: result.current_batch_sequence,
     created_at: new Date().toISOString(),
   });
 
@@ -628,6 +677,8 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     data: serializeForJson({
       ...result,
       orderAction: result.orderAction,
+      current_batch_sequence: result.current_batch_sequence,
+      new_items: result.new_items,
     }),
   });
 });

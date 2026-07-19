@@ -425,6 +425,7 @@ model sales_record_items {
   notes           String?
   note            String?
   item_note       String?
+  batch_sequence  Int       @default(1)
   is_service      Boolean   @default(false)
   mechanic_id     String?   @db.VarChar(255)
   employee_id     String?   @db.VarChar(255)
