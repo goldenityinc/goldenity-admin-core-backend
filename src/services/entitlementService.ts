@@ -88,6 +88,8 @@ export class EntitlementService {
   static async resolveForTenant(
     tenantId: string,
   ): Promise<ResolvedTenantEntitlements> {
+    const now = new Date();
+
     // Fetch tenant to get business_category
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -99,6 +101,7 @@ export class EntitlementService {
         where: {
           tenantId,
           status: 'ACTIVE',
+          OR: [{ endDate: null }, { endDate: { gte: now } }],
           solution: { is: { code: 'POS' } },
         },
         orderBy: { updatedAt: 'desc' },
@@ -113,6 +116,7 @@ export class EntitlementService {
         where: {
           tenantId,
           status: 'ACTIVE',
+          OR: [{ endDate: null }, { endDate: { gte: now } }],
           solution: {
             is: {
               name: {
@@ -131,7 +135,11 @@ export class EntitlementService {
         },
       })) ??
       (await prisma.appInstance.findFirst({
-        where: { tenantId, status: 'ACTIVE' },
+        where: {
+          tenantId,
+          status: 'ACTIVE',
+          OR: [{ endDate: null }, { endDate: { gte: now } }],
+        },
         orderBy: { updatedAt: 'desc' },
         include: {
           modules: {
@@ -177,7 +185,6 @@ export class EntitlementService {
       endDate: toIsoStringOrNull(appInstance.endDate),
     };
 
-    const now = new Date();
     const enabledAssignments = appInstance.modules.filter(
       (assignment) =>
         assignment.isEnabled &&

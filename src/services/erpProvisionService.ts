@@ -49,6 +49,12 @@ type ProvisionSteps = {
     enabledFeatures: string[] | null;
     response?: unknown;
   };
+  ensureAdmin: {
+    attempted: boolean;
+    status: number | null;
+    ok: boolean;
+    response?: unknown;
+  };
 };
 
 function getErpConfig() {
@@ -122,6 +128,17 @@ type CachedToken = { token: string; expMs: number };
 
 let cachedMasterToken: CachedToken | null = null;
 
+function getAxiosFailureReason(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const code = typeof err.code === 'string' && err.code ? err.code : null;
+    const message = typeof err.message === 'string' && err.message ? err.message : 'UNKNOWN_ERROR';
+    return code ? `${code}: ${message}` : message;
+  }
+
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 async function getMasterAccessToken(): Promise<string> {
   const { baseURL, timeoutMs, masterEmail, masterPassword, masterAccessToken } = getErpConfig();
 
@@ -146,10 +163,18 @@ async function getMasterAccessToken(): Promise<string> {
     validateStatus: () => true,
   });
 
-  const res = await http.post('/auth/login', {
-    email: masterEmail,
-    password: masterPassword,
-  });
+  let res: any;
+  try {
+    res = await http.post('/auth/login', {
+      email: masterEmail,
+      password: masterPassword,
+    });
+  } catch (err) {
+    throw new AppError(
+      `Tidak bisa menghubungi ERP API (${baseURL}) untuk login master admin: ${getAxiosFailureReason(err)}`,
+      502,
+    );
+  }
 
   const token = res.data?.accessToken;
   if (res.status !== 200 || typeof token !== 'string' || !token) {
@@ -232,7 +257,15 @@ export class ErpProvisionService {
     if (typeof input.subscriptionEndDate === 'string' && input.subscriptionEndDate.trim()) payload.subscriptionEndDate = input.subscriptionEndDate.trim();
     if (input.subscriptionEndDate === null) payload.subscriptionEndDate = null;
 
-    const res = await http.put(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/profile`, payload);
+    let res: any;
+    try {
+      res = await http.put(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/profile`, payload);
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk update profile organization: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
     if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
     if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
     if (res.status === 404) throw new AppError('Organization ERP tidak ditemukan', 404);
@@ -257,7 +290,15 @@ export class ErpProvisionService {
       validateStatus: () => true,
     });
 
-    const res = await http.get('/tenant-admin/features');
+    let res: any;
+    try {
+      res = await http.get('/tenant-admin/features');
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk mengambil feature catalog: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
     if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
     if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
     if (res.status !== 200 || !Array.isArray(res.data?.features)) {
@@ -284,7 +325,15 @@ export class ErpProvisionService {
       validateStatus: () => true,
     });
 
-    const res = await http.get(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/features`);
+    let res: any;
+    try {
+      res = await http.get(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/features`);
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk mengambil enabled features organization: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
     if (res.status === 401) throw new AppError('Token ERP tidak valid/expired', 401);
     if (res.status === 403) throw new AppError('Akses ERP ditolak (butuh master admin)', 403);
     if (res.status === 404) throw new AppError('Organization ERP tidak ditemukan', 404);
@@ -402,6 +451,20 @@ export class ErpProvisionService {
                   body: plannedFeaturesPayload,
                 }
               : null,
+            ensureAdmin:
+              input.adminEmail && input.adminPassword
+                ? {
+                    method: 'POST',
+                    path: orgIdCandidate
+                      ? `/tenant-admin/organizations/${orgIdCandidate}/admins`
+                      : '/tenant-admin/organizations/<organizationId>/admins',
+                    body: {
+                      email: input.adminEmail,
+                      password: input.adminPassword,
+                      name: input.adminName ?? orgName,
+                    },
+                  }
+                : null,
           },
         },
       };
@@ -445,9 +508,22 @@ export class ErpProvisionService {
         ok: false,
         enabledFeatures: null,
       },
+      ensureAdmin: {
+        attempted: false,
+        status: null,
+        ok: false,
+      },
     };
 
-    const createRes = await http.post('/tenant-admin/organizations', createPayload);
+    let createRes: any;
+    try {
+      createRes = await http.post('/tenant-admin/organizations', createPayload);
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk create organization: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
     steps.createOrganization.status = createRes.status;
     steps.createOrganization.response = createRes.data;
 
@@ -477,10 +553,18 @@ export class ErpProvisionService {
     }
 
     steps.upsertMapping.attempted = true;
-    const mappingRes = await http.put('/tenant-admin/integrations/crm/mappings', {
-      externalTenantId: tenant.id,
-      organizationId,
-    });
+    let mappingRes: any;
+    try {
+      mappingRes = await http.put('/tenant-admin/integrations/crm/mappings', {
+        externalTenantId: tenant.id,
+        organizationId,
+      });
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk set mapping CRM → ERP: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
 
     steps.upsertMapping.status = mappingRes.status;
     steps.upsertMapping.response = mappingRes.data;
@@ -500,10 +584,18 @@ export class ErpProvisionService {
     if (tenant.phone) profilePayload.phone = tenant.phone;
     if (logoUrlToUse) profilePayload.logoUrl = logoUrlToUse;
 
-    const profileRes = await http.put(
-      `/tenant-admin/organizations/${encodeURIComponent(organizationId)}/profile`,
-      profilePayload,
-    );
+    let profileRes: any;
+    try {
+      profileRes = await http.put(
+        `/tenant-admin/organizations/${encodeURIComponent(organizationId)}/profile`,
+        profilePayload,
+      );
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk set profile organization: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
 
     steps.upsertProfile.status = profileRes.status;
     steps.upsertProfile.response = profileRes.data;
@@ -518,9 +610,17 @@ export class ErpProvisionService {
     let featuresApplied: string[] | null = null;
     if (input.features?.length) {
       steps.applyFeatures.attempted = true;
-      const featuresRes = await http.put(`/tenant-admin/organizations/${encodeURIComponent(organizationId)}/features`, {
-        features: input.features,
-      });
+      let featuresRes: any;
+      try {
+        featuresRes = await http.put(`/tenant-admin/organizations/${encodeURIComponent(organizationId)}/features`, {
+          features: input.features,
+        });
+      } catch (err) {
+        throw new AppError(
+          `Tidak bisa menghubungi ERP API (${baseURL}) untuk set features organization: ${getAxiosFailureReason(err)}`,
+          502,
+        );
+      }
 
       steps.applyFeatures.status = featuresRes.status;
       steps.applyFeatures.response = featuresRes.data;
@@ -537,6 +637,39 @@ export class ErpProvisionService {
           : input.features;
 
       featuresApplied = input.features;
+    }
+
+    if (input.adminEmail && input.adminPassword) {
+      steps.ensureAdmin.attempted = true;
+      let adminRes: any;
+      try {
+        adminRes = await http.post(`/tenant-admin/organizations/${encodeURIComponent(organizationId)}/admins`, {
+          email: input.adminEmail,
+          password: input.adminPassword,
+          name: input.adminName ?? orgName,
+        });
+      } catch (err) {
+        throw new AppError(
+          `Tidak bisa menghubungi ERP API (${baseURL}) untuk membuat admin organization: ${getAxiosFailureReason(err)}`,
+          502,
+        );
+      }
+
+      steps.ensureAdmin.status = adminRes.status;
+      steps.ensureAdmin.response = adminRes.data;
+
+      if (
+        !(
+          adminRes.status === 201 ||
+          (adminRes.status === 409 &&
+            (adminRes.data?.error === 'EMAIL_TAKEN' || adminRes.data?.message === 'EMAIL_TAKEN'))
+        )
+      ) {
+        const reason = adminRes.data?.error ?? adminRes.statusText ?? 'UNKNOWN_ERROR';
+        throw new AppError(`Gagal membuat admin organization di ERP: ${reason}`, 502);
+      }
+
+      steps.ensureAdmin.ok = true;
     }
 
     return {
@@ -592,11 +725,19 @@ export class ErpProvisionService {
       validateStatus: () => true,
     });
 
-    const res = await http.post(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/admins`, {
-      email: input.adminEmail,
-      password: input.adminPassword,
-      name: input.adminName,
-    });
+    let res: any;
+    try {
+      res = await http.post(`/tenant-admin/organizations/${encodeURIComponent(orgId)}/admins`, {
+        email: input.adminEmail,
+        password: input.adminPassword,
+        name: input.adminName,
+      });
+    } catch (err) {
+      throw new AppError(
+        `Tidak bisa menghubungi ERP API (${baseURL}) untuk membuat tenant admin: ${getAxiosFailureReason(err)}`,
+        502,
+      );
+    }
 
     if (res.status === 201) return { ok: true, created: true };
     if (res.status === 409 && res.data?.error === 'EMAIL_TAKEN') return { ok: true, created: false };

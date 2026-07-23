@@ -13,9 +13,14 @@ import { ErpProvisionService } from '../services/erpProvisionService';
 import prisma from '../config/database';
 import { ObjectStorageService } from '../services/objectStorageService';
 import { uploadToS3 } from '../utils/s3Uploader';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { Readable } from 'node:stream';
 import { emitTenantUpdated } from '../services/realtimeEmitter';
 import { AppInstanceService } from '../services/appInstanceService';
+
+const LOCAL_TENANT_LOGO_DIR = path.join(os.tmpdir(), 'goldenity-admin-core', 'tenant-logos');
 
 function getServicePublicBaseUrl(req?: Request): string {
   const explicit = process.env.PUBLIC_BASE_URL?.trim();
@@ -454,11 +459,30 @@ export const uploadTenantLogo = asyncHandler(async (req: Request, res: Response)
   if (!tenant) throw new AppError('Tenant tidak ditemukan', 404);
 
   const key = `tenants/${tenant.id}/logo-${Date.now()}.${ext}`;
-  const uploaded = await ObjectStorageService.putPublicObject({
-    key,
-    body: file.buffer,
-    contentType: file.mimetype,
-  });
+  let uploaded: { url: string; key: string };
+  try {
+    uploaded = await ObjectStorageService.putPublicObject({
+      key,
+      body: file.buffer,
+      contentType: file.mimetype,
+    });
+  } catch (error) {
+    if (error instanceof AppError && error.statusCode === 503) {
+      const relativeKey = `${tenant.id}/logo-${Date.now()}.${ext}`;
+      const safeRelativeKey = relativeKey.replace(/^\/+/, '');
+      if (safeRelativeKey.includes('..')) {
+        throw new AppError('Path logo tidak valid', 400);
+      }
+
+      const localPath = path.join(LOCAL_TENANT_LOGO_DIR, safeRelativeKey);
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.writeFileSync(localPath, file.buffer);
+
+      uploaded = { url: '/public/tenants/' + tenant.id + '/logo', key: `local:${safeRelativeKey}` };
+    } else {
+      throw error;
+    }
+  }
 
   const proxyUrl = buildTenantLogoProxyUrl(req, tenant.id, String(Date.now()));
 
@@ -524,6 +548,22 @@ export const getTenantLogoPublic = asyncHandler(async (req: Request, res: Respon
   }
 
   if (!key) throw new AppError('Logo tenant belum tersedia', 404);
+
+  if (key.startsWith('local:')) {
+    const relative = key.slice('local:'.length).replace(/^\/+/, '');
+    if (!relative || relative.includes('..')) {
+      throw new AppError('Logo path tidak valid', 400);
+    }
+    const localPath = path.join(LOCAL_TENANT_LOGO_DIR, relative);
+    if (!fs.existsSync(localPath)) {
+      throw new AppError('Logo tenant belum tersedia', 404);
+    }
+    res.status(200);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-store');
+    fs.createReadStream(localPath).pipe(res);
+    return;
+  }
 
   const obj = await ObjectStorageService.getObject({ key });
   const stream = toNodeReadable(obj.body);

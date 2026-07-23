@@ -39,15 +39,27 @@ const server = http.createServer(app);
 // Trust X-Forwarded-* headers (Railway/ingress)
 app.set('trust proxy', 1);
 
-// Middleware
-app.use(cors({
-  origin: [
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(
+  new Set([
     'http://localhost:5173', // Local Super Admin
+    'http://127.0.0.1:5173', // Local Super Admin via explicit host
     'http://localhost:3000', // Local POS / Web
+    'http://127.0.0.1:3000', // Local POS / Web via explicit host
     'https://goldenity-super-admin.vercel.app', // Production Super Admin
     process.env.FRONTEND_URL || '',
     process.env.POS_URL || '',
-  ].filter(Boolean) as string[],
+    ...configuredOrigins,
+  ].filter(Boolean) as string[])
+);
+
+// Middleware
+app.use(cors({
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
 }));

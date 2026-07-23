@@ -34,6 +34,9 @@ type AppInstanceWritePayload = {
   status?: 'ACTIVE' | 'SUSPENDED';
   dbConnectionString?: string | null;
   appUrl?: string | null;
+  adminEmail?: string | null;
+  adminPassword?: string | null;
+  adminName?: string | null;
   endDate?: string | null;
 };
 
@@ -45,6 +48,9 @@ type AppInstanceUpdatePayload = {
   status?: 'ACTIVE' | 'SUSPENDED';
   dbConnectionString?: string | null;
   appUrl?: string | null;
+  adminEmail?: string | null;
+  adminPassword?: string | null;
+  adminName?: string | null;
   endDate?: string | null;
 };
 
@@ -114,9 +120,10 @@ function mergeRecord(
 function attachModuleKeys<T extends { modules?: Array<{ moduleDefinition: { moduleKey: string } }> }>(
   appInstance: T,
 ): Omit<T, 'modules'> & { moduleKeys: string[] } {
-  const { modules, ...rest } = appInstance;
+  const { modules, ...rest } = appInstance as T & { adminPassword?: string | null };
   return {
     ...rest,
+    adminPassword: undefined,
     moduleKeys: (modules ?? []).map((item) => item.moduleDefinition.moduleKey),
   };
 }
@@ -444,6 +451,9 @@ export class AppInstanceService {
           status: data.status ?? 'ACTIVE',
           dbConnectionString: null,
           appUrl: data.appUrl,
+          ...(data.adminEmail !== undefined ? { adminEmail: data.adminEmail } : {}),
+          ...(data.adminPassword !== undefined ? { adminPassword: data.adminPassword } : {}),
+          ...(data.adminName !== undefined ? { adminName: data.adminName } : {}),
           ...(data.endDate !== undefined
             ? { endDate: AppInstanceService.parseEndDateInput(data.endDate) }
             : {}),

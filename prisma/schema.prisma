@@ -152,6 +152,9 @@ model AppInstance {
   status             AppInstanceStatus   @default(ACTIVE)
   dbConnectionString String?
   appUrl             String?
+  adminEmail         String?             @map("admin_email")
+  adminPassword      String?             @map("admin_password")
+  adminName          String?             @map("admin_name")
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   endDate            DateTime?           @map("end_date")

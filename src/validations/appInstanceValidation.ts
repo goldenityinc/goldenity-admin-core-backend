@@ -14,6 +14,9 @@ export const createAppInstanceSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),
+  adminEmail: z.string().email('adminEmail must be a valid email').optional().nullable(),
+  adminPassword: z.string().min(6, 'adminPassword minimal 6 karakter').max(100).optional().nullable(),
+  adminName: z.string().min(1).max(120).optional().nullable(),
   endDate: z
     .union([
       z.string().datetime({ message: 'endDate must be a valid ISO datetime' }),
@@ -31,6 +34,9 @@ export const updateAppInstanceSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   dbConnectionString: z.string().url('dbConnectionString must be a valid URL').optional().nullable(),
   appUrl: z.string().url('appUrl must be a valid URL').optional().nullable(),
+  adminEmail: z.string().email('adminEmail must be a valid email').optional().nullable(),
+  adminPassword: z.string().min(6, 'adminPassword minimal 6 karakter').max(100).optional().nullable(),
+  adminName: z.string().min(1).max(120).optional().nullable(),
   endDate: z
     .union([
       z.string().datetime({ message: 'endDate must be a valid ISO datetime' }),
