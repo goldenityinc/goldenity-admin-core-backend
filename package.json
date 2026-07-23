@@ -23,6 +23,7 @@
     "seed:account-categories": "ts-node src/scripts/seedAccountCategories.ts",
     "seed:modules": "ts-node src/scripts/seedModuleDefinitions.ts",
     "backfill:app-instance-modules": "ts-node src/scripts/backfillAppInstanceModules.ts",
+    "backfill:school-erp-subscriptions": "ts-node src/scripts/backfillSchoolErpSubscriptions.ts",
     "smoke:auth": "ts-node src/scripts/smokeTestAuth.ts",
     "provision:tenant": "ts-node src/scripts/provision.ts"
   },

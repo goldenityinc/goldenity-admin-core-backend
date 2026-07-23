@@ -1,5 +1,7 @@
 import {
+  AppRole,
   Prisma,
+  UserRole,
   type AppModule,
   type BusinessCategory,
   type ModuleAssignmentSource,
@@ -8,6 +10,7 @@ import prisma from '../config/database';
 import { getPosModuleCatalogMap, resolveLegacyModuleAssignments } from '../constants/moduleCatalog';
 import { getBusinessCategoryDefaultModuleKeys } from '../constants/businessCategory';
 import { AppError } from '../utils/AppError';
+import { hashPassword } from '../utils/password';
 
 type AppInstanceModuleAssignment = {
   source: ModuleAssignmentSource;
@@ -124,8 +127,125 @@ function attachModuleKeys<T extends { modules?: Array<{ moduleDefinition: { modu
   return {
     ...rest,
     adminPassword: undefined,
+    appUrl: resolveEffectiveAppUrl(rest as AppInstanceUrlContext),
     moduleKeys: (modules ?? []).map((item) => item.moduleDefinition.moduleKey),
   };
+}
+
+type AppInstanceUrlContext = {
+  appUrl?: string | null;
+  tenant?: { slug?: string | null };
+  solution?: { code?: string | null };
+};
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeOrigin(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\/+$/, '');
+}
+
+function resolveErpWebOrigin(): string {
+  const explicit =
+    process.env.ERP_WEB_ORIGIN?.trim() ||
+    process.env.ERP_WEB_URL?.trim() ||
+    process.env.ERP_APP_URL?.trim();
+
+  if (explicit) {
+    return normalizeOrigin(explicit);
+  }
+
+  const apiBaseUrl =
+    process.env.ERP_API_BASE_URL?.trim() ||
+    process.env.ERP_API_URL?.trim();
+
+  if (!apiBaseUrl) {
+    return '';
+  }
+
+  try {
+    return normalizeOrigin(new URL(apiBaseUrl).origin);
+  } catch {
+    return normalizeOrigin(apiBaseUrl.replace(/\/api(?:\/v\d+)?\/?$/i, ''));
+  }
+}
+
+function resolveConfiguredSolutionOrigin(solutionCode: string | null | undefined): string {
+  const normalizedCode = solutionCode?.trim().toUpperCase() ?? '';
+
+  if (normalizedCode === 'ERP') {
+    return resolveErpWebOrigin();
+  }
+
+  if (normalizedCode === 'POS') {
+    return normalizeOrigin(
+      process.env.POS_WEB_ORIGIN?.trim() ||
+        process.env.POS_WEB_URL?.trim() ||
+        process.env.POS_URL?.trim(),
+    );
+  }
+
+  if (normalizedCode === 'CLINIC' || normalizedCode === 'MEDICAL') {
+    return normalizeOrigin(
+      process.env.CLINIC_WEB_ORIGIN?.trim() ||
+        process.env.CLINIC_WEB_URL?.trim() ||
+        process.env.MEDICAL_WEB_ORIGIN?.trim() ||
+        process.env.MEDICAL_WEB_URL?.trim(),
+    );
+  }
+
+  if (normalizedCode === 'SCHOOL_ERP') {
+    return normalizeOrigin(
+      process.env.SCHOOL_ERP_WEB_ORIGIN?.trim() ||
+        process.env.SCHOOL_ERP_WEB_URL?.trim() ||
+        process.env.SCHOOL_ERP_APP_URL?.trim(),
+    );
+  }
+
+  return '';
+}
+
+function buildSolutionLoginUrl(
+  origin: string,
+  solutionCode: string | null | undefined,
+  tenantSlug: string | null | undefined,
+): string {
+  const normalizedCode = solutionCode?.trim().toUpperCase() ?? '';
+  const slug = tenantSlug?.trim() ?? '';
+
+  if (!slug) {
+    return origin;
+  }
+
+  if (normalizedCode === 'ERP') {
+    return `${origin}/erp/${encodeURIComponent(slug)}/login`;
+  }
+
+  if (normalizedCode === 'POS' || normalizedCode === 'CLINIC' || normalizedCode === 'MEDICAL') {
+    return `${origin}/t/${encodeURIComponent(slug)}/login`;
+  }
+
+  if (normalizedCode === 'SCHOOL_ERP') {
+    return `${origin}/login?tenantSlug=${encodeURIComponent(slug)}`;
+  }
+
+  return origin;
+}
+
+function resolveEffectiveAppUrl(input: AppInstanceUrlContext): string | null {
+  const explicitAppUrl = normalizeOptionalText(input.appUrl);
+  if (explicitAppUrl) {
+    return explicitAppUrl;
+  }
+
+  const origin = resolveConfiguredSolutionOrigin(input.solution?.code);
+  if (!origin) {
+    return null;
+  }
+
+  return buildSolutionLoginUrl(origin, input.solution?.code, input.tenant?.slug);
 }
 
 function resolveSolutionModuleCatalogType(input: {
@@ -159,6 +279,103 @@ function resolveSolutionModuleCatalogType(input: {
   }
 
   return 'OTHER';
+}
+
+async function ensureSchoolErpAdminAccess(
+  tx: Prisma.TransactionClient,
+  input: {
+    appInstanceId: string;
+    tenantId: string;
+    tenantName: string;
+    adminEmail?: string | null;
+    adminPassword?: string | null;
+    adminName?: string | null;
+  },
+): Promise<void> {
+  const adminEmail = normalizeOptionalText(input.adminEmail)?.toLowerCase() ?? null;
+  if (!adminEmail) {
+    return;
+  }
+
+  const adminPassword = normalizeOptionalText(input.adminPassword);
+  const adminName = normalizeOptionalText(input.adminName) ?? `${input.tenantName} Admin`;
+
+  const existingUser = await tx.user.findFirst({
+    where: { email: adminEmail },
+    select: {
+      id: true,
+      email: true,
+      tenantId: true,
+      role: true,
+      allowedSolutions: true,
+    },
+  });
+
+  if (existingUser && existingUser.tenantId !== input.tenantId) {
+    throw new AppError(
+      `Email admin SCHOOL_ERP (${adminEmail}) sudah dipakai tenant lain. Gunakan email admin yang berbeda.`,
+      409,
+    );
+  }
+
+  if (!existingUser && !adminPassword) {
+    throw new AppError(
+      'Password admin SCHOOL_ERP wajib diisi untuk membuat akun login pertama.',
+      400,
+    );
+  }
+
+  const allowedSolutions = Array.from(
+    new Set([...(existingUser?.allowedSolutions ?? []), 'SCHOOL_ERP']),
+  );
+  const passwordHash = adminPassword ? await hashPassword(adminPassword) : undefined;
+
+  const user = existingUser
+    ? await tx.user.update({
+        where: { id: existingUser.id },
+        data: {
+          name: adminName,
+          username: adminEmail,
+          tenantId: input.tenantId,
+          role: existingUser.role ?? UserRole.TENANT_ADMIN,
+          allowedSolutions,
+          isActive: true,
+          ...(passwordHash ? { passwordHash } : {}),
+        },
+        select: { id: true },
+      })
+    : await tx.user.create({
+        data: {
+          email: adminEmail,
+          name: adminName,
+          username: adminEmail,
+          tenantId: input.tenantId,
+          role: UserRole.TENANT_ADMIN,
+          allowedSolutions,
+          isActive: true,
+          passwordHash: passwordHash as string,
+        },
+        select: { id: true },
+      });
+
+  await tx.userAppAccess.upsert({
+    where: {
+      userId_appInstanceId: {
+        userId: user.id,
+        appInstanceId: input.appInstanceId,
+      },
+    },
+    create: {
+      userId: user.id,
+      appInstanceId: input.appInstanceId,
+      role: AppRole.ADMIN,
+      isActive: true,
+    },
+    update: {
+      role: AppRole.ADMIN,
+      isActive: true,
+    },
+  });
 }
 
 export class AppInstanceService {
@@ -441,6 +658,32 @@ export class AppInstanceService {
 
   static async create(data: AppInstanceWritePayload) {
     const created = await prisma.$transaction(async (tx) => {
+      const [tenant, solution] = await Promise.all([
+        tx.tenant.findUnique({
+          where: { id: data.tenantId },
+          select: { id: true, name: true, slug: true, businessCategory: true },
+        }),
+        tx.solution.findUnique({
+          where: { id: data.solutionId },
+          select: { id: true, name: true, code: true },
+        }),
+      ]);
+
+      if (!tenant) {
+        throw new AppError('Tenant tidak ditemukan', 404);
+      }
+
+      if (!solution) {
+        throw new AppError('Solution tidak ditemukan', 404);
+      }
+
+      const solutionType = resolveSolutionModuleCatalogType(solution);
+      const resolvedAppUrl = resolveEffectiveAppUrl({
+        appUrl: data.appUrl,
+        tenant,
+        solution,
+      });
+
       const appInstance = await tx.appInstance.create({
         data: {
           tenantId: data.tenantId,
@@ -450,7 +693,7 @@ export class AppInstanceService {
           ...(data.syncMode !== undefined ? { syncMode: data.syncMode } : {}),
           status: data.status ?? 'ACTIVE',
           dbConnectionString: null,
-          appUrl: data.appUrl,
+          appUrl: resolvedAppUrl,
           ...(data.adminEmail !== undefined ? { adminEmail: data.adminEmail } : {}),
           ...(data.adminPassword !== undefined ? { adminPassword: data.adminPassword } : {}),
           ...(data.adminName !== undefined ? { adminName: data.adminName } : {}),
@@ -462,12 +705,23 @@ export class AppInstanceService {
       });
 
       await AppInstanceService.syncAppInstanceModules(tx, appInstance.id, {
-        solutionType: resolveSolutionModuleCatalogType(appInstance.solution),
+        solutionType,
         tier: data.tier,
         addons: data.addons,
         moduleKeys: data.moduleKeys,
-        businessCategory: appInstance.tenant.businessCategory,
+        businessCategory: tenant.businessCategory,
       });
+
+      if (solutionType === 'SCHOOL_ERP') {
+        await ensureSchoolErpAdminAccess(tx, {
+          appInstanceId: appInstance.id,
+          tenantId: tenant.id,
+          tenantName: tenant.name,
+          adminEmail: data.adminEmail,
+          adminPassword: data.adminPassword,
+          adminName: data.adminName,
+        });
+      }
 
       return tx.appInstance.findUniqueOrThrow({
         where: { id: appInstance.id },
@@ -536,6 +790,10 @@ export class AppInstanceService {
       select: {
         tier: true,
         addons: true,
+        appUrl: true,
+        adminEmail: true,
+        adminPassword: true,
+        adminName: true,
         modules: {
           where: {
             isEnabled: true,
@@ -550,6 +808,9 @@ export class AppInstanceService {
         },
         tenant: {
           select: {
+            id: true,
+            name: true,
+            slug: true,
             businessCategory: true,
           },
         },
@@ -578,6 +839,15 @@ export class AppInstanceService {
       moduleKeys === undefined
         ? undefined
         : normalizeModuleKeys(moduleKeys);
+    const resolvedAppUrl = resolveEffectiveAppUrl({
+      appUrl: data.appUrl !== undefined ? data.appUrl : current.appUrl,
+      tenant: current.tenant,
+      solution: current.solution,
+    });
+    const nextAdminEmail = data.adminEmail !== undefined ? data.adminEmail : current.adminEmail;
+    const nextAdminPassword = data.adminPassword !== undefined ? data.adminPassword : current.adminPassword;
+    const nextAdminName = data.adminName !== undefined ? data.adminName : current.adminName;
+    const solutionType = resolveSolutionModuleCatalogType(current.solution);
 
     const updated = await prisma.$transaction(async (tx) => {
       const updateResult = await tx.appInstance.updateMany({
@@ -585,6 +855,7 @@ export class AppInstanceService {
         data: {
           ...restData,
           dbConnectionString: null,
+          appUrl: resolvedAppUrl,
           ...(syncMode !== undefined ? { syncMode } : {}),
           ...(endDate !== undefined ? { endDate: AppInstanceService.parseEndDateInput(endDate) } : {}),
         },
@@ -595,12 +866,23 @@ export class AppInstanceService {
       }
 
       await AppInstanceService.syncAppInstanceModules(tx, id, {
-        solutionType: resolveSolutionModuleCatalogType(current.solution),
+        solutionType,
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
         moduleKeys: resolvedModuleKeys,
         businessCategory: current.tenant.businessCategory,
       });
+
+      if (solutionType === 'SCHOOL_ERP') {
+        await ensureSchoolErpAdminAccess(tx, {
+          appInstanceId: id,
+          tenantId: current.tenant.id,
+          tenantName: current.tenant.name,
+          adminEmail: nextAdminEmail,
+          adminPassword: nextAdminPassword,
+          adminName: nextAdminName,
+        });
+      }
 
       return tx.appInstance.findUniqueOrThrow({
         where: { id },
