@@ -138,6 +138,8 @@ type AppInstanceUrlContext = {
   solution?: { code?: string | null };
 };
 
+const DEFAULT_SCHOOL_ERP_WEB_ORIGIN = 'https://goldenity-school-system-production.up.railway.app';
+
 function normalizeOptionalText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
@@ -200,7 +202,8 @@ function resolveConfiguredSolutionOrigin(solutionCode: string | null | undefined
     return normalizeOrigin(
       process.env.SCHOOL_ERP_WEB_ORIGIN?.trim() ||
         process.env.SCHOOL_ERP_WEB_URL?.trim() ||
-        process.env.SCHOOL_ERP_APP_URL?.trim(),
+        process.env.SCHOOL_ERP_APP_URL?.trim() ||
+        DEFAULT_SCHOOL_ERP_WEB_ORIGIN,
     );
   }
 
