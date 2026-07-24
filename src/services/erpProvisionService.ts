@@ -74,6 +74,7 @@ function getErpConfig() {
   const masterEmail = process.env.ERP_MASTER_EMAIL?.trim() || undefined;
   const masterPassword = process.env.ERP_MASTER_PASSWORD?.trim() || undefined;
   const masterAccessToken = process.env.ERP_MASTER_ACCESS_TOKEN?.trim() || undefined;
+  const masterCompanySlug = process.env.ERP_MASTER_COMPANY_SLUG?.trim() || undefined;
 
   const timeoutMsRaw = process.env.ERP_API_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 15000;
@@ -84,6 +85,7 @@ function getErpConfig() {
     masterEmail,
     masterPassword,
     masterAccessToken,
+    masterCompanySlug,
   };
 }
 
@@ -140,7 +142,7 @@ function getAxiosFailureReason(err: unknown): string {
 }
 
 async function getMasterAccessToken(): Promise<string> {
-  const { baseURL, timeoutMs, masterEmail, masterPassword, masterAccessToken } = getErpConfig();
+  const { baseURL, timeoutMs, masterEmail, masterPassword, masterAccessToken, masterCompanySlug } = getErpConfig();
 
   if (masterAccessToken) return masterAccessToken;
 
@@ -165,10 +167,15 @@ async function getMasterAccessToken(): Promise<string> {
 
   let res: any;
   try {
-    res = await http.post('/auth/login', {
+    const loginPayload: Record<string, string> = {
       email: masterEmail,
       password: masterPassword,
-    });
+    };
+    if (masterCompanySlug) {
+      loginPayload.companySlug = masterCompanySlug;
+    }
+
+    res = await http.post('/auth/login', loginPayload);
   } catch (err) {
     throw new AppError(
       `Tidak bisa menghubungi ERP API (${baseURL}) untuk login master admin: ${getAxiosFailureReason(err)}`,
