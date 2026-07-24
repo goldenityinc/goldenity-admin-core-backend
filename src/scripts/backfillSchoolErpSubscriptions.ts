@@ -1,6 +1,18 @@
 import prisma from '../config/database';
 import { AppInstanceService } from '../services/appInstanceService';
 
+type BackfillSchoolErpAppInstance = {
+  id: string;
+  tenantId: string;
+  appUrl: string | null;
+  adminEmail: string | null;
+  adminPassword: string | null;
+  adminName: string | null;
+  tenant: {
+    slug: string;
+  };
+};
+
 function normalizeOrigin(value: string | undefined): string {
   return (value ?? '').trim().replace(/\/+$/, '');
 }
@@ -21,19 +33,13 @@ async function main(): Promise<void> {
     );
   }
 
-  const appInstances = await prisma.appInstance.findMany({
+  const appInstances = (await prisma.appInstance.findMany({
     where: {
       solution: {
         code: 'SCHOOL_ERP',
       },
     },
-    select: {
-      id: true,
-      tenantId: true,
-      appUrl: true,
-      adminEmail: true,
-      adminPassword: true,
-      adminName: true,
+    include: {
       tenant: {
         select: {
           slug: true,
@@ -43,7 +49,7 @@ async function main(): Promise<void> {
     orderBy: {
       createdAt: 'asc',
     },
-  });
+  })) as unknown as BackfillSchoolErpAppInstance[];
 
   let updatedCount = 0;
   let skippedCount = 0;

@@ -138,6 +138,26 @@ type AppInstanceUrlContext = {
   solution?: { code?: string | null };
 };
 
+type AppInstanceUpdateContext = {
+  tier: 'Standard' | 'Professional' | 'Enterprise' | 'Custom';
+  addons: string[];
+  appUrl: string | null;
+  adminEmail: string | null;
+  adminPassword: string | null;
+  adminName: string | null;
+  modules: Array<{ moduleDefinition: { moduleKey: string } }>;
+  tenant: {
+    id: string;
+    name: string;
+    slug: string;
+    businessCategory: BusinessCategory | null;
+  };
+  solution: {
+    code: string;
+    name: string;
+  };
+};
+
 const DEFAULT_SCHOOL_ERP_WEB_ORIGIN = 'https://goldenity-school-system-production.up.railway.app';
 
 function normalizeOptionalText(value: string | null | undefined): string | null {
@@ -788,15 +808,9 @@ export class AppInstanceService {
     data: AppInstanceUpdatePayload,
     tenantId: string,
   ) {
-    const current = await prisma.appInstance.findUnique({
+    const current = (await prisma.appInstance.findUnique({
       where: { id },
-      select: {
-        tier: true,
-        addons: true,
-        appUrl: true,
-        adminEmail: true,
-        adminPassword: true,
-        adminName: true,
+      include: {
         modules: {
           where: {
             isEnabled: true,
@@ -824,7 +838,7 @@ export class AppInstanceService {
           },
         },
       },
-    });
+    })) as AppInstanceUpdateContext | null;
 
     if (!current) {
       throw new AppError('App instance not found', 404);
@@ -842,6 +856,7 @@ export class AppInstanceService {
       moduleKeys === undefined
         ? undefined
         : normalizeModuleKeys(moduleKeys);
+    const currentModuleKeys = current.modules.map((item) => item.moduleDefinition.moduleKey);
     const resolvedAppUrl = resolveEffectiveAppUrl({
       appUrl: data.appUrl !== undefined ? data.appUrl : current.appUrl,
       tenant: current.tenant,
@@ -872,7 +887,7 @@ export class AppInstanceService {
         solutionType,
         tier: data.tier ?? current.tier,
         addons: data.addons ?? current.addons,
-        moduleKeys: resolvedModuleKeys,
+        moduleKeys: resolvedModuleKeys ?? currentModuleKeys,
         businessCategory: current.tenant.businessCategory,
       });
 
