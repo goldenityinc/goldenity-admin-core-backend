@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   for (const appInstance of appInstances) {
     const targetAppUrl =
       appInstance.appUrl?.trim() ||
-      `${schoolErpOrigin}/login?tenantSlug=${encodeURIComponent(appInstance.tenant.slug)}`;
+      `${schoolErpOrigin}/school-erp/${encodeURIComponent(appInstance.tenant.slug)}/login`;
 
     try {
       await AppInstanceService.update(

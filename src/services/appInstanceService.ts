@@ -251,7 +251,7 @@ function buildSolutionLoginUrl(
   }
 
   if (normalizedCode === 'SCHOOL_ERP') {
-    return `${origin}/login?tenantSlug=${encodeURIComponent(slug)}`;
+    return `${origin}/school-erp/${encodeURIComponent(slug)}/login`;
   }
 
   return origin;
@@ -260,6 +260,20 @@ function buildSolutionLoginUrl(
 function resolveEffectiveAppUrl(input: AppInstanceUrlContext): string | null {
   const explicitAppUrl = normalizeOptionalText(input.appUrl);
   if (explicitAppUrl) {
+    const normalizedCode = input.solution?.code?.trim().toUpperCase() ?? '';
+    if (normalizedCode === 'SCHOOL_ERP') {
+      try {
+        const parsed = new URL(explicitAppUrl);
+        const tenantSlug = normalizeOptionalText(parsed.searchParams.get('tenantSlug'));
+        if (tenantSlug) {
+          const origin = normalizeOrigin(parsed.origin);
+          return buildSolutionLoginUrl(origin, normalizedCode, tenantSlug);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     return explicitAppUrl;
   }
 
