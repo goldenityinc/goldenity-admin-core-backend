@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 
@@ -35,6 +36,45 @@ function parseCapacity(value: unknown): number | undefined {
     throw new AppError('Capacity harus berupa angka bulat > 0', 400);
   }
   return numeric;
+}
+
+async function cancelOpenOrdersForTable(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  tableId: bigint,
+): Promise<void> {
+  const openOrderIds = await tx.$queryRaw<Array<{ id: bigint }>>`
+    SELECT id
+    FROM sales_records
+    WHERE tenant_id = ${tenantId}
+      AND table_id = ${tableId}
+      AND (
+        LOWER(COALESCE(payment_status, '')) IN ('unpaid', 'pending_payment', 'open')
+        OR LOWER(COALESCE(order_status::text, '')) IN (
+          'open',
+          'unpaid',
+          'pending',
+          'pending_payment',
+          'preparing',
+          'ready_for_pickup',
+          'active'
+        )
+      )
+      AND UPPER(COALESCE(order_status::text, '')) NOT IN ('COMPLETED', 'CANCELLED')
+    FOR UPDATE
+  `;
+
+  if (openOrderIds.length === 0) {
+    return;
+  }
+
+  await tx.$executeRaw`
+    UPDATE sales_records
+    SET order_status = 'CANCELLED'::"OrderStatus",
+        updated_at = NOW()
+    WHERE tenant_id = ${tenantId}
+      AND id IN (${Prisma.join(openOrderIds.map((row) => row.id))})
+  `;
 }
 
 export class TableService {
@@ -91,6 +131,7 @@ export class TableService {
     id: bigint,
     payload: { tableNumber?: unknown; capacity?: unknown; status?: unknown },
   ): Promise<TableRow> {
+    const nextStatus = payload.status !== undefined ? parseTableStatus(payload.status) : undefined;
     const updates: Array<{ column: string; value: unknown; cast?: string }> = [];
 
     if (payload.tableNumber !== undefined) {
@@ -113,11 +154,10 @@ export class TableService {
     }
 
     if (payload.status !== undefined) {
-      const status = parseTableStatus(payload.status);
-      if (!status) {
+      if (!nextStatus) {
         throw new AppError('status tidak valid', 400);
       }
-      updates.push({ column: 'status', value: status, cast: '::"TableStatus"' });
+      updates.push({ column: 'status', value: nextStatus, cast: '::"TableStatus"' });
     }
 
     if (updates.length === 0) {
@@ -146,12 +186,34 @@ export class TableService {
       RETURNING id, tenant_id, table_number, capacity, status, created_at, updated_at
     `;
 
-    const rows = await prisma.$queryRawUnsafe<TableRow[]>(sql, ...values);
-    if (!rows[0]) {
-      throw new AppError('Meja tidak ditemukan', 404);
-    }
+    const updatedTable = await prisma.$transaction(async (tx) => {
+      if (nextStatus === 'AVAILABLE') {
+        const tableRows = await tx.$queryRaw<Array<{ id: bigint }>>`
+          SELECT id
+          FROM tables
+          WHERE id = ${id} AND tenant_id = ${tenantId}
+          LIMIT 1
+          FOR UPDATE
+        `;
 
-    return rows[0];
+        if (!tableRows[0]) {
+          throw new AppError('Meja tidak ditemukan', 404);
+        }
+
+        await cancelOpenOrdersForTable(tx, tenantId, id);
+      }
+
+      const rows = await tx.$queryRawUnsafe<TableRow[]>(sql, ...values);
+      if (!rows[0]) {
+        throw new AppError('Meja tidak ditemukan', 404);
+      }
+
+      return rows[0];
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+
+    return updatedTable;
   }
 
   static async deleteTable(tenantId: string, id: bigint): Promise<void> {
