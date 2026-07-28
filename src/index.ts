@@ -48,6 +48,8 @@ const allowedOrigins = Array.from(
   new Set([
     'http://localhost:5173', // Local Super Admin
     'http://127.0.0.1:5173', // Local Super Admin via explicit host
+    'http://localhost:5174', // Local Super Admin alternate port
+    'http://127.0.0.1:5174', // Local Super Admin via explicit host alternate port
     'http://localhost:3000', // Local POS / Web
     'http://127.0.0.1:3000', // Local POS / Web via explicit host
     'https://goldenity-super-admin.vercel.app', // Production Super Admin
