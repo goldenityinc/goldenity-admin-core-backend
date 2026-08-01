@@ -7,6 +7,7 @@ import { serializeForJson } from '../utils/serializeForJson';
 import { emitToTenant } from '../services/socketServer';
 import { AccountingPostingService } from '../services/accountingPostingService';
 import { AuditLogService } from '../services/auditLogService';
+import { withTransaction } from '../utils/retryTransaction';
 
 const PAYMENT_METHOD_QRIS = 'QRIS';
 const PAYMENT_METHOD_CASHIER = 'CASHIER';
@@ -296,8 +297,19 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     req.body.notes ??
     ''
   ).toString().trim();
+  const idempotencyKey = (
+    req.header('Idempotency-Key') ??
+    req.header('idempotency-key') ??
+    req.body.idempotencyKey ??
+    req.body.idempotency_key ??
+    ''
+  ).toString().trim() || null;
+  const referenceId = idempotencyKey
+    ? `qr_${idempotencyKey}`
+    : (req.body.referenceId ?? req.body.reference_id ?? '').toString().trim() ||
+      `qr_${Date.now()}_${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await withTransaction(async (tx) => {
     type ExistingSaleRow = {
       id: bigint;
       branch_id: bigint | null;
@@ -338,6 +350,60 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       throw new AppError('Meja tidak ditemukan untuk tenant ini', 404);
     }
 
+    if (idempotencyKey && idempotencyKey.length > 0) {
+      const idempotentRows = await tx.$queryRaw<Array<ExistingSaleRow & { created_at: Date | null }>>`
+        SELECT
+          id,
+          branch_id,
+          table_id,
+          order_type::text AS order_type,
+          reference_id,
+          receipt_number,
+          cashier_name,
+          total_price,
+          total_amount,
+          order_status::text AS order_status,
+          payment_status,
+          payment_proof_url,
+          items_json,
+          created_at
+        FROM sales_records
+        WHERE tenant_id = ${tenantId}
+          AND reference_id = ${referenceId}
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        FOR UPDATE
+      `;
+      const existingByIdem = idempotentRows[0];
+      if (existingByIdem) {
+        const tableRowsForIdem = await tx.$queryRaw<Array<{ table_number: string | null }>>`
+          SELECT table_number
+          FROM tables
+          WHERE id = ${tableId} AND tenant_id = ${tenantId}
+          LIMIT 1
+        `;
+        return {
+          id: existingByIdem.id,
+          reference_id: existingByIdem.reference_id,
+          receipt_number: existingByIdem.receipt_number,
+          cashier_name: existingByIdem.cashier_name,
+          total_price: existingByIdem.total_price,
+          total_amount: existingByIdem.total_amount,
+          order_status: existingByIdem.order_status,
+          payment_status: existingByIdem.payment_status ?? 'PENDING_PAYMENT',
+          payment_proof_url: existingByIdem.payment_proof_url ?? paymentProofUrl ?? null,
+          table_id: tableId,
+          table_number: tableRowsForIdem[0]?.table_number ?? null,
+          order_type: (existingByIdem.order_type ?? orderType) as string,
+          special_note: orderNote || null,
+          orderAction: 'IDEMPOTENT_REPLAY' as const,
+          current_batch_sequence: Math.max(resolveCurrentBatchSequence(existingByIdem.items_json), 1),
+          new_items: [],
+          items_json: Array.isArray(existingByIdem.items_json) ? existingByIdem.items_json : [],
+        };
+      }
+    }
+
     // Lock current active/unpaid order for this table to avoid race conditions under heavy load.
     const existingSaleRows = await tx.$queryRaw<ExistingSaleRow[]>`
       SELECT
@@ -352,6 +418,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         total_amount,
         order_status::text AS order_status,
         payment_status,
+        payment_proof_url,
         items_json
       FROM sales_records
       WHERE tenant_id = ${tenantId}
@@ -381,6 +448,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       WHERE tenant_id = ${tenantId}
         AND id IN (${Prisma.join(productIds)})
         AND (${effectiveBranchId}::bigint IS NULL OR branch_id = ${effectiveBranchId})
+      FOR NO KEY UPDATE
     `;
 
     const productMap = new Map(products.map((row) => [row.id, row]));
@@ -411,7 +479,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       };
     });
 
-    const referenceId = `qr_${Date.now()}`;
     const receiptNumber = generateReceiptNumber();
     const isAutoPaidQris =
       paymentMethod === PAYMENT_METHOD_QRIS &&
@@ -433,6 +500,16 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       ) AS "exists"
     `;
     const supportsPaymentProofUrl = paymentProofColumnRows[0]?.exists === true;
+    const specialNoteColumnRows = await tx.$queryRaw<Array<{ exists: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sales_records'
+          AND column_name = 'special_note'
+      ) AS "exists"
+    `;
+    const supportsSpecialNote = specialNoteColumnRows[0]?.exists === true;
 
     let sale: UpsertedSaleRow | null = null;
     let orderAction: 'NEW_ORDER' | 'APPENDED_TO_EXISTING' = 'NEW_ORDER';
@@ -484,10 +561,11 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           items_json,
           amount_paid
           ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
+          ${supportsSpecialNote && orderNote.length > 0 ? Prisma.sql`, special_note` : Prisma.empty}
         )
         VALUES (
           ${tenantId},
-          ${branchId ?? null},
+          ${effectiveBranchId ?? null},
           ${tableId},
           ${referenceId},
           ${receiptNumber},
@@ -503,6 +581,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           ${JSON.stringify(batchItems)}::jsonb,
           ${amountPaid}
           ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
+          ${supportsSpecialNote && orderNote.length > 0 ? Prisma.sql`, ${orderNote}` : Prisma.empty}
         )
         RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status::text AS order_status, payment_status
         ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.sql`, NULL::text AS payment_proof_url`}
@@ -515,6 +594,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       throw new AppError('Gagal membuat pesanan QR', 500);
     }
 
+    const stockDeductionTuples: Array<[string, number]> = [];
     for (const item of normalizedItems) {
       await tx.$queryRaw`
         INSERT INTO sales_record_items (
@@ -546,11 +626,51 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       `;
 
       if (!item.isService && item.isStockTracked) {
-        await tx.$queryRaw`
-          UPDATE products
-          SET stock = COALESCE(stock, 0) - ${item.qty}, updated_at = NOW()
-          WHERE id = ${item.productId} AND tenant_id = ${tenantId}
+        const qty = Number(item.qty ?? 0);
+        if (Number.isFinite(qty) && qty > 0) {
+          stockDeductionTuples.push([item.productId, qty]);
+        }
+      }
+    }
+
+    if (stockDeductionTuples.length > 0) {
+      const aggregated = new Map<string, number>();
+      for (const [productId, qty] of stockDeductionTuples) {
+        aggregated.set(productId, (aggregated.get(productId) ?? 0) + qty);
+      }
+      const tuplesList = Array.from(aggregated.entries());
+      if (tuplesList.length > 0) {
+        const placeholders = tuplesList.map(
+          (_row, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::int)`,
+        ).join(', ');
+        const values: Array<string | number> = [];
+        for (const [productId, qty] of tuplesList) {
+          values.push(productId, qty);
+        }
+        values.push(tenantId);
+        const sql = `
+          UPDATE products AS p
+          SET stock = COALESCE(p.stock, 0) - update_values.qty,
+              updated_at = NOW()
+          FROM (VALUES ${placeholders}) AS update_values(id, qty)
+          WHERE p.id = update_values.id::uuid
+            AND p.tenant_id = $${values.length - 1}::text
+            AND COALESCE(p.is_stock_tracked, true) <> false
+            AND COALESCE(p.stock, 0) >= update_values.qty
         `;
+        const rawUpdate = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+          `${sql} RETURNING p.id::text AS id`,
+          ...values,
+        );
+        const updatedIds = new Set((rawUpdate ?? []).map((row) => row.id));
+        for (const [productId, qty] of tuplesList) {
+          if (!updatedIds.has(productId)) {
+            throw new AppError(
+              `Stok produk tidak mencukupi saat proses pesanan QR (id=${productId}, butuh=${qty})`,
+              400,
+            );
+          }
+        }
       }
     }
 
@@ -567,39 +687,50 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       order_type: orderType,
       special_note: orderNote || null,
       payment_proof_url: sale.payment_proof_url ?? paymentProofUrl ?? null,
+      payment_method_label: paymentMethodLabel,
       orderAction,
       current_batch_sequence: currentBatchSequence,
       new_items: batchItems,
       items_json: mergedItemsJson,
     };
+  }, {
+    maxAttempts: 6,
+    initialBackoffMs: 80,
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeoutMs: 18_000,
   });
 
   const totalItems = items.reduce((sum, item) => sum + item.qty, 0);
 
-  // Keep order-note persistence best-effort and OUTSIDE transaction.
-  // In PostgreSQL, a failed statement inside a transaction marks it aborted.
-  if (orderNote.length > 0) {
+  if (orderNote.length > 0 && result.orderAction === 'NEW_ORDER') {
+    // Already persisted inline when column is available; nothing to do here.
+  } else if (orderNote.length > 0) {
     try {
-      if (result.orderAction === 'APPENDED_TO_EXISTING') {
-        await prisma.$queryRaw`
-          UPDATE sales_records
-          SET
-            special_note = CASE
-              WHEN COALESCE(special_note, '') = '' THEN ${orderNote}
-              ELSE special_note || E'\n---\n' || ${orderNote}
-            END,
-            updated_at = NOW()
-          WHERE id = ${result.id} AND tenant_id = ${tenantId}
-        `;
-      } else {
-        await prisma.$queryRaw`
-          UPDATE sales_records
-          SET special_note = ${orderNote}, updated_at = NOW()
-          WHERE id = ${result.id} AND tenant_id = ${tenantId}
-        `;
-      }
-    } catch (_) {
-      // Backward compatible when sales_records.special_note is not available yet.
+      await prisma.$queryRaw`
+        UPDATE sales_records
+        SET
+          special_note = CASE
+            WHEN COALESCE(special_note, '') = '' THEN ${orderNote}
+            ELSE special_note || E'\n---\n' || ${orderNote}
+          END,
+          updated_at = NOW()
+        WHERE id = ${result.id} AND tenant_id = ${tenantId}
+      `;
+    } catch (error) {
+      const errMeta = {
+        stage: 'POST_TX_SPECIAL_NOTE',
+        tenantId,
+        orderId: String(result.id ?? ''),
+        referenceId: String(result.reference_id ?? ''),
+        receiptNumber: String(result.receipt_number ?? ''),
+        orderAction: result.orderAction,
+        message: error instanceof Error ? error.message : String(error ?? ''),
+        stack: error instanceof Error ? error.stack : undefined,
+      };
+      console.warn(
+        '[publicQrController.createQrOrder] optional special_note post-update failed (non-fatal)',
+        JSON.stringify(errMeta),
+      );
     }
   }
 
@@ -612,9 +743,20 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         tenantId,
       );
     } catch (postingError) {
+      const errMeta = {
+        stage: 'POST_TX_ACCOUNTING_POST',
+        tenantId,
+        orderId: String(result.id ?? ''),
+        referenceId: String(result.reference_id ?? ''),
+        receiptNumber: String(result.receipt_number ?? ''),
+        paymentStatus: result.payment_status ?? null,
+        orderStatus: result.order_status ?? null,
+        message: postingError instanceof Error ? postingError.message : String(postingError ?? ''),
+        stack: postingError instanceof Error ? postingError.stack : undefined,
+      };
       console.warn(
-        '[publicQrController.createQrOrder] failed posting accounting journal:',
-        postingError instanceof Error ? postingError.message : postingError,
+        '[publicQrController.createQrOrder] failed posting accounting journal (non-fatal)',
+        JSON.stringify(errMeta),
       );
     }
 
@@ -631,14 +773,40 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           `[System] Pesanan Online Berhasil Dibuat & Dibayar Otomatis via QRIS - Invoice: ${invoiceNumber}`,
       });
     } catch (auditError) {
+      const errMeta = {
+        stage: 'POST_TX_AUDIT_LOG',
+        tenantId,
+        orderId: String(result.id ?? ''),
+        referenceId: String(result.reference_id ?? ''),
+        receiptNumber: String(result.receipt_number ?? ''),
+        invoiceNumber,
+        message: auditError instanceof Error ? auditError.message : String(auditError ?? ''),
+        stack: auditError instanceof Error ? auditError.stack : undefined,
+      };
       console.warn(
-        '[publicQrController.createQrOrder] failed writing audit log:',
-        auditError instanceof Error ? auditError.message : auditError,
+        '[publicQrController.createQrOrder] failed writing audit log (non-fatal)',
+        JSON.stringify(errMeta),
       );
     }
   }
 
   const tableLabel = (result.table_number ?? '').toString().trim();
+  const committedPaymentStatus = (result.payment_status ?? 'PENDING_PAYMENT').toString().trim();
+  const committedPaymentStatusUpper = committedPaymentStatus.toUpperCase();
+  const finalPaymentStatus =
+    committedPaymentStatusUpper === 'PAID' ? 'PAID' : committedPaymentStatus || 'PENDING_PAYMENT';
+  const resultAsAny = result as Record<string, unknown>;
+  const defaultPaymentMethodLabel = finalPaymentStatus === 'PAID' ? 'QRIS' : 'Bayar di Kasir';
+  const finalPaymentMethod = (
+    typeof resultAsAny.payment_method_label === 'string' &&
+    resultAsAny.payment_method_label.length > 0
+      ? resultAsAny.payment_method_label
+      : defaultPaymentMethodLabel
+  ).toString();
+  const finalOrderStatus = (result.order_status ?? 'PENDING').toString().trim() || 'PENDING';
+  const finalPaymentProofUrl = (result.payment_proof_url ?? '').toString().trim() || null;
+  const finalOrderType = (result.order_type ?? orderType).toString();
+
   emitToTenant(tenantId, 'incoming_qr_order', {
     tenantId,
     orderId: result.id,
@@ -648,13 +816,13 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     table_id: tableId.toString(),
     tableName: tableLabel || tableId.toString(),
     table_number: tableLabel || tableId.toString(),
-    orderType: 'DINE_IN',
-    order_type: result.order_type ?? orderType,
-    orderStatus: result.order_status,
-    paymentStatus: 'PENDING_PAYMENT',
-    paymentMethod: 'Bayar di Kasir',
-    paymentProofUrl: (result.payment_proof_url ?? '').toString().trim() || null,
-    payment_proof_url: (result.payment_proof_url ?? '').toString().trim() || null,
+    orderType: finalOrderType,
+    order_type: finalOrderType,
+    orderStatus: finalOrderStatus,
+    paymentStatus: finalPaymentStatus,
+    paymentMethod: finalPaymentMethod,
+    paymentProofUrl: finalPaymentProofUrl,
+    payment_proof_url: finalPaymentProofUrl,
     customerName: customerName || 'Guest',
     orderNote,
     special_note: orderNote || null,
@@ -669,16 +837,22 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     items_json: result.items_json,
     batch_sequence: result.current_batch_sequence,
     created_at: new Date().toISOString(),
+    isAutoPaid: finalPaymentStatus === 'PAID',
   });
 
   return res.status(201).json({
     success: true,
     orderAction: result.orderAction,
+    idempotentReplay: result.orderAction === 'IDEMPOTENT_REPLAY',
     data: serializeForJson({
       ...result,
       orderAction: result.orderAction,
+      idempotentReplay: result.orderAction === 'IDEMPOTENT_REPLAY',
       current_batch_sequence: result.current_batch_sequence,
       new_items: result.new_items,
+      finalPaymentStatus,
+      finalOrderStatus,
+      finalPaymentMethod,
     }),
   });
 });

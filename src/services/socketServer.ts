@@ -103,14 +103,82 @@ export function initializeSocketServer(server: HttpServer): Server {
 }
 
 export function emitToTenant(tenantId: string, eventName: string, payload: Record<string, unknown>): void {
-  if (!ioInstance) {
-    return;
-  }
-
   const normalizedTenantId = tenantId.trim();
-  if (!normalizedTenantId) {
+
+  if (!ioInstance) {
+    const meta = {
+      stage: 'SOCKET_EMIT_SKIP_NO_IO',
+      tenantId: normalizedTenantId || undefined,
+      eventName,
+      payloadPreview: {
+        orderId: payload.orderId ?? null,
+        referenceId: payload.referenceId ?? null,
+        receiptNumber: payload.receiptNumber ?? null,
+        orderStatus: payload.orderStatus ?? null,
+        paymentStatus: payload.paymentStatus ?? null,
+      },
+    };
+    console.warn(
+      '[socketServer.emitToTenant] skipped: ioInstance not initialized (POS clients will miss the event)',
+      JSON.stringify(meta),
+    );
     return;
   }
 
-  ioInstance.to(buildTenantRoom(normalizedTenantId)).emit(eventName, payload);
+  if (!normalizedTenantId) {
+    const meta = {
+      stage: 'SOCKET_EMIT_SKIP_BLANK_TENANT',
+      eventName,
+      payloadPreview: {
+        orderId: payload.orderId ?? null,
+        referenceId: payload.referenceId ?? null,
+        receiptNumber: payload.receiptNumber ?? null,
+      },
+    };
+    console.warn(
+      '[socketServer.emitToTenant] skipped: blank tenantId',
+      JSON.stringify(meta),
+    );
+    return;
+  }
+
+  try {
+    void ioInstance
+      .timeout(4000)
+      .to(buildTenantRoom(normalizedTenantId))
+      .emitWithAck(eventName, payload)
+      .catch((err) => {
+        const meta = {
+          stage: 'SOCKET_EMIT_ACK_MISSING_OR_ERROR',
+          tenantId: normalizedTenantId,
+          eventName,
+          message: err instanceof Error ? err.message : String(err ?? ''),
+          stack: err instanceof Error ? err.stack : undefined,
+          payloadPreview: {
+            orderId: payload.orderId ?? null,
+            referenceId: payload.referenceId ?? null,
+            receiptNumber: payload.receiptNumber ?? null,
+            orderStatus: payload.orderStatus ?? null,
+            paymentStatus: payload.paymentStatus ?? null,
+            grandTotal: payload.grandTotal ?? null,
+          },
+        };
+        console.warn(
+          '[socketServer.emitToTenant] POS did not ACK within timeout (the DB record is COMMITTED, but POS UI may be stale until next refresh)',
+          JSON.stringify(meta),
+        );
+      });
+  } catch (topErr) {
+    const meta = {
+      stage: 'SOCKET_EMIT_SYNC_EXCEPTION',
+      tenantId: normalizedTenantId,
+      eventName,
+      message: topErr instanceof Error ? topErr.message : String(topErr ?? ''),
+      stack: topErr instanceof Error ? topErr.stack : undefined,
+    };
+    console.warn(
+      '[socketServer.emitToTenant] synchronous throw when scheduling emit (DB record is still COMMITTED)',
+      JSON.stringify(meta),
+    );
+  }
 }

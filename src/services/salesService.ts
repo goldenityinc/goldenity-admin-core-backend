@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
+import { withTransaction } from '../utils/retryTransaction';
 import type { CreateSaleInput } from '../validations/salesValidation';
 
 type SaleItemPayload = CreateSaleInput['items'][number];
@@ -223,7 +224,7 @@ export class SalesService {
       );
     }
 
-    return prisma.$transaction(async (tx) => {
+    return withTransaction(async (tx) => {
       const resolvedReceiptNumber = await this.resolveReceiptNumber(
         tx,
         tenantId,
@@ -384,70 +385,74 @@ export class SalesService {
       }
 
       const stockUpdates: StockDeductionEntry[] = [];
-      const trackedProductRows = stockDeductionMap.size > 0
-        ? await tx.products.findMany({
-            where: {
-              tenant_id: tenantId,
-              id: {
-                in: Array.from(stockDeductionMap.keys()),
-              },
-            },
-            select: {
-              id: true,
-              is_stock_tracked: true,
-            },
-          })
-        : [];
+      if (stockDeductionMap.size > 0) {
+        const productIds = Array.from(stockDeductionMap.keys());
+        const trackedProductRows = await tx.products.findMany({
+          where: {
+            tenant_id: tenantId,
+            id: { in: productIds },
+          },
+          select: {
+            id: true,
+            is_stock_tracked: true,
+          },
+        });
 
-      const trackedProductIds = new Set(
-        trackedProductRows
-          .filter((product) => product.is_stock_tracked !== false)
-          .map((product) => product.id),
-      );
+        const trackedProductIds = new Set(
+          trackedProductRows
+            .filter((product) => product.is_stock_tracked !== false)
+            .map((product) => product.id),
+        );
 
-      for (const [productId, qty] of stockDeductionMap.entries()) {
-        if (!trackedProductIds.has(productId)) {
-          continue;
+        const deductedTuples: Array<[string, number]> = [];
+        for (const [productId, qty] of stockDeductionMap.entries()) {
+          if (!trackedProductIds.has(productId)) continue;
+          if (!Number.isFinite(qty) || qty <= 0) continue;
+          deductedTuples.push([productId, Math.round(qty)]);
         }
 
-        await tx.products.updateMany({
-          where: {
-            tenant_id: tenantId,
-            id: productId,
-            stock: null,
-          },
-          data: {
-            stock: 0,
-          },
-        });
-
-        const deductionResult = await tx.products.updateMany({
-          where: {
-            tenant_id: tenantId,
-            id: productId,
-          },
-          data: {
-            stock: {
-              decrement: qty,
-            },
-            updated_at: new Date(),
-          },
-        });
-
-        if (deductionResult.count <= 0) {
-          throw new AppError(
-            `Produk tidak ditemukan saat potong stok (id=${productId})`,
-            400,
+        if (deductedTuples.length > 0) {
+          const placeholders = deductedTuples.map(
+            (_row, index) => `($${index * 2 + 1}::text, $${index * 2 + 2}::int)`,
+          ).join(', ');
+          const values: Array<string | number> = [];
+          for (const [productId, qty] of deductedTuples) {
+            values.push(productId, qty);
+          }
+          values.push(tenantId);
+          const sql = `
+            UPDATE "products" AS p
+            SET stock = COALESCE(p.stock, 0) - update_values.qty,
+                updated_at = NOW()
+            FROM (VALUES ${placeholders}) AS update_values(id, qty)
+            WHERE p.id::text = update_values.id
+              AND p.tenant_id = $${values.length - 1}::text
+              AND COALESCE(p.is_stock_tracked, true) <> false
+              AND COALESCE(p.stock, 0) >= update_values.qty
+          `;
+          const rawUpdate = await (tx as Prisma.TransactionClient).$queryRawUnsafe<Array<{ id: string }>>(
+            `${sql} RETURNING p.id::text AS id`,
+            ...values,
           );
+          const updatedIds = new Set((rawUpdate ?? []).map((row) => row.id));
+          for (const [productId, qty] of deductedTuples) {
+            if (!updatedIds.has(productId)) {
+              throw new AppError(
+                `Stok produk tidak mencukupi / tidak ditemukan saat potong stok (id=${productId})`,
+                400,
+              );
+            }
+            stockUpdates.push({ productId, qty });
+          }
         }
-
-        stockUpdates.push({
-          productId,
-          qty,
-        });
       }
 
       return { sale, items, stockUpdates };
+    }, {
+      maxAttempts: 6,
+      initialBackoffMs: 75,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeoutMs: 20_000,
     });
   }
 

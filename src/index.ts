@@ -27,9 +27,57 @@ import auditLogRoutes from './routes/auditLogRoutes';
 import publicQrRoutes from './routes/publicQrRoutes';
 import { initializeSocketServer } from './services/socketServer';
 import prisma from './config/database';
+import { serializeForJson } from './utils/serializeForJson';
 
 // Load environment variables
 dotenv.config();
+
+function serializeErrorForLog(error: unknown): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  if (error instanceof Error) {
+    safe.message = error.message;
+    safe.name = error.name;
+    safe.stack = error.stack;
+    if ('code' in error) safe.code = (error as { code?: unknown }).code;
+    if ('statusCode' in error) safe.statusCode = (error as { statusCode?: unknown }).statusCode;
+    if ('isOperational' in error) safe.isOperational = (error as { isOperational?: unknown }).isOperational;
+    if ('meta' in error) safe.meta = (error as { meta?: unknown }).meta;
+  } else {
+    safe.raw = serializeForJson(error);
+  }
+  return safe;
+}
+
+process.on('uncaughtException', (error: Error, origin: string) => {
+  try {
+    console.error(
+      '[uncaughtException] fatal process error',
+      JSON.stringify({
+        origin,
+        error: serializeErrorForLog(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    console.error('[uncaughtException] fallback log', error?.stack ?? String(error));
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  try {
+    console.error(
+      '[unhandledRejection] unhandled promise rejection',
+      JSON.stringify({
+        error: serializeErrorForLog(reason),
+        promise: Object.prototype.toString.call(promise),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    console.error('[unhandledRejection] fallback log', String(reason));
+  }
+});
 
 // Initialize Express app
 const app: Application = express();
@@ -155,24 +203,64 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 // Global error handler
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  if (process.env.NODE_ENV === 'development') {
-    res.status(err.statusCode).json({
-      success: false,
-      error: err.message,
-      stack: err.stack,
-      statusCode: err.statusCode,
-    });
-  } else {
-    // Production mode - don't leak error details
-    res.status(err.statusCode).json({
-      success: false,
-      error: err.isOperational ? err.message : 'Something went wrong',
-    });
+  const statusCode = Number(err.statusCode) || 500;
+  const tenantId = String((req as Request & { user?: { tenantId?: string } }).user?.tenantId ?? '').trim() || null;
+  const userId = String((req as Request & { user?: { userId?: string } }).user?.userId ?? '').trim() || null;
+  const errorPayload = serializeErrorForLog(err);
+
+  if (statusCode >= 500 || !Boolean(err.isOperational)) {
+    console.error(
+      '[globalErrorHandler] operational failure',
+      JSON.stringify({
+        method: req.method,
+        url: req.originalUrl,
+        ip: req.ip,
+        referer: req.header('referer') || null,
+        userAgent: req.header('user-agent') || null,
+        tenantId,
+        userId,
+        statusCode,
+        error: errorPayload,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } else if (process.env.NODE_ENV !== 'production') {
+    console.warn(
+      '[globalErrorHandler] client/validation error',
+      JSON.stringify({
+        method: req.method,
+        url: req.originalUrl,
+        tenantId,
+        userId,
+        statusCode,
+        error: errorPayload,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
+
+  if (process.env.NODE_ENV === 'development') {
+    res.status(statusCode).json({
+      success: false,
+      error: err.message ?? 'Internal error',
+      stack: err.stack ?? null,
+      statusCode,
+    });
+    return;
+  }
+
+  const safeMessage = err.isOperational && typeof err.message === 'string' && err.message.length > 0
+    ? err.message
+    : 'Something went wrong';
+  res.status(statusCode).json({
+    success: false,
+    error: safeMessage,
+    statusCode,
+  });
 });
 
 initializeSocketServer(server);
