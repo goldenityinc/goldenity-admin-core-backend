@@ -7,6 +7,7 @@ import { serializeForJson } from '../utils/serializeForJson';
 import { emitToTenant } from '../services/socketServer';
 import { AccountingPostingService } from '../services/accountingPostingService';
 import { AuditLogService } from '../services/auditLogService';
+import { ObjectStorageService } from '../services/objectStorageService';
 import { withTransaction } from '../utils/retryTransaction';
 
 const PAYMENT_METHOD_QRIS = 'QRIS';
@@ -155,6 +156,37 @@ function generateReceiptNumber(): string {
   const yyyymmdd = `${now.getFullYear()}${`${now.getMonth() + 1}`.padStart(2, '0')}${`${now.getDate()}`.padStart(2, '0')}`;
   const serial = `${now.getTime() % 10000}`.padStart(4, '0');
   return `INV-${yyyymmdd}-${serial}`;
+}
+
+function parseSalesRecordId(value: unknown): bigint {
+  const text = (value ?? '').toString().trim();
+  if (!/^\d+$/.test(text)) {
+    throw new AppError('order_id tidak valid (harus numeric id dari sales_records)', 400);
+  }
+  return BigInt(text);
+}
+
+function inferImageExtension(mimeType: string): string | null {
+  const mt = mimeType.trim().toLowerCase();
+  if (mt === 'image/png') return 'png';
+  if (mt === 'image/jpeg' || mt === 'image/jpg') return 'jpg';
+  if (mt === 'image/webp') return 'webp';
+  if (mt === 'image/svg+xml') return 'svg';
+  if (mt === 'application/pdf') return 'pdf';
+  return null;
+}
+
+function getFirstUploadedFile(req: Request, fieldName: string): Express.Multer.File | undefined {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  if (files?.[fieldName]?.[0]) return files[fieldName][0];
+  if ((req as any).file && (req as any).file.fieldname === fieldName) {
+    return (req as any).file as Express.Multer.File;
+  }
+  if (Array.isArray((req as any).files)) {
+    const asArr = (req as any).files as Express.Multer.File[];
+    return asArr.find((f) => f.fieldname === fieldName) ?? asArr[0];
+  }
+  return undefined;
 }
 
 export const getQrMenu = asyncHandler(async (req: Request, res: Response) => {
@@ -480,15 +512,13 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     });
 
     const receiptNumber = generateReceiptNumber();
-    const isAutoPaidQris =
-      paymentMethod === PAYMENT_METHOD_QRIS &&
-      paymentProofUrl !== null &&
-      paymentProofUrl.trim().length > 0;
+    // ORDER FIRST, PAY LATER: always create as PENDING_PAYMENT / PENDING.
+    // Payment proof and PAID status are ONLY set later via PUT /qr-orders/:id/payment.
     const paymentMethodLabel =
       paymentMethod === PAYMENT_METHOD_QRIS ? 'QRIS' : 'Bayar di Kasir';
-    const paymentStatus = isAutoPaidQris ? 'PAID' : 'PENDING_PAYMENT';
-    const orderStatus = isAutoPaidQris ? 'PREPARING' : 'PENDING';
-    const amountPaid = isAutoPaidQris ? total : 0;
+    const paymentStatus = 'PENDING_PAYMENT';
+    const orderStatus = 'PENDING';
+    const amountPaid = 0;
 
     const paymentProofColumnRows = await tx.$queryRaw<Array<{ exists: boolean }>>`
       SELECT EXISTS (
@@ -560,7 +590,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           cashier_name,
           items_json,
           amount_paid
-          ${supportsPaymentProofUrl ? Prisma.sql`, payment_proof_url` : Prisma.empty}
+          ${supportsPaymentProofUrl ? Prisma.sql`, NULL::text AS payment_proof_url` : Prisma.empty}
           ${supportsSpecialNote && orderNote.length > 0 ? Prisma.sql`, special_note` : Prisma.empty}
         )
         VALUES (
@@ -580,7 +610,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           ${'Online Order'},
           ${JSON.stringify(batchItems)}::jsonb,
           ${amountPaid}
-          ${supportsPaymentProofUrl ? Prisma.sql`, ${paymentProofUrl}` : Prisma.empty}
+          ${supportsPaymentProofUrl ? Prisma.sql`, NULL::text` : Prisma.empty}
           ${supportsSpecialNote && orderNote.length > 0 ? Prisma.sql`, ${orderNote}` : Prisma.empty}
         )
         RETURNING id, reference_id, receipt_number, cashier_name, total_price, total_amount, order_status::text AS order_status, payment_status
@@ -686,7 +716,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       table_number: tableRows[0]?.table_number ?? null,
       order_type: orderType,
       special_note: orderNote || null,
-      payment_proof_url: sale.payment_proof_url ?? paymentProofUrl ?? null,
+      payment_proof_url: null,
       payment_method_label: paymentMethodLabel,
       orderAction,
       current_batch_sequence: currentBatchSequence,
@@ -734,69 +764,14 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     }
   }
 
-  const isPaidOrder =
-    (result.payment_status ?? '').toString().trim().toUpperCase() === 'PAID';
-  if (isPaidOrder) {
-    try {
-      await AccountingPostingService.postSalesToJournal(
-        result.id.toString(),
-        tenantId,
-      );
-    } catch (postingError) {
-      const errMeta = {
-        stage: 'POST_TX_ACCOUNTING_POST',
-        tenantId,
-        orderId: String(result.id ?? ''),
-        referenceId: String(result.reference_id ?? ''),
-        receiptNumber: String(result.receipt_number ?? ''),
-        paymentStatus: result.payment_status ?? null,
-        orderStatus: result.order_status ?? null,
-        message: postingError instanceof Error ? postingError.message : String(postingError ?? ''),
-        stack: postingError instanceof Error ? postingError.stack : undefined,
-      };
-      console.warn(
-        '[publicQrController.createQrOrder] failed posting accounting journal (non-fatal)',
-        JSON.stringify(errMeta),
-      );
-    }
-
-    const invoiceNumber =
-      (result.receipt_number ?? result.reference_id ?? result.id)
-        .toString()
-        .trim() || result.id.toString();
-    try {
-      await AuditLogService.createLog({
-        tenantId,
-        userName: 'System',
-        actionType: 'ONLINE_ORDER_AUTO_PAID',
-        details:
-          `[System] Pesanan Online Berhasil Dibuat & Dibayar Otomatis via QRIS - Invoice: ${invoiceNumber}`,
-      });
-    } catch (auditError) {
-      const errMeta = {
-        stage: 'POST_TX_AUDIT_LOG',
-        tenantId,
-        orderId: String(result.id ?? ''),
-        referenceId: String(result.reference_id ?? ''),
-        receiptNumber: String(result.receipt_number ?? ''),
-        invoiceNumber,
-        message: auditError instanceof Error ? auditError.message : String(auditError ?? ''),
-        stack: auditError instanceof Error ? auditError.stack : undefined,
-      };
-      console.warn(
-        '[publicQrController.createQrOrder] failed writing audit log (non-fatal)',
-        JSON.stringify(errMeta),
-      );
-    }
-  }
+  // NOTE: Order First, Pay Later.
+  // Accounting posting + audit log for PAID orders run ONLY when payment proof is uploaded
+  // via PUT /qr-orders/:id/payment. Not at create time (always PENDING_PAYMENT).
 
   const tableLabel = (result.table_number ?? '').toString().trim();
-  const committedPaymentStatus = (result.payment_status ?? 'PENDING_PAYMENT').toString().trim();
-  const committedPaymentStatusUpper = committedPaymentStatus.toUpperCase();
-  const finalPaymentStatus =
-    committedPaymentStatusUpper === 'PAID' ? 'PAID' : committedPaymentStatus || 'PENDING_PAYMENT';
+  const finalPaymentStatus = 'PENDING_PAYMENT';
   const resultAsAny = result as Record<string, unknown>;
-  const defaultPaymentMethodLabel = finalPaymentStatus === 'PAID' ? 'QRIS' : 'Bayar di Kasir';
+  const defaultPaymentMethodLabel = 'Bayar di Kasir';
   const finalPaymentMethod = (
     typeof resultAsAny.payment_method_label === 'string' &&
     resultAsAny.payment_method_label.length > 0
@@ -804,7 +779,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       : defaultPaymentMethodLabel
   ).toString();
   const finalOrderStatus = (result.order_status ?? 'PENDING').toString().trim() || 'PENDING';
-  const finalPaymentProofUrl = (result.payment_proof_url ?? '').toString().trim() || null;
+  const finalPaymentProofUrl = null;
   const finalOrderType = (result.order_type ?? orderType).toString();
 
   emitToTenant(tenantId, 'incoming_qr_order', {
@@ -837,7 +812,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     items_json: result.items_json,
     batch_sequence: result.current_batch_sequence,
     created_at: new Date().toISOString(),
-    isAutoPaid: finalPaymentStatus === 'PAID',
+    isAutoPaid: false,
   });
 
   return res.status(201).json({
@@ -853,6 +828,353 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       finalPaymentStatus,
       finalOrderStatus,
       finalPaymentMethod,
+    }),
+  });
+});
+
+export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Response) => {
+  const orderId = parseSalesRecordId(req.params.id ?? req.params.orderId);
+  const tenantId = parseTenantId(
+    req.body.tenantId ??
+      req.body.tenant_id ??
+      req.query.tenantId ??
+      req.query.tenant_id ??
+      req.header('X-Tenant-Id'),
+  );
+
+  const file = getFirstUploadedFile(req, 'payment_proof') ??
+    getFirstUploadedFile(req, 'file') ??
+    getFirstUploadedFile(req, 'proof') ??
+    getFirstUploadedFile(req, 'paymentProof') ??
+    undefined;
+  const rawUrl = (
+    req.body.payment_proof_url ??
+    req.body.paymentProofUrl ??
+    req.body.proof_url ??
+    req.body.proofUrl ??
+    ''
+  ).toString().trim();
+
+  const paymentMethodRaw = normalizePaymentMethod(
+    req.body.paymentMethod ?? req.body.payment_method,
+  );
+  const paymentMethodLabel =
+    paymentMethodRaw === PAYMENT_METHOD_QRIS ? 'QRIS' : 'Bayar di Kasir';
+
+  if (!file && !rawUrl) {
+    throw new AppError(
+      'Bukti pembayaran wajib dikirim (file upload di field `payment_proof` atau URL di field `payment_proof_url`',
+      400,
+    );
+  }
+
+  let finalProofUrl = rawUrl || '';
+  let storageKey: string | null = null;
+
+  if (file) {
+    const mt = (file.mimetype ?? '').toLowerCase();
+    if (!file.mimetype || (!mt.startsWith('image/') && mt !== 'application/pdf')) {
+      throw new AppError('File bukti pembayaran harus gambar (png/jpg/webp) atau PDF', 400);
+    }
+    const ext = inferImageExtension(file.mimetype) ?? (mt === 'application/pdf' ? 'pdf' : null);
+    if (!ext) {
+      throw new AppError('Format file tidak didukung (png/jpg/webp/pdf)', 400);
+    }
+    const key = `tenants/${tenantId}/qr-payments/${orderId.toString()}-${Date.now()}.${ext}`;
+    try {
+      const uploaded = await ObjectStorageService.putPublicObject({
+        key,
+        body: file.buffer,
+        contentType: file.mimetype,
+      });
+      finalProofUrl = uploaded.url;
+      storageKey = uploaded.key;
+    } catch (storageErr) {
+      const errMeta = {
+        stage: 'PROOF_UPLOAD_STORAGE_SAVE',
+        tenantId,
+        orderId: orderId.toString(),
+        fileName: file.originalname ?? file.fieldname,
+        sizeBytes: file.size ?? 0,
+        message: storageErr instanceof Error ? storageErr.message : String(storageErr ?? ''),
+        stack: storageErr instanceof Error ? storageErr.stack : undefined,
+      };
+      console.error(
+        '[publicQrController.uploadQrOrderPayment] failed uploading payment proof to object storage',
+        JSON.stringify(errMeta),
+      );
+      throw new AppError('Gagal upload bukti pembayaran ke storage', 502);
+    }
+  }
+
+  type OrderForProofUpdateRow = {
+    id: bigint;
+    tenant_id: string;
+    branch_id: bigint | null;
+    table_id: bigint | null;
+    order_type: string | null;
+    reference_id: string | null;
+    receipt_number: string | null;
+    customer_name: string | null;
+    total_price: string | null;
+    total_amount: string | null;
+    order_status: string;
+    payment_status: string | null;
+    payment_method: string | null;
+    payment_proof_url: string | null;
+    notes: string | null;
+    amount_paid: string | null;
+    items_json: Prisma.JsonValue | null;
+    updated_at: Date | null;
+  };
+
+  const result = await withTransaction(async (tx) => {
+    const proofColRows = await tx.$queryRaw<Array<{ exists: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'sales_records' AND column_name = 'payment_proof_url'
+      ) AS "exists"
+    `;
+    const supportsProof = proofColRows[0]?.exists === true;
+
+    const lockedRows = await tx.$queryRaw<OrderForProofUpdateRow[]>`
+      SELECT
+        id,
+        tenant_id,
+        branch_id,
+        table_id,
+        order_type::text AS order_type,
+        reference_id,
+        receipt_number,
+        customer_name,
+        total_price,
+        total_amount,
+        order_status::text AS order_status,
+        payment_status,
+        payment_method,
+        ${supportsProof ? Prisma.sql`payment_proof_url` : Prisma.sql`NULL::text AS payment_proof_url`},
+        notes,
+        amount_paid,
+        items_json,
+        updated_at
+      FROM sales_records
+      WHERE id = ${orderId} AND tenant_id = ${tenantId}
+      FOR UPDATE
+    `;
+    const orderRow = lockedRows[0];
+    if (!orderRow) {
+      throw new AppError('Pesanan tidak ditemukan untuk tenant ini', 404);
+    }
+
+    const existingPaymentStatusUpper = (orderRow.payment_status ?? '').toString().trim().toUpperCase();
+    const existingOrderStatusUpper = (orderRow.order_status ?? '').toString().trim().toUpperCase();
+    const alreadyPaid = existingPaymentStatusUpper === 'PAID';
+
+    // Idempotent: already has the same proof URL and status is PAID → replay the same result
+    const existingProof = (orderRow.payment_proof_url ?? '').toString().trim();
+    if (alreadyPaid && existingProof.length > 0 && existingProof === finalProofUrl) {
+      return {
+        order: orderRow,
+        idempotentReplay: true as const,
+        transition: 'NO_CHANGE_IDEMPOTENT_REPLAY' as const,
+      };
+    }
+
+    const totalAmount = Number(orderRow.total_price ?? orderRow.total_amount ?? 0);
+    const newPaymentStatus = 'PAID';
+    const newOrderStatus =
+      existingOrderStatusUpper === 'COMPLETED' || existingOrderStatusUpper === 'CANCELLED'
+        ? orderRow.order_status
+        : existingOrderStatusUpper === 'READY_FOR_PICKUP'
+          ? orderRow.order_status
+          : 'PREPARING';
+    const amountPaid = totalAmount;
+
+    const updatedRows = await tx.$queryRaw<OrderForProofUpdateRow[]>`
+      UPDATE sales_records
+      SET
+        payment_status = ${newPaymentStatus},
+        order_status = ${newOrderStatus}::"OrderStatus",
+        amount_paid = ${amountPaid},
+        payment_method = CASE WHEN COALESCE(payment_method, '') = '' THEN ${paymentMethodLabel} ELSE payment_method END,
+        ${supportsProof ? Prisma.sql`payment_proof_url = ${finalProofUrl}` : Prisma.empty},
+        updated_at = NOW()
+      WHERE id = ${orderId} AND tenant_id = ${tenantId}
+      RETURNING
+        id,
+        tenant_id,
+        branch_id,
+        table_id,
+        order_type::text AS order_type,
+        reference_id,
+        receipt_number,
+        customer_name,
+        total_price,
+        total_amount,
+        order_status::text AS order_status,
+        payment_status,
+        payment_method,
+        ${supportsProof ? Prisma.sql`payment_proof_url` : Prisma.sql`NULL::text AS payment_proof_url`},
+        notes,
+        amount_paid,
+        items_json,
+        updated_at
+    `;
+    const updated = updatedRows[0] ?? orderRow;
+    return {
+      order: updated,
+      idempotentReplay: false as const,
+      transition: alreadyPaid ? 'STATUS_REPLAY_WITH_NEW_PROOF' as const : 'MARKED_PAID' as const,
+    };
+  }, {
+    maxAttempts: 6,
+    initialBackoffMs: 70,
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeoutMs: 15_000,
+  });
+
+  const order = result.order;
+  const finalPaymentStatusForSocket = (order.payment_status ?? 'PAID').toString().trim() || 'PAID';
+  const finalOrderStatusForSocket = (order.order_status ?? 'PREPARING').toString().trim() || 'PREPARING';
+  const finalProofUrlForSocket = finalProofUrl;
+  const finalMethodForSocket = (order.payment_method ?? paymentMethodLabel).toString();
+  const totalGrand = Number(order.total_price ?? order.total_amount ?? 0);
+  const tableLabel = '';
+  const tableIdForSocket = order.table_id;
+
+  const itemsJsonArr = Array.isArray(order.items_json) ? (order.items_json as Array<Record<string, unknown>>) : [];
+  const totalQty = itemsJsonArr.reduce<number>((sum, item) => {
+    const q = Number((item as Record<string, unknown>).qty);
+    return sum + (Number.isFinite(q) && q > 0 ? Number(q) : 0);
+  }, 0);
+
+  // Post-commit: accounting + audit (same structure as the removed auto-paid branch in createQrOrder)
+  if (!result.idempotentReplay) {
+    try {
+      await AccountingPostingService.postSalesToJournal(order.id.toString(), tenantId);
+    } catch (postingError) {
+      const errMeta = {
+        stage: 'POST_TX_PROOF_UPLOAD_ACCOUNTING_POST',
+        tenantId,
+        orderId: order.id.toString(),
+        referenceId: String(order.reference_id ?? ''),
+        receiptNumber: String(order.receipt_number ?? ''),
+        paymentStatus: order.payment_status ?? null,
+        orderStatus: order.order_status ?? null,
+        message: postingError instanceof Error ? postingError.message : String(postingError ?? ''),
+        stack: postingError instanceof Error ? postingError.stack : undefined,
+      };
+      console.warn(
+        '[publicQrController.uploadQrOrderPayment] failed posting accounting journal (non-fatal)',
+        JSON.stringify(errMeta),
+      );
+    }
+
+    const invoiceNumber =
+      (order.receipt_number ?? order.reference_id ?? order.id).toString().trim() ||
+      order.id.toString();
+    try {
+      await AuditLogService.createLog({
+        tenantId,
+        userName: 'System',
+        actionType: 'ONLINE_ORDER_PAID_VIA_QR_PROOF',
+        details: `[System] Bukti Pembayaran QR Order Telah Diupload & Ditandai Lunas - Invoice: ${invoiceNumber}`,
+      });
+    } catch (auditError) {
+      const errMeta = {
+        stage: 'POST_TX_PROOF_UPLOAD_AUDIT_LOG',
+        tenantId,
+        orderId: order.id.toString(),
+        referenceId: String(order.reference_id ?? ''),
+        receiptNumber: invoiceNumber,
+        message: auditError instanceof Error ? auditError.message : String(auditError ?? ''),
+        stack: auditError instanceof Error ? auditError.stack : undefined,
+      };
+      console.warn(
+        '[publicQrController.uploadQrOrderPayment] failed writing audit log (non-fatal)',
+        JSON.stringify(errMeta),
+      );
+    }
+  }
+
+  // Dedicated socket event for POS status update
+  emitToTenant(tenantId, 'qr_order_payment_status_updated', {
+    tenantId,
+    orderId: order.id,
+    referenceId: order.reference_id,
+    receiptNumber: order.receipt_number,
+    transition: result.transition,
+    idempotentReplay: result.idempotentReplay,
+    previousPaymentStatus: null,
+    orderStatus: finalOrderStatusForSocket,
+    paymentStatus: finalPaymentStatusForSocket,
+    paymentMethod: finalMethodForSocket,
+    paymentProofUrl: finalProofUrlForSocket,
+    payment_proof_url: finalProofUrlForSocket,
+    storageKey,
+    grandTotal: totalGrand,
+    totalQty,
+    updatedAt: order.updated_at ? new Date(order.updated_at).toISOString() : null,
+    created_at: new Date().toISOString(),
+  });
+
+  // Re-emit incoming_qr_order too so any POS listening to that still refreshes the list
+  emitToTenant(tenantId, 'incoming_qr_order', {
+    tenantId,
+    orderId: order.id,
+    referenceId: order.reference_id,
+    receiptNumber: order.receipt_number,
+    tableId: tableIdForSocket,
+    table_id: tableIdForSocket ? tableIdForSocket.toString() : '',
+    tableName: tableLabel,
+    table_number: tableLabel,
+    orderType: (order.order_type ?? 'DINE_IN').toString(),
+    order_type: (order.order_type ?? 'DINE_IN').toString(),
+    orderStatus: finalOrderStatusForSocket,
+    paymentStatus: finalPaymentStatusForSocket,
+    paymentMethod: finalMethodForSocket,
+    paymentProofUrl: finalProofUrlForSocket,
+    payment_proof_url: finalProofUrlForSocket,
+    customerName: (order.customer_name ?? 'Guest').toString(),
+    orderNote: (order.notes ?? '').toString(),
+    special_note: (order.notes ?? '').toString() || null,
+    specialNote: (order.notes ?? '').toString() || null,
+    orderAction: result.transition,
+    order_action: result.transition,
+    totalItems: totalQty,
+    grandTotal: totalGrand,
+    current_batch_sequence: 1,
+    new_items: itemsJsonArr,
+    items: itemsJsonArr,
+    items_json: itemsJsonArr,
+    batch_sequence: 1,
+    created_at: new Date().toISOString(),
+    isAutoPaid: false,
+    idempotentReplay: result.idempotentReplay,
+  });
+
+  return res.status(200).json({
+    success: true,
+    idempotentReplay: result.idempotentReplay,
+    transition: result.transition,
+    data: serializeForJson({
+      id: order.id,
+      tenantId: order.tenant_id,
+      referenceId: order.reference_id,
+      receiptNumber: order.receipt_number,
+      orderType: order.order_type,
+      orderStatus: order.order_status,
+      paymentStatus: order.payment_status,
+      paymentMethod: order.payment_method ?? paymentMethodLabel,
+      paymentProofUrl: finalProofUrl,
+      storageKey,
+      amountPaid: order.amount_paid,
+      total_price: order.total_price,
+      total_amount: order.total_amount,
+      tableId: order.table_id,
+      customerName: order.customer_name,
+      updatedAt: order.updated_at,
     }),
   });
 });
