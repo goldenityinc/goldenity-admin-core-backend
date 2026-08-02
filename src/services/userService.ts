@@ -88,6 +88,55 @@ function getRoleCandidates(role: string): string[] {
   return [...new Set(expanded)];
 }
 
+type PgClientWithPrivate = Client & {
+  _connected?: boolean;
+  connection?: { stream?: { writable?: boolean; destroyed?: boolean } };
+};
+
+/**
+ * Connect a brand-new pg Client EXACTLY ONCE.
+ * Prevents the pg error "Client has already been connected. You cannot reuse a client."
+ * when the same Client instance accidentally has .connect() called twice.
+ */
+async function tryConnectOnce(client: PgClientWithPrivate, label: string): Promise<void> {
+  // PoolClient OR standalone Client that already has .connect() called should
+  // NEVER trigger client.connect() again.
+  const connectedPrivate = typeof client._connected === 'boolean' ? client._connected : null;
+  const streamOpen =
+    client.connection && client.connection.stream
+      ? typeof client.connection.stream.destroyed === 'boolean'
+        ? !client.connection.stream.destroyed
+        : typeof client.connection.stream.writable === 'boolean'
+          ? client.connection.stream.writable
+          : null
+      : null;
+  if (connectedPrivate === true || streamOpen === true) {
+    // DO NOT call client.connect() — it would throw "already connected".
+    console.warn(
+      `[UserService.tryConnectOnce:${label}] skipped redundant client.connect() (client already connected).`,
+    );
+    return;
+  }
+  try {
+    await client.connect();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    // If pg itself throws "already connected" / "cannot reuse" treat as success
+    // (there was a race and the client IS connected, usable for queries).
+    if (
+      typeof message === 'string' &&
+      (message.toUpperCase().includes('CLIENT HAS ALREADY BEEN CONNECTED') ||
+        message.toUpperCase().includes('CANNOT REUSE A CLIENT'))
+    ) {
+      console.warn(
+        `[UserService.tryConnectOnce:${label}] pg reported already-connected (treated as connected).`,
+      );
+      return;
+    }
+    throw err;
+  }
+}
+
 export class UserService {
   private static async ensureAssignableBranch(tenantId: string, branchId: bigint) {
     const branch = await prisma.branch.findFirst({
@@ -613,10 +662,10 @@ export class UserService {
     const client = new Client({
       connectionString: resolvedConnectionString,
       ssl: { rejectUnauthorized: false },
-    });
+    }) as PgClientWithPrivate;
 
     try {
-      await client.connect();
+      await tryConnectOnce(client, `syncPos-${tenantId}-${username}`);
       const roleCandidates = getRoleCandidates(role);
       await UserService.upsertPosUser(client, {
         username,
@@ -732,10 +781,10 @@ export class UserService {
     const client = new Client({
       connectionString: resolvedConnectionString,
       ssl: { rejectUnauthorized: false },
-    });
+    }) as PgClientWithPrivate;
 
     try {
-      await client.connect();
+      await tryConnectOnce(client, `deletePos-${tenantId}-${username}`);
 
       const tableRows = await client.query<{ table_name: string }>(
         `
