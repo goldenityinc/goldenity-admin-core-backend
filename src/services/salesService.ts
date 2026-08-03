@@ -77,6 +77,179 @@ type StockDeductionEntry = {
   qty: number;
 };
 
+type NestedProductLike = {
+  id?: unknown;
+  product_id?: unknown;
+  productId?: unknown;
+  name?: unknown;
+  product_name?: unknown;
+  productName?: unknown;
+  qty?: unknown;
+  quantity?: unknown;
+  price?: unknown;
+  unit_price?: unknown;
+  unitPrice?: unknown;
+  custom_price?: unknown;
+  customPrice?: unknown;
+  sale_price?: unknown;
+  product_price?: unknown;
+  productPrice?: unknown;
+  harga_jual?: unknown;
+  is_service?: unknown;
+  isService?: unknown;
+  is_stock_tracked?: unknown;
+  isStockTracked?: unknown;
+  notes?: unknown;
+  note?: unknown;
+  item_note?: unknown;
+  mechanic_id?: unknown;
+  mechanicId?: unknown;
+  employee_id?: unknown;
+  employeeId?: unknown;
+};
+
+type CartItemLike = {
+  id?: unknown;
+  product_id?: unknown;
+  productId?: unknown;
+  name?: unknown;
+  product_name?: unknown;
+  productName?: unknown;
+  qty?: unknown;
+  quantity?: unknown;
+  price?: unknown;
+  unit_price?: unknown;
+  unitPrice?: unknown;
+  custom_price?: unknown;
+  customPrice?: unknown;
+  sale_price?: unknown;
+  product_price?: unknown;
+  productPrice?: unknown;
+  harga_jual?: unknown;
+  is_service?: unknown;
+  isService?: unknown;
+  is_stock_tracked?: unknown;
+  isStockTracked?: unknown;
+  is_custom_item?: unknown;
+  isCustomItem?: unknown;
+  custom_name?: unknown;
+  customName?: unknown;
+  notes?: unknown;
+  note?: unknown;
+  item_note?: unknown;
+  mechanic_id?: unknown;
+  mechanicId?: unknown;
+  employee_id?: unknown;
+  employeeId?: unknown;
+  product?: NestedProductLike | null;
+  [key: string]: unknown;
+};
+
+function toFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+function normalizeProductId(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value).trim();
+  if (s === '0' || s === 'null' || s === 'undefined') return '';
+  return s;
+}
+
+function normalizeCartItemInPlace(item: CartItemLike) {
+  if (!item || typeof item !== 'object') return item;
+  const nested = (item.product && typeof item.product === 'object') ? (item.product as NestedProductLike) : null;
+  if (nested) {
+    const nestedId = normalizeProductId(nested.id ?? nested.product_id ?? nested.productId);
+    if (nestedId !== '') {
+      const flatId = normalizeProductId(item.product_id ?? item.productId ?? item.id);
+      const looksLikeTimestamp =
+        (item.id !== null && item.id !== undefined && typeof item.id !== 'boolean') &&
+        /^\d+$/.test(String(item.id)) &&
+        String(item.id).length >= 13 &&
+        Number(item.id) > 1e12;
+      if (flatId === '' || flatId !== nestedId || looksLikeTimestamp) {
+        if (item.product_id === undefined || String(item.product_id) === String(item.id) || looksLikeTimestamp) {
+          (item as unknown as Record<string, unknown>).product_id = nested.id;
+        }
+        if (item.productId === undefined || String(item.productId) === String(item.id) || looksLikeTimestamp) {
+          (item as unknown as Record<string, unknown>).productId = nested.id;
+        }
+        if (looksLikeTimestamp) {
+          (item as unknown as Record<string, unknown>).id = nested.id;
+        }
+      }
+    }
+    const preferNestedString = (flat: unknown, nestedVal: unknown) => {
+      if ((flat === undefined || flat === null || flat === '') && nestedVal !== undefined && nestedVal !== null && String(nestedVal).trim() !== '') {
+        return nestedVal;
+      }
+      return flat;
+    };
+    const preferNestedNumber = (flat: unknown, nestedVal: unknown) => {
+      const f = toFiniteNumber(flat);
+      const n = toFiniteNumber(nestedVal);
+      if ((f === null || f <= 0) && n !== null && n > 0) return nestedVal;
+      return flat;
+    };
+    (item as unknown as Record<string, unknown>).name = preferNestedString(item.name, nested.name ?? nested.product_name ?? nested.productName);
+    (item as unknown as Record<string, unknown>).product_name = preferNestedString(item.product_name, nested.name ?? nested.product_name ?? nested.productName);
+    (item as unknown as Record<string, unknown>).productName = preferNestedString(item.productName, nested.name ?? nested.product_name ?? nested.productName);
+    (item as unknown as Record<string, unknown>).qty = preferNestedNumber(item.qty, nested.qty ?? nested.quantity);
+    (item as unknown as Record<string, unknown>).quantity = preferNestedNumber(item.quantity, nested.qty ?? nested.quantity);
+    (item as unknown as Record<string, unknown>).price = preferNestedNumber(item.price, nested.price ?? nested.product_price ?? nested.productPrice ?? nested.harga_jual);
+    (item as unknown as Record<string, unknown>).unit_price = preferNestedNumber(item.unit_price, nested.unit_price ?? nested.unitPrice ?? nested.price);
+    (item as unknown as Record<string, unknown>).unitPrice = preferNestedNumber(item.unitPrice, nested.unit_price ?? nested.unitPrice ?? nested.price);
+    (item as unknown as Record<string, unknown>).custom_price = preferNestedNumber(item.custom_price, nested.custom_price ?? nested.customPrice);
+    (item as unknown as Record<string, unknown>).customPrice = preferNestedNumber(item.customPrice, nested.custom_price ?? nested.customPrice);
+    (item as unknown as Record<string, unknown>).harga_jual = preferNestedNumber(item.harga_jual, nested.harga_jual ?? nested.price);
+    (item as unknown as Record<string, unknown>).notes = preferNestedString(item.notes ?? item.note ?? item.item_note, nested.notes ?? nested.note);
+    (item as unknown as Record<string, unknown>).note = preferNestedString(item.note ?? item.notes ?? item.item_note, nested.note ?? nested.notes);
+    (item as unknown as Record<string, unknown>).item_note = preferNestedString(item.item_note ?? item.notes ?? item.note, nested.item_note ?? nested.notes ?? nested.note);
+    const boolPreferNestedTrue = (flat: unknown, nestedVal: unknown) => {
+      if ((flat === undefined || flat === null || flat === false || flat === 'false' || flat === 0) && (nestedVal === true || nestedVal === 'true' || nestedVal === 1)) {
+        return true;
+      }
+      return flat;
+    };
+    (item as unknown as Record<string, unknown>).is_service = boolPreferNestedTrue(item.is_service, nested.is_service);
+    (item as unknown as Record<string, unknown>).isService = boolPreferNestedTrue(item.isService, nested.isService ?? nested.is_service);
+    (item as unknown as Record<string, unknown>).is_stock_tracked = boolPreferNestedTrue(item.is_stock_tracked, nested.is_stock_tracked);
+    (item as unknown as Record<string, unknown>).isStockTracked = boolPreferNestedTrue(item.isStockTracked, nested.isStockTracked ?? nested.is_stock_tracked);
+    (item as unknown as Record<string, unknown>).mechanic_id = preferNestedString(item.mechanic_id ?? item.mechanicId ?? item.employee_id ?? item.employeeId, nested.mechanic_id ?? nested.mechanicId ?? nested.employee_id ?? nested.employeeId);
+    (item as unknown as Record<string, unknown>).mechanicId = preferNestedString(item.mechanicId ?? item.mechanic_id ?? item.employeeId ?? item.employee_id, nested.mechanicId ?? nested.mechanic_id ?? nested.employeeId ?? nested.employee_id);
+    (item as unknown as Record<string, unknown>).employee_id = preferNestedString(item.employee_id ?? item.employeeId ?? item.mechanic_id ?? item.mechanicId, nested.employee_id ?? nested.employeeId ?? nested.mechanic_id ?? nested.mechanicId);
+    (item as unknown as Record<string, unknown>).employeeId = preferNestedString(item.employeeId ?? item.employee_id ?? item.mechanicId ?? item.mechanic_id, nested.employeeId ?? nested.employee_id ?? nested.mechanicId ?? nested.mechanic_id);
+  }
+  return item;
+}
+
+function normalizeSalePayloadItems(payload: { items: Array<CartItemLike> } | Record<string, unknown>) {
+  if (!payload || typeof payload !== 'object') return;
+  const arraysToScan: Array<unknown[]> = [];
+  const p = payload as Record<string, unknown>;
+  const candidates = ['items', 'products', 'cart_items', 'cartItems', 'sales_items', 'order_items', 'detail'];
+  for (const key of candidates) {
+    const v = p[key];
+    if (Array.isArray(v)) arraysToScan.push(v);
+  }
+  if (Array.isArray(p.records) && (p.records as unknown[])[0] && typeof (p.records as unknown[])[0] === 'object') {
+    const firstRec = (p.records as unknown as Record<string, unknown>[])[0];
+    for (const key of candidates) {
+      const v = firstRec[key];
+      if (Array.isArray(v)) arraysToScan.push(v);
+    }
+  }
+  for (const arr of arraysToScan) {
+    for (const it of arr) {
+      if (it && typeof it === 'object') normalizeCartItemInPlace(it as CartItemLike);
+    }
+  }
+}
+
 export type PreOrderListFilters = {
   tenantId: string;
   branchId: bigint | null;
@@ -115,35 +288,109 @@ function toOptionalDate(value: string | Date | null | undefined): Date | null | 
   return value instanceof Date ? value : new Date(value);
 }
 
-function normalizeSaleItem(item: SaleItemPayload) {
-  const customPrice = toOptionalDecimal(item.customPrice ?? undefined);
-  const resolvedItemNote = item.notes ?? item.note ?? null;
-  const normalizedProductName = item.isCustomItem
-    ? (item.customName ?? '').trim()
-    : (item.productName?.trim() || null);
+function normalizeSaleItem(rawItem: SaleItemPayload) {
+  const item = (rawItem ?? {}) as unknown as CartItemLike;
+  normalizeCartItemInPlace(item);
+  const nested = item.product && typeof item.product === 'object' ? item.product : null;
 
-  // Custom price priority: frontend override > master product price
-  // For custom items, default to 0 if not provided. For services/products, accept null (no override).
-  const resolvedCustomPrice = 
-    customPrice !== undefined && customPrice !== null 
-      ? customPrice  // Always use provided custom price (both custom items and services)
-      : (item.isCustomItem ? new Prisma.Decimal(0) : null);  // Default only for custom items
+  const nestedObj = (nested as unknown as Record<string, unknown>) || {};
+  const itemObj = (item as unknown as Record<string, unknown>) || {};
+  const nestedCustomPrice = nested
+    ? toOptionalDecimal(
+        (nestedObj.custom_price ??
+          nestedObj.customPrice ??
+          nestedObj.sale_price ??
+          null) as string | number | null | undefined,
+      )
+    : undefined;
 
-  // Extract mechanic_id or employee_id from frontend - CRITICAL: must be passed for service items
-  const mechanicId = (item.mechanicId ?? item.employeeId ?? '').toString().trim() || null;
+  const flatCustomPrice = toOptionalDecimal(
+    (itemObj.customPrice ??
+      itemObj.custom_price ??
+      itemObj.sale_price ??
+      null) as string | number | null | undefined,
+  );
+
+  const customPriceCandidate = flatCustomPrice !== undefined && flatCustomPrice !== null
+    ? flatCustomPrice
+    : (nestedCustomPrice ?? undefined);
+
+  const resolvedItemNote =
+    (item.notes !== undefined && item.notes !== null && String(item.notes).trim() !== '') ? String(item.notes)
+    : (item.note !== undefined && item.note !== null && String(item.note).trim() !== '') ? String(item.note)
+    : (item.item_note !== undefined && item.item_note !== null && String(item.item_note).trim() !== '') ? String(item.item_note)
+    : (nested?.notes !== undefined && nested.notes !== null && String(nested.notes).trim() !== '') ? String(nested.notes)
+    : (nested?.note !== undefined && nested.note !== null && String(nested.note).trim() !== '') ? String(nested.note)
+    : null;
+
+  const nestedNameCandidate = nested
+    ? (nested.name ?? nested.product_name ?? nested.productName ?? null)
+    : null;
+  const flatNameCandidate = item.product_name ?? item.productName ?? item.name ?? null;
+  const finalProductName =
+    (flatNameCandidate !== null && flatNameCandidate !== undefined && String(flatNameCandidate).trim() !== '')
+      ? String(flatNameCandidate).trim()
+      : (nestedNameCandidate !== null && nestedNameCandidate !== undefined && String(nestedNameCandidate).trim() !== '')
+        ? String(nestedNameCandidate).trim()
+        : '';
+
+  const normalizedProductName = (item.isCustomItem ?? false)
+    ? ((item.customName ?? '').toString().trim() || finalProductName)
+    : (finalProductName || null);
+
+  const resolvedCustomPrice =
+    customPriceCandidate !== undefined && customPriceCandidate !== null
+      ? customPriceCandidate
+      : ((item.isCustomItem ?? false) ? new Prisma.Decimal(0) : null);
+
+  const nestedMechanic = nested
+    ? (nested.mechanic_id ?? nested.mechanicId ?? nested.employee_id ?? nested.employeeId ?? '')
+    : '';
+  const flatMechanic = item.mechanicId ?? item.employeeId ?? item.mechanic_id ?? item.employee_id ?? '';
+  const mechanicIdRaw =
+    (flatMechanic !== '' && flatMechanic !== undefined && flatMechanic !== null)
+      ? String(flatMechanic)
+      : (nestedMechanic !== '' && nestedMechanic !== undefined && nestedMechanic !== null)
+        ? String(nestedMechanic)
+        : '';
+  const mechanicId = mechanicIdRaw.trim() || null;
+
+  const nestedIsService = nested ? (nested.is_service ?? nested.isService) : undefined;
+  const flatIsService = item.isService ?? item.is_service;
+  const resolvedIsService =
+    (flatIsService !== undefined && flatIsService !== null)
+      ? Boolean(flatIsService)
+      : (nestedIsService !== undefined && nestedIsService !== null ? Boolean(nestedIsService) : false);
+
+  const nestedIsStockTracked = nested ? (nested.is_stock_tracked ?? nested.isStockTracked) : undefined;
+  const flatIsStockTracked = item.isStockTracked ?? item.is_stock_tracked;
+  const resolvedIsStockTracked =
+    (flatIsStockTracked !== undefined && flatIsStockTracked !== null)
+      ? Boolean(flatIsStockTracked)
+      : (nestedIsStockTracked !== undefined && nestedIsStockTracked !== null ? Boolean(nestedIsStockTracked) : undefined);
+
+  const isCustomItem = (item.isCustomItem ?? item.is_custom_item ?? false) === true;
 
   return {
-    product_id: item.isCustomItem ? null : item.productId ?? null,
+    product_id: isCustomItem
+      ? null
+      : (normalizeProductId(
+          nested?.id ?? nested?.product_id ?? nested?.productId ??
+          item.product?.id ??
+          item.product_id ?? item.productId ?? item.id,
+        ) || null),
     product_name: normalizedProductName,
-    qty: item.qty,
+    qty: toFiniteNumber(
+      item.qty ?? item.quantity ?? nested?.qty ?? nested?.quantity ?? 0,
+    ) ?? 0,
     custom_price: resolvedCustomPrice,
     notes: resolvedItemNote,
     note: resolvedItemNote,
     item_note: resolvedItemNote,
-    is_service: item.isService ?? false,
-    is_stock_tracked: item.isStockTracked,
-    is_custom_item: item.isCustomItem ?? false,
-    custom_name: item.isCustomItem ? normalizedProductName : item.customName ?? null,
+    is_service: resolvedIsService,
+    is_stock_tracked: resolvedIsStockTracked,
+    is_custom_item: isCustomItem,
+    custom_name: isCustomItem ? normalizedProductName : ((item.customName ?? item.custom_name ?? null) as string | null),
     mechanic_id: mechanicId,
     employee_id: mechanicId,
   };
@@ -194,6 +441,44 @@ export class SalesService {
   }
 
   static async createSale(tenantId: string, payload: CreateSaleInput) {
+    try {
+      normalizeSalePayloadItems(payload as unknown as Record<string, unknown>);
+    } catch (_) {}
+
+    try {
+      const itemsArr = Array.isArray((payload as unknown as Record<string, unknown>).items)
+        ? ((payload as unknown as Record<string, unknown>).items as Array<Record<string, unknown>>)
+        : [];
+      const firstItems = itemsArr.slice(0, 3).map((it, idx) => {
+        try { normalizeCartItemInPlace(it as unknown as CartItemLike); } catch (_) {}
+        return {
+          index: idx,
+          id: it?.id ?? null,
+          productId: it?.productId ?? it?.product_id ?? null,
+          nestedProductId: (it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).id ?? null) : null,
+          qty: it?.qty ?? it?.quantity ?? null,
+          price: it?.price ?? it?.unit_price ?? it?.custom_price ?? ((it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).price ?? null) : null),
+          name: it?.name ?? it?.product_name ?? it?.productName ?? ((it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).name ?? null) : null),
+          isService: it?.isService ?? it?.is_service ?? ((it?.product && typeof it.product === 'object') ? (((it.product as Record<string, unknown>).isService ?? (it.product as Record<string, unknown>).is_service) ?? null) : null),
+          isCustomItem: it?.isCustomItem ?? it?.is_custom_item ?? null,
+        };
+      });
+      const summary = {
+        tenant: tenantId,
+        itemsCount: itemsArr.length,
+        branchId: (payload as unknown as Record<string, unknown>).branchId ?? null,
+        tableId: (payload as unknown as Record<string, unknown>).tableId ?? null,
+        orderType: (payload as unknown as Record<string, unknown>).orderType ?? null,
+        totalAmount: (payload as unknown as Record<string, unknown>).totalAmount ?? (payload as unknown as Record<string, unknown>).total_amount ?? (payload as unknown as Record<string, unknown>).totalPrice ?? null,
+        receiptNumber: (payload as unknown as Record<string, unknown>).receiptNumber ?? null,
+        firstItems,
+      };
+      console.log(`[SalesService.createSale ENTRY] payload summary=`, JSON.stringify(summary));
+      if (itemsArr.length > 0) {
+        console.log(`[SalesService.createSale ENTRY] RAW ITEMS JSON=`, JSON.stringify(itemsArr.slice(0, 5)).slice(0, 3500));
+      }
+    } catch (_) {}
+
     const branchId = toOptionalBigInt(payload.branchId ?? undefined);
     const tableId = toOptionalBigInt(payload.tableId ?? undefined);
     const shiftId = toOptionalBigInt(payload.shiftId ?? undefined);
@@ -208,6 +493,21 @@ export class SalesService {
     }
 
     const normalizedItems = payload.items.map(normalizeSaleItem);
+
+    try {
+      console.log(`[SalesService.createSale NORMALIZED] ${normalizedItems.length} items:`, JSON.stringify(
+        normalizedItems.map((it, i) => ({
+          i,
+          product_id: it.product_id,
+          product_name: it.product_name,
+          qty: it.qty,
+          custom_price: it.custom_price?.toString(),
+          is_service: it.is_service,
+          is_custom_item: it.is_custom_item,
+          mechanic_id: it.mechanic_id,
+        }))
+      ).slice(0, 3500));
+    } catch (_) {}
 
     // Log items with custom prices for debugging
     const itemsWithCustomPrices = normalizedItems.filter(

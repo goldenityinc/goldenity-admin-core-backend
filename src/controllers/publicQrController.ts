@@ -82,17 +82,48 @@ function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
     }
 
     const row = raw as Record<string, unknown>;
-    const productId = (row.productId ?? row.product_id ?? '').toString().trim();
+    const nested = (row.product && typeof row.product === 'object')
+      ? (row.product as Record<string, unknown>)
+      : null;
+
+    const normalizeId = (v: unknown) => (v === undefined || v === null ? '' : String(v).trim());
+    const looksLikeTimestamp = (v: unknown) => {
+      if (v === null || v === undefined) return false;
+      const s = String(v);
+      return /^\d+$/.test(s) && s.length >= 13 && Number(v) > 1e12;
+    };
+
+    const nestedId = normalizeId(nested?.id ?? nested?.product_id ?? nested?.productId);
+    const flatId = normalizeId(row.productId ?? row.product_id);
+    const rowId = normalizeId(row.id);
+
+    let productId = '';
+    if (nestedId !== '' && (flatId === '' || flatId === rowId || looksLikeTimestamp(flatId))) {
+      productId = nestedId;
+    } else if (flatId !== '' && !looksLikeTimestamp(flatId)) {
+      productId = flatId;
+    } else if (nestedId !== '') {
+      productId = nestedId;
+    } else if (rowId !== '' && !looksLikeTimestamp(rowId)) {
+      productId = rowId;
+    }
+
     if (!productId) {
       throw new AppError(`items[${index}].productId wajib diisi`, 400);
     }
 
-    const qty = Number(row.qty ?? row.quantity);
+    const qtyRaw =
+      row.qty ?? row.quantity ?? nested?.qty ?? nested?.quantity ?? 0;
+    const qty = Number(qtyRaw);
     if (!Number.isInteger(qty) || qty <= 0) {
       throw new AppError(`items[${index}].qty harus angka bulat > 0`, 400);
     }
 
-    const customPriceRaw = row.customPrice ?? row.custom_price;
+    const customPriceRaw =
+      row.customPrice ?? row.custom_price ??
+      nested?.customPrice ?? nested?.custom_price ??
+      row.price ?? row.unit_price ?? row.unitPrice ?? row.sale_price ?? row.product_price ?? row.productPrice ?? row.harga_jual ??
+      nested?.price ?? nested?.unit_price ?? nested?.unitPrice ?? nested?.sale_price ?? nested?.product_price ?? nested?.productPrice ?? nested?.harga_jual;
     const customPrice = customPriceRaw === undefined || customPriceRaw === null || customPriceRaw === ''
       ? undefined
       : Number(customPriceRaw);
@@ -101,10 +132,15 @@ function parseQrOrderItems(value: unknown): QrOrderItemInput[] {
       throw new AppError(`items[${index}].customPrice tidak valid`, 400);
     }
 
+    const noteRaw =
+      row.note ?? row.notes ?? row.item_note ??
+      nested?.note ?? nested?.notes ?? nested?.item_note ??
+      '';
+
     return {
       productId,
       qty,
-      note: (row.note ?? '').toString().trim() || undefined,
+      note: (noteRaw ?? '').toString().trim() || undefined,
       customPrice,
     };
   });

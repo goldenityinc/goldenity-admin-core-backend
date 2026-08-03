@@ -348,23 +348,70 @@ export class AuthService {
 
   static async resolveSubscriptionForTenant(tenantId: string): Promise<{ tier: string | null; addons: string[]; endDate: string | null } | null> {
     try {
+      const metadata = await AuthService.getColumnMetadata();
+      const appInstanceTierColumn = pickColumn(metadata.appInstances, ['tier']);
+      const appInstanceAddonsColumn = pickColumn(metadata.appInstances, ['addons']);
+      const appInstanceEndDateColumn = pickColumn(metadata.appInstances, ['endDate', 'end_date']);
+      const appInstanceTenantIdColumn = pickColumn(metadata.appInstances, ['tenantId', 'tenant_id']);
+      const appInstanceSolutionIdColumn = pickColumn(metadata.appInstances, ['solutionId', 'solution_id']);
+      const appInstanceStatusColumn = pickColumn(metadata.appInstances, ['status']);
+      const appInstanceUpdatedAtColumn = pickColumn(metadata.appInstances, ['updatedAt', 'updated_at']);
+      const solutionIdColumn = pickColumn(metadata.appInstances, ['id']);
+      if (
+        !metadata.appInstances.has('tier') ||
+        !appInstanceTenantIdColumn ||
+        !appInstanceStatusColumn
+      ) {
+        return null;
+      }
+      const solutionCodeSelect = solutionIdColumn
+        ? `s.code`
+        : 'NULL::text';
+      const solutionNameSelect = solutionIdColumn
+        ? `s.name`
+        : 'NULL::text';
+      const tierSelect = appInstanceTierColumn
+        ? `ai.${quoteIdentifier(appInstanceTierColumn)}::text AS tier`
+        : 'NULL::text AS tier';
+      const addonsSelect = appInstanceAddonsColumn
+        ? `COALESCE(ai.${quoteIdentifier(appInstanceAddonsColumn)}, ARRAY[]::text[]) AS addons`
+        : 'ARRAY[]::text[] AS addons';
+      const endDateSelect = appInstanceEndDateColumn
+        ? `ai.${quoteIdentifier(appInstanceEndDateColumn)} AS "endDate"`
+        : 'NULL::timestamp AS "endDate"';
+      const tenantFilter = appInstanceTenantIdColumn
+        ? `ai.${quoteIdentifier(appInstanceTenantIdColumn)} = $1`
+        : `FALSE`;
+      const statusFilter = appInstanceStatusColumn
+        ? `AND ai.${quoteIdentifier(appInstanceStatusColumn)} = 'ACTIVE'`
+        : '';
+      const solutionJoin = solutionIdColumn && appInstanceSolutionIdColumn
+        ? `LEFT JOIN solutions s ON s.id = ai.${quoteIdentifier(appInstanceSolutionIdColumn)}`
+        : '';
+      const orderBy = appInstanceUpdatedAtColumn
+        ? `ORDER BY CASE
+            WHEN ${solutionIdColumn ? '' : ''}
+          END, ai.${quoteIdentifier(appInstanceUpdatedAtColumn)} DESC`
+        : '';
       const rows = await prisma.$queryRawUnsafe<Array<{ tier: string | null; addons: string[] | null; endDate: Date | null }>>(
         `
         SELECT
-          ai."tier"::text AS tier,
-          COALESCE(ai."addons", ARRAY[]::text[]) AS addons,
-          ai."endDate" AS "endDate"
+          ${tierSelect},
+          ${addonsSelect},
+          ${endDateSelect}
         FROM app_instances ai
-        LEFT JOIN solutions s ON s.id = ai."solutionId"
-        WHERE ai."tenantId" = $1
-          AND ai.status = 'ACTIVE'
+        ${solutionJoin}
+        WHERE ${tenantFilter}
+          ${statusFilter}
+        ${solutionIdColumn ? `
         ORDER BY
           CASE
-            WHEN UPPER(COALESCE(s.code, '')) = 'POS' THEN 0
-            WHEN UPPER(COALESCE(s.name, '')) LIKE '%POS%' THEN 1
+            WHEN UPPER(COALESCE(${solutionCodeSelect}, '')) = 'POS' THEN 0
+            WHEN UPPER(COALESCE(${solutionNameSelect}, '')) LIKE '%POS%' THEN 1
             ELSE 2
           END,
-          ai."updatedAt" DESC
+          ${appInstanceUpdatedAtColumn ? `ai.${quoteIdentifier(appInstanceUpdatedAtColumn)} DESC` : 'NOW() DESC'}
+        ` : orderBy}
         LIMIT 1
         `,
         tenantId,
