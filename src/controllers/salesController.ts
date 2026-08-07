@@ -11,11 +11,15 @@ import prisma from '../config/database';
 import { ensureDefaultSeedClientsForTenant } from '../services/productService';
 
 function readTenantId(req: Request): string {
+  if (req.user?.role === 'SUPER_ADMIN') {
+    const override = String(req.query.tenantId ?? req.body?.tenantId ?? '').trim();
+    if (override) return override;
+    throw new AppError('Pilih tenant terlebih dahulu (SUPER_ADMIN mode)', 400);
+  }
   const tenantId = req.user?.tenantId;
   if (!tenantId) {
     throw new AppError('Tenant context is required', 401);
   }
-
   return tenantId;
 }
 
