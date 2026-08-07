@@ -33,6 +33,8 @@ model Tenant {
   branches                Branch[]
   tables                  tables[]
   users                   User[]
+  branchDevices           BranchDevice[]
+  orderAcknowledgements   OrderAcknowledgement[]
 
   @@index([slug])
   @@map("tenants")
@@ -72,6 +74,8 @@ model Branch {
   shifts              shifts[]
   salesRecords        sales_records[] @relation("SalesRecordBranch")
   pickupSalesRecords  sales_records[] @relation("SalesRecordTargetPickupBranch")
+  branchDevices       BranchDevice[]
+  orderAcknowledgements OrderAcknowledgement[]
 
   @@index([tenantId])
   @@index([tenantId, isActive])
@@ -482,10 +486,14 @@ model sales_records {
   po_status               String?
   pickup_date             DateTime?
   target_pickup_branch_id BigInt?
+  targetDeviceUuid        String?     @map("target_device_uuid")
+  submissionId            String?     @unique @map("submission_id")
+  syncStatus              SyncStatus? @map("sync_status")
   branch                  Branch?     @relation("SalesRecordBranch", fields: [branch_id], references: [id])
   shift                   shifts?     @relation(fields: [shift_id], references: [id])
   table                   tables?     @relation(fields: [table_id], references: [id])
   target_pickup_branch    Branch?     @relation("SalesRecordTargetPickupBranch", fields: [target_pickup_branch_id], references: [id])
+  orderAcknowledgements   OrderAcknowledgement[]
 
   @@index([branch_id])
   @@index([shift_id])
@@ -495,6 +503,7 @@ model sales_records {
   @@index([order_status])
   @@index([reference_id])
   @@index([tenant_id])
+  @@index([submissionId])
 }
 
 model shifts {
@@ -600,6 +609,57 @@ model audit_logs {
   @@index([tenant_id])
   @@index([created_at(sort: Desc)])
   @@index([tenant_id, created_at(sort: Desc)])
+}
+
+model BranchDevice {
+  id                BigInt       @id @default(autoincrement())
+  tenantId          String       @map("tenant_id")
+  branchId          BigInt?      @map("branch_id")
+  deviceUuid        String       @unique @map("device_uuid")
+  macAddress        String?      @map("mac_address")
+  deviceName        String       @map("device_name")
+  deviceRole        DeviceRole   @map("device_role")
+  printerTargetId   String?      @map("printer_target_id")
+  isDefaultPrinter  Boolean      @default(false) @map("is_default_printer")
+  isActive          Boolean      @default(true) @map("is_active")
+  lastSeenAt        DateTime?    @map("last_seen_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch            Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([branchId])
+  @@index([tenantId, isDefaultPrinter])
+  @@map("branch_devices")
+}
+
+model OrderAcknowledgement {
+  id                BigInt       @id @default(autoincrement())
+  tenantId          String       @map("tenant_id")
+  branchId          BigInt?      @map("branch_id")
+  salesRecordId     BigInt?      @map("sales_record_id")
+  transactionNumber String?      @map("transaction_number")
+  submissionId      String?      @unique @map("submission_id")
+  targetDeviceUuid  String?      @map("target_device_uuid")
+  ackStatus         AckStatus    @default(PENDING_ACK) @map("ack_status")
+  retriesCount      Int          @default(0) @map("retries_count")
+  firstQueuedAt     DateTime?    @map("first_queued_at")
+  acknowledgedAt    DateTime?    @map("acknowledged_at")
+  printedAt         DateTime?    @map("printed_at")
+  lastError         String?      @db.Text @map("last_error")
+  ackPayload        Json?        @map("ack_payload")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch            Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  salesRecord       sales_records? @relation(fields: [salesRecordId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([submissionId])
+  @@index([salesRecordId])
+  @@index([ackStatus, tenantId])
+  @@map("order_acknowledgements")
 }
 
 model AccountCategory {
@@ -823,4 +883,27 @@ enum BusinessCategory {
   GENERAL
   RETAIL_FNB
   SERVICES_AUTOMOTIVE
+}
+
+enum DeviceRole {
+  CASHIER
+  CHECKER_PRINTER
+  BOTH
+}
+
+enum AckStatus {
+  PENDING_ACK
+  POS_ACKNOWLEDGED
+  POS_PRINTED
+  FAILED_DELIVERY
+  TIMEOUT
+}
+
+enum SyncStatus {
+  DRAFT
+  QUEUED_FOR_POS
+  PENDING_ACK
+  POS_ACKNOWLEDGED
+  POS_PRINTED
+  FAILED_DELIVERY
 }
