@@ -4,6 +4,7 @@ import {
   deviceHeartbeat,
   listBranchDevices,
   getDefaultPrinterDevice,
+  deleteDevice,
 } from '../controllers/deviceController';
 import { authMiddleware, tenantMiddleware } from '../middlewares/authMiddleware';
 import { internalServiceAuth } from '../middlewares/internalServiceAuth';
@@ -34,5 +35,14 @@ router.get('/branch/:branchId', listBranchDevices);
 router.get('/branch/:branchId/default-printer', getDefaultPrinterDevice);
 router.get('/branches/:branchId/devices', listBranchDevices);
 router.get('/branches/:branchId/devices/default-printer', getDefaultPrinterDevice);
+
+// 🔴 CRITICAL FIX 2: DELETE device endpoint (sudah lama missing!)
+//    Support 2 pattern:
+//    - DELETE /devices/:uuid      → jika param = deviceUuid (string unique = kebanyakan UI gunakan ini)
+//    - DELETE /devices/id/:id     → jika param = PK BigInt id (fallback untuk UI lain)
+//    Controller akan otomatis detect keduanya, jadi route TIDAK perlu strict parameter type.
+router.delete('/:uuid', deleteDevice);
+router.delete('/id/:id', deleteDevice);
+router.delete('/uuid/:uuid', deleteDevice);
 
 export default router;

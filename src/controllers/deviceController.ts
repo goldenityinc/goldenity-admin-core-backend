@@ -219,3 +219,84 @@ export const getDefaultPrinterDevice = asyncHandler(async (req: Request, res: Re
     data: serializeForJson(defaultPrinter),
   });
 });
+
+// 🔴 CRITICAL FIX 2: DELETE DEVICE (Soft Delete agar tidak crash FK constraint)
+//    Model OrderAcknowledgement punya field targetDeviceUuid TAPI TIDAK ada @relation FK
+//    (hanya field string biasa). Tapi untuk SAFETY & backward compatibility,
+//    KITA GUNAKAN SOFT DELETE: SET isActive=false, BUKAN hard DELETE.
+//    Keuntungan:
+//    - History data device TIDAK hilang (bisa audit, deactivate kapan saja)
+//    - Tidak ada risiko Foreign Key violation 500 error (jika nanti FK relation ditambah)
+//    - listBranchDevices otomatis filter isActive=true → device langsung hilang dari UI
+export const deleteDevice = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const rawIdentifier = (req.params.uuid ?? req.params.id ?? '').toString().trim();
+
+  if (!rawIdentifier) {
+    throw new AppError('Device UUID or ID is required', 400);
+  }
+
+  let foundDevice = null;
+
+  // Strategy 1: Cari via deviceUuid (unique string) — ini yang paling umum di gunakan UI
+  if (!/^\d+$/.test(rawIdentifier)) {
+    foundDevice = await prisma.branchDevice.findUnique({
+      where: { deviceUuid: rawIdentifier },
+    });
+  } else {
+    // Strategy 2: Jika pure angka → mungkin PK BigInt id, coba cari via PK
+    try {
+      const pk = BigInt(rawIdentifier);
+      foundDevice = await prisma.branchDevice.findUnique({
+        where: { id: pk },
+      });
+    } catch {
+      foundDevice = null;
+    }
+    // Fallback strategy 3: Walaupun pure angka, bisa jadi kebetulan deviceUuid berupa angka string
+    if (!foundDevice) {
+      foundDevice = await prisma.branchDevice.findUnique({
+        where: { deviceUuid: rawIdentifier },
+      });
+    }
+  }
+
+  if (!foundDevice) {
+    throw new AppError('Device not found', 404);
+  }
+
+  if (foundDevice.tenantId !== tenantId) {
+    throw new AppError('Device does not belong to this tenant', 403);
+  }
+
+  // Jika sudah tidak aktif, langsung return success idempotent
+  if (!foundDevice.isActive) {
+    return res.status(200).json({
+      success: true,
+      message: 'Device already removed',
+      softDeleted: true,
+      idempotent: true,
+      data: serializeForJson(foundDevice),
+    });
+  }
+
+  // SOFT DELETE: set isActive=false + updatedAt = now.
+  // TIDAK menggunakan prisma.delete() karena risiko FK constraint di kemudian hari.
+  const updated = await prisma.branchDevice.update({
+    where: { id: foundDevice.id },
+    data: {
+      isActive: false,
+      // Reset default printer flag supaya jika device di-reactivate nanti,
+      // tidak otomatis jadi default printer lagi tanpa user explicit set.
+      isDefaultPrinter: false,
+      lastSeenAt: foundDevice.lastSeenAt ?? new Date(),
+    },
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Device successfully removed (soft-deleted)',
+    softDeleted: true,
+    data: serializeForJson(updated),
+  });
+});

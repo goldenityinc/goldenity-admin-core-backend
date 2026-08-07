@@ -4,7 +4,7 @@ import prisma from '../config/database';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { serializeForJson } from '../utils/serializeForJson';
-import { emitToTenant } from '../services/socketServer';
+import { emitToTenant, emitToBranch } from '../services/socketServer';
 import { AccountingPostingService } from '../services/accountingPostingService';
 import { AuditLogService } from '../services/auditLogService';
 import { ObjectStorageService } from '../services/objectStorageService';
@@ -468,6 +468,9 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           current_batch_sequence: Math.max(resolveCurrentBatchSequence(existingByIdem.items_json), 1),
           new_items: [],
           items_json: Array.isArray(existingByIdem.items_json) ? existingByIdem.items_json : [],
+          // 🔴 FIX 1: Pass branch_id keluar dari IDEMPOTENT_REPLAY transaction block juga
+          branch_id: (existingByIdem.branch_id ?? branchId ?? null),
+          effectiveBranchId: (existingByIdem.branch_id ?? branchId ?? null),
         };
       }
     }
@@ -775,6 +778,10 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       current_batch_sequence: currentBatchSequence,
       new_items: batchItems,
       items_json: mergedItemsJson,
+      // 🔴 FIX 1: Pass branch_id keluar dari transaction block supaya socket emit
+      //    di LUAR transaction dapat branch room untuk broadcast ke semua device branch.
+      branch_id: effectiveBranchId,
+      effectiveBranchId,
     };
   }, {
     maxAttempts: 6,
@@ -835,8 +842,17 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   const finalPaymentProofUrl = null;
   const finalOrderType = (result.order_type ?? orderType).toString();
 
-  emitToTenant(tenantId, 'incoming_qr_order', {
+  // 🔴 FIX 1 scope fix: effectiveBranchId di-define DI DALAM withTransaction block,
+  //    jadi akses lewat result.effectiveBranchId yang sudah di-inject saat return.
+  const resultEffectiveBranchId =
+    (result as Record<string, unknown>).effectiveBranchId !== undefined
+      ? (result as Record<string, unknown>).effectiveBranchId as bigint | string | null
+      : ((result as Record<string, unknown>).branch_id as bigint | string | null ?? null);
+
+  const qrOrderSocketPayload: Record<string, unknown> = {
     tenantId,
+    branchId: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
+    branch_id: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
     orderId: result.id,
     referenceId: result.reference_id,
     receiptNumber: result.receipt_number,
@@ -866,7 +882,16 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     batch_sequence: result.current_batch_sequence,
     created_at: new Date().toISOString(),
     isAutoPaid: false,
-  });
+  };
+  // 🔴 FIX 1 (Socket broadcast):
+  //    DUA-DUANYA di-emit! Tenant room (UI admin di browser PC) DAPET,
+  //    Branch room (Tablet Printer POS Flutter yang sudah join_branch) JUGA DAPET.
+  //    Tidak lagi "hanya satu device PC yang dapat notif" — SEMUA device di branch terkait
+  //    (Tablet + Printer + Kasir) menerima incoming_qr_order secara bersamaan.
+  emitToTenant(tenantId, 'incoming_qr_order', qrOrderSocketPayload);
+  emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'incoming_qr_order', qrOrderSocketPayload);
+  emitToTenant(tenantId, 'new_web_order', qrOrderSocketPayload);
+  emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order', qrOrderSocketPayload);
 
   return res.status(201).json({
     success: true,
@@ -1095,6 +1120,8 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   const totalGrand = Number(order.total_price ?? order.total_amount ?? 0);
   const tableLabel = '';
   const tableIdForSocket = order.table_id;
+  // 🔴 FIX 1: Extract branch_id dari order record untuk socket broadcast ke branch room
+  const orderBranchId = order.branch_id !== undefined && order.branch_id !== null ? String(order.branch_id) : null;
 
   const itemsJsonArr = Array.isArray(order.items_json) ? (order.items_json as Array<Record<string, unknown>>) : [];
   const totalQty = itemsJsonArr.reduce<number>((sum, item) => {
@@ -1152,8 +1179,10 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   }
 
   // Dedicated socket event for POS status update
-  emitToTenant(tenantId, 'qr_order_payment_status_updated', {
+  const statusSocketPayload: Record<string, unknown> = {
     tenantId,
+    branchId: orderBranchId,
+    branch_id: orderBranchId,
     orderId: order.id,
     referenceId: order.reference_id,
     receiptNumber: order.receipt_number,
@@ -1170,11 +1199,15 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
     totalQty,
     updatedAt: order.updated_at ? new Date(order.updated_at).toISOString() : null,
     created_at: new Date().toISOString(),
-  });
+  };
+  emitToTenant(tenantId, 'qr_order_payment_status_updated', statusSocketPayload);
+  emitToBranch(tenantId, orderBranchId, 'qr_order_payment_status_updated', statusSocketPayload);
 
   // Re-emit incoming_qr_order too so any POS listening to that still refreshes the list
-  emitToTenant(tenantId, 'incoming_qr_order', {
+  const reemitPayload: Record<string, unknown> = {
     tenantId,
+    branchId: orderBranchId,
+    branch_id: orderBranchId,
     orderId: order.id,
     referenceId: order.reference_id,
     receiptNumber: order.receipt_number,
@@ -1205,7 +1238,11 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
     created_at: new Date().toISOString(),
     isAutoPaid: false,
     idempotentReplay: result.idempotentReplay,
-  });
+  };
+  emitToTenant(tenantId, 'incoming_qr_order', reemitPayload);
+  emitToBranch(tenantId, orderBranchId, 'incoming_qr_order', reemitPayload);
+  emitToTenant(tenantId, 'new_web_order', reemitPayload);
+  emitToBranch(tenantId, orderBranchId, 'new_web_order', reemitPayload);
 
   return res.status(200).json({
     success: true,

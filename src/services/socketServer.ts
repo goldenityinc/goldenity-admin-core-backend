@@ -9,6 +9,15 @@ import { isJwtAuthPayload } from '../types/auth';
 let ioInstance: Server | null = null;
 
 export const buildTenantRoom = (tenantId: string): string => `tenant:${tenantId}`;
+// 🔴 CRITICAL FIX 1 (broadcast to branch):
+//    Tiap tenant bisa punya banyak branch. Device POS/Tablet di branch A TIDAK PERLU
+//    menerima event dari branch B. Tambah room granular per branch supaya broadcast
+//    tepat sasaran + juga tidak leak event antar branch.
+export const buildBranchRoom = (tenantId: string, branchId: string | bigint | number | null | undefined): string | null => {
+  const normalizedTenantId = (tenantId ?? '').toString().trim();
+  if (!normalizedTenantId || branchId === null || branchId === undefined || branchId === '') return null;
+  return `branch:${normalizedTenantId}:${String(branchId).trim()}`;
+};
 
 function extractSocketToken(socket: Socket): string {
   const authToken = socket.handshake.auth?.token;
@@ -97,9 +106,94 @@ export function initializeSocketServer(server: HttpServer): Server {
         joinedAt: new Date().toISOString(),
       });
     });
+
+    // 🔴 FIX 1 — JOIN BRANCH ROOM:
+    //    Device atau UI management bisa request join room branch_id tertentu supaya
+    //    notification tidak bocor ke branch lain dalam tenant yang sama.
+    socket.on('join_branch', (payload: { tenantId?: string; tenant_id?: string; branchId?: string; branch_id?: string } = {}) => {
+      const requestedTenantId = (payload.tenantId ?? payload.tenant_id ?? '').toString().trim();
+      const requestedBranchId = (payload.branchId ?? payload.branch_id ?? '').toString().trim();
+      if (!requestedTenantId || !requestedBranchId || requestedTenantId !== tenantId) {
+        socket.emit('socket_error', { message: 'Branch room tidak valid' });
+        return;
+      }
+      const branchRoom = buildBranchRoom(requestedTenantId, requestedBranchId);
+      if (branchRoom) {
+        socket.join(branchRoom);
+        socket.emit('branch_joined', {
+          tenantId: requestedTenantId,
+          branchId: requestedBranchId,
+          joinedAt: new Date().toISOString(),
+        });
+      }
+    });
   });
 
   return ioInstance;
+}
+
+// 🔴 FIX 1: Broadcast ke SEMUA socket di room branch (tenantId + branchId).
+//          Ini dipanggil oleh publicQrController.createQrOrder bersamaan dengan emitToTenant,
+//          supaya Tablet Printer di branch tertentu SELALU dapat notif walau ada device lain online.
+export function emitToBranch(
+  tenantId: string,
+  branchId: string | bigint | number | null | undefined,
+  eventName: string,
+  payload: Record<string, unknown>,
+): void {
+  const normalizedTenantId = tenantId.trim();
+  const branchRoom = buildBranchRoom(normalizedTenantId, branchId);
+
+  if (!ioInstance) {
+    const meta = {
+      stage: 'SOCKET_BRANCH_EMIT_SKIP_NO_IO',
+      tenantId: normalizedTenantId || undefined,
+      branchId: branchId !== undefined && branchId !== null ? String(branchId) : null,
+      eventName,
+      branchRoom,
+    };
+    console.warn(
+      '[socketServer.emitToBranch] skipped: ioInstance not initialized',
+      JSON.stringify(meta),
+    );
+    return;
+  }
+
+  if (!normalizedTenantId || !branchRoom) {
+    return;
+  }
+
+  try {
+    void ioInstance
+      .timeout(4000)
+      .to(branchRoom)
+      .emitWithAck(eventName, payload)
+      .catch((err) => {
+        const meta = {
+          stage: 'SOCKET_BRANCH_EMIT_ACK_MISSING_OR_ERROR',
+          tenantId: normalizedTenantId,
+          branchRoom,
+          eventName,
+          message: err instanceof Error ? err.message : String(err ?? ''),
+        };
+        console.warn(
+          '[socketServer.emitToBranch] branch clients did not ACK within timeout',
+          JSON.stringify(meta),
+        );
+      });
+  } catch (topErr) {
+    const meta = {
+      stage: 'SOCKET_BRANCH_EMIT_SYNC_EXCEPTION',
+      tenantId: normalizedTenantId,
+      branchRoom,
+      eventName,
+      message: topErr instanceof Error ? topErr.message : String(topErr ?? ''),
+    };
+    console.warn(
+      '[socketServer.emitToBranch] synchronous throw when scheduling branch emit',
+      JSON.stringify(meta),
+    );
+  }
 }
 
 export function emitToTenant(tenantId: string, eventName: string, payload: Record<string, unknown>): void {
