@@ -294,25 +294,43 @@ model daily_cash {
 }
 
 model expenses {
-  id             BigInt    @id @default(autoincrement())
+  id             BigInt              @id @default(autoincrement())
   tenant_id      String?
-  branchId       BigInt?   @map("branch_id")
-  title          String    @default("Pengeluaran")
-  category       String    @default("Operasional")
-  expense_number String?   @unique
+  branchId       BigInt?             @map("branch_id")
+  title          String              @default("Pengeluaran")
+  category       String              @default("Operasional")
+  expense_number String?             @unique
   expense_date   DateTime
-  amount         Decimal?  @db.Decimal
+  amount         Decimal?            @db.Decimal
+  pic_name       String?             @map("pic_name")
+  payment_status PaymentStatusEnum?  @default(NotPaid) @map("payment_status")
   notes          String?
   attachment_url String?
-  created_at     DateTime? @default(now())
-  updated_at     DateTime? @default(now())
+  created_at     DateTime?           @default(now())
+  updated_at     DateTime?           @default(now())
   status         String?
   void_reason    String?
-  voided_at      DateTime? @db.Timestamptz(6)
+  voided_at      DateTime?           @db.Timestamptz(6)
+  attachments    expense_attachments[]
 
   @@index([tenant_id])
   @@index([branchId])
   @@index([tenant_id, expense_date])
+  @@index([tenant_id, payment_status])
+}
+
+model expense_attachments {
+  id          BigInt    @id @default(autoincrement())
+  expense_id  BigInt
+  tenant_id   String?
+  url         String
+  caption     String?
+  sort_order  Int       @default(0) @map("sort_order")
+  created_at  DateTime? @default(now())
+  expense     expenses  @relation(fields: [expense_id], references: [id], onDelete: Cascade)
+
+  @@index([expense_id])
+  @@index([tenant_id])
 }
 
 model kas_bon {
@@ -873,6 +891,34 @@ enum AppModule {
   module_tax_reports
   module_user_management
   module_workshop_service
+}
+
+enum PaymentStatusEnum {
+  Paid
+  NotPaid
+}
+
+model client_payment_records {
+  id               BigInt              @id @default(autoincrement())
+  tenant_id        String?
+  client_id        BigInt              @map("client_id")
+  product_id       String              @map("product_id")
+  period_month     Int                 @map("period_month")
+  period_year      Int                 @map("period_year")
+  status           PaymentStatusEnum   @default(NotPaid)
+  amount           Decimal             @default(0) @db.Decimal(14, 2)
+  receipt_images   String?             @db.Text
+  notes            String?
+  created_at       DateTime?           @default(now())
+  updated_at       DateTime?           @default(now())
+
+  @@unique([tenant_id, client_id, product_id, period_month, period_year], map: "uq_client_payments_per_cell")
+  @@index([tenant_id])
+  @@index([tenant_id, period_year, period_month])
+  @@index([tenant_id, client_id])
+}
+
+enum AppUserModuleScope {
   ACADEMICS
   FINANCE
   STUDENTS

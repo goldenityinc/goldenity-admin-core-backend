@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
+import { ensureDefaultSeedProductsForTenant } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { createProductSchema, updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
@@ -166,6 +167,15 @@ function resolveProductBranchFilter(req: Request): bigint | null {
 
   const role = (user.role ?? '').trim().toUpperCase();
 
+  if (role === 'SUPER_ADMIN') {
+    const queryBranchId = req.query.branchId;
+    if (queryBranchId && typeof queryBranchId === 'string' && /^\d+$/.test(queryBranchId)) {
+      return BigInt(queryBranchId);
+    }
+    // SUPER_ADMIN = tidak ada batasan branch (boleh include product tanpa branch / lintas cabang)
+    return null;
+  }
+
   if (role === 'TENANT_ADMIN') {
     return parseQueryBranchId(req.query.branchId);
   }
@@ -201,6 +211,8 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 100);
+
+  await ensureDefaultSeedProductsForTenant(tenantId);
 
   const result = await ProductService.listProducts({
     tenantId,

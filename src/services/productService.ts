@@ -80,7 +80,7 @@ export class ProductService {
 
     const where: Prisma.productsWhereInput = {
       tenant_id: normalizedTenantId,
-      ...(branchId !== null ? { branchId } : { branchId: { not: null } }),
+      ...(branchId !== null ? { branchId } : {}),
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(category ? { category } : {}),
       ...(search
@@ -243,3 +243,56 @@ export class ProductService {
     return result.count;
   }
 }
+
+export async function ensureDefaultSeedProductsForTenant(tenantId: string): Promise<void> {
+  const normalizedTenantId = (tenantId ?? '').toString().trim();
+  if (!normalizedTenantId) return;
+  try {
+    const count = await prisma.products.count({ where: { tenant_id: normalizedTenantId } });
+    if (count > 0) return;
+    const DEFAULT_SEED_PRODUCTS = [
+      { id: 'spp-bulanan', name: 'SPP Bulanan', price: 750000, product_type: 'Jasa', unit: 'bulan', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+      { id: 'uang-gedung', name: 'Uang Gedung', price: 5000000, product_type: 'Jasa', unit: 'paket', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+      { id: 'buku-paket', name: 'Buku Paket & Alat Tulis', price: 1250000, product_type: 'Barang', unit: 'paket', is_service: false, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 800000, stock: 0 },
+      { id: 'seragam', name: 'Seragam Sekolah', price: 950000, product_type: 'Barang', unit: 'set', is_service: false, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 650000, stock: 0 },
+      { id: 'kegiatan-osis', name: 'Kegiatan OSIS / Study Tour', price: 650000, product_type: 'Jasa', unit: 'kegiatan', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+      { id: 'uang-makan', name: 'Uang Makan / Catering', price: 450000, product_type: 'Jasa', unit: 'bulan', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+      { id: 'psb', name: 'PSB (Penerimaan Siswa Baru)', price: 2500000, product_type: 'Jasa', unit: 'paket', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+      { id: 'praktik-lab', name: 'Uang Praktik / Lab & UKK', price: 350000, product_type: 'Jasa', unit: 'semester', is_service: true, is_active: true, is_stock_tracked: false, is_available: true, purchase_price: 0, stock: 0 },
+    ];
+    const now = new Date();
+    await Promise.all(
+      DEFAULT_SEED_PRODUCTS.map((p) =>
+        prisma.products.create({
+          data: { ...p, tenant_id: normalizedTenantId, created_at: now, updated_at: now },
+        }).catch(() => null)
+      )
+    );
+  } catch { /* noop */ }
+}
+
+export async function ensureDefaultSeedClientsForTenant(tenantId: string): Promise<void> {
+  const normalizedTenantId = (tenantId ?? '').toString().trim();
+  if (!normalizedTenantId) return;
+  try {
+    const count = await prisma.customers.count({ where: { tenant_id: normalizedTenantId } });
+    if (count > 0) return;
+    const seed = [
+      { id: 1001, name: 'SD Islam Al-Azhar', phone: '021-5550101', total_spent: 0 },
+      { id: 1002, name: 'SMPK BPK PENABUR Jakarta', phone: '021-5550202', total_spent: 0 },
+      { id: 1003, name: 'SMK Negeri 20 Bandung', phone: '022-5550303', total_spent: 0 },
+      { id: 1004, name: 'SMA Negeri 1 Model Medan', phone: '061-5550404', total_spent: 0 },
+      { id: 1005, name: 'TK Kartika Chandra Kirana', phone: '021-5550505', total_spent: 0 },
+      { id: 1006, name: 'MI Plus Roudlotul Jannah', phone: '031-5550606', total_spent: 0 },
+      { id: 1007, name: 'SMAN Plus Unggulan Aceh', phone: '0651-5550707', total_spent: 0 },
+      { id: 1008, name: 'MA Negeri Program Keagamaan', phone: '0271-5550808', total_spent: 0 },
+    ];
+    const now = new Date();
+    await Promise.all(
+      seed.map((c) =>
+        prisma.customers.create({ data: { ...c, tenant_id: normalizedTenantId, created_at: now, updated_at: now } }).catch(() => null)
+      )
+    );
+  } catch { /* noop */ }
+}
+

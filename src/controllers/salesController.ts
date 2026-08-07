@@ -7,6 +7,8 @@ import { AuditLogService } from '../services/auditLogService';
 import { serializeForJson } from '../utils/serializeForJson';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { emitToTenant } from '../services/socketServer';
+import prisma from '../config/database';
+import { ensureDefaultSeedClientsForTenant } from '../services/productService';
 
 function readTenantId(req: Request): string {
   const tenantId = req.user?.tenantId;
@@ -200,5 +202,43 @@ export const getPreOrdersSummary = asyncHandler(async (req: Request, res: Respon
   return res.status(200).json({
     success: true,
     data: serializeForJson(summary),
+  });
+});
+
+export const listCustomers = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+  const page = parsePositiveInt(req.query.page, 1);
+  const limit = Math.min(parsePositiveInt(req.query.limit, 100), 500);
+  const skip = (page - 1) * limit;
+
+  const where: { tenant_id?: string; name?: { contains: string; mode: 'insensitive' } } = {
+    tenant_id: tenantId,
+  };
+  if (search && search.length > 0) {
+    where.name = { contains: search, mode: 'insensitive' };
+  }
+
+  await ensureDefaultSeedClientsForTenant(tenantId);
+
+  const [records, total] = await Promise.all([
+    prisma.customers.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { name: 'asc' },
+    }),
+    prisma.customers.count({ where }),
+  ]);
+
+  return res.status(200).json({
+    success: true,
+    data: serializeForJson(records),
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
   });
 });

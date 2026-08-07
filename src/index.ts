@@ -2,7 +2,10 @@ import http from 'http';
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import { AppError } from './utils/AppError';
+import { streamFromS3 } from './utils/s3Uploader';
 import tenantRoutes from './routes/tenantRoutes';
 import dashboardRoutes from './routes/dashboardRoutes';
 import solutionRoutes from './routes/solutionRoutes';
@@ -22,6 +25,7 @@ import transactionRoutes from './routes/transactionRoutes';
 import productRoutes from './routes/productRoutes';
 import shiftRoutes from './routes/shiftRoutes';
 import expenseRoutes from './routes/expenseRoutes';
+import clientPaymentRoutes from './routes/clientPaymentRoutes';
 import tableRoutes from './routes/tableRoutes';
 import auditLogRoutes from './routes/auditLogRoutes';
 import publicQrRoutes from './routes/publicQrRoutes';
@@ -119,6 +123,53 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const publicDir = path.resolve(process.cwd(), 'public');
+try {
+  if (!fs.existsSync(publicDir)) {
+    fs.mkdirSync(publicDir, { recursive: true });
+  }
+  const uploadsDir = path.join(publicDir, 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch {
+  /* noop */
+}
+app.use(express.static(publicDir));
+
+app.get('/images/*', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const rawPath = (req.params as Record<string, string>)['0'] || req.path.replace(/^\/images\//, '');
+    const streamResult = await streamFromS3(rawPath);
+    if (!streamResult || !streamResult.body) {
+      next();
+      return;
+    }
+
+    if (streamResult.contentType) {
+      res.setHeader('Content-Type', streamResult.contentType);
+    }
+    if (typeof streamResult.contentLength === 'number') {
+      res.setHeader('Content-Length', streamResult.contentLength);
+    }
+    if (streamResult.etag) {
+      res.setHeader('ETag', streamResult.etag);
+    }
+    if (streamResult.lastModified) {
+      res.setHeader('Last-Modified', streamResult.lastModified.toUTCString());
+    }
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    streamResult.body.pipe(res);
+    streamResult.body.on('error', () => {
+      if (!res.headersSent) {
+        next();
+      }
+    });
+  } catch {
+    next();
+  }
+});
+
 // Health check route
 app.get('/api/health', (_req: Request, res: Response) => {
   res.status(200).json({
@@ -195,6 +246,7 @@ app.use('/api/v1/transactions', transactionRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/shifts', shiftRoutes);
 app.use('/api/v1/expenses', expenseRoutes);
+app.use('/api/v1/client-payments', clientPaymentRoutes);
 app.use('/api/v1/tables', tableRoutes);
 app.use('/api/v1/audit-logs', auditLogRoutes);
 app.use('/api/v1/devices', deviceRoutes);
@@ -210,6 +262,34 @@ app.use('/api/v1/branches/:branchId/devices', deviceRoutes);
 app.use('/v1/devices', deviceRoutes);
 app.use('/v1/branches/:branchId/devices', deviceRoutes);
 app.use('/v1/relay/orders', relayOrdersRoutes);
+
+// ===== SPA Fallback (Frontend Super Admin Static Serve) =====
+// Jika frontend di-build lalu dist di-copy ke ./public/, Express otomatis menyajikan semua route React (client-side router).
+// Kecuali route API / auth / images / uploads / public yang explicit.
+const EXCLUDED_PREFIXES = ['/api', '/auth', '/images', '/uploads', '/public', '/socket.io'];
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'GET') {
+    next();
+    return;
+  }
+  const url = req.originalUrl || req.url || '';
+  if (EXCLUDED_PREFIXES.some((p) => url.startsWith(p))) {
+    next();
+    return;
+  }
+  const accept = (req.headers.accept || '').toLowerCase();
+  const wantsJson = accept.includes('application/json');
+  if (wantsJson && !accept.includes('text/html')) {
+    next();
+    return;
+  }
+  const indexPath = path.join(publicDir, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    next();
+    return;
+  }
+  res.sendFile(indexPath);
+});
 
 
 // 404 Handler - Route not found
@@ -282,10 +362,10 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
 initializeSocketServer(server);
 
 // Start server
-server.listen(PORT, () => {
+server.listen({ port: Number(PORT), host: '0.0.0.0' }, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🔗 Health check: http://0.0.0.0:${PORT}/api/health`);
 });
 
 export default app;
