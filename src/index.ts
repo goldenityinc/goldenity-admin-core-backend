@@ -27,6 +27,7 @@ import auditLogRoutes from './routes/auditLogRoutes';
 import publicQrRoutes from './routes/publicQrRoutes';
 import deviceRoutes from './routes/deviceRoutes';
 import orderAckRoutes from './routes/orderAckRoutes';
+import relayOrdersRoutes from './routes/relayOrdersRoutes';
 import { initializeSocketServer } from './services/socketServer';
 import prisma from './config/database';
 import { serializeForJson } from './utils/serializeForJson';
@@ -198,6 +199,7 @@ app.use('/api/v1/tables', tableRoutes);
 app.use('/api/v1/audit-logs', auditLogRoutes);
 app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/orders', orderAckRoutes);
+app.use('/api/v1/relay/orders', relayOrdersRoutes);
 app.use('/api/v1/branches/:branchId/devices', deviceRoutes);
 
 // 🔴 FIX DEVICE REGISTRATION ROUTE MATCH SHIFTS/PRODUCT PATTERN:
@@ -207,6 +209,7 @@ app.use('/api/v1/branches/:branchId/devices', deviceRoutes);
 //    ketika Flutter menggunakan convention /v1/devices/* yang sama dengan endpoints lain.
 app.use('/v1/devices', deviceRoutes);
 app.use('/v1/branches/:branchId/devices', deviceRoutes);
+app.use('/v1/relay/orders', relayOrdersRoutes);
 
 
 // 404 Handler - Route not found
