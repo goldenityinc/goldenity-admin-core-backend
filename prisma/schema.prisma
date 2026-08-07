@@ -891,6 +891,10 @@ enum AppModule {
   module_tax_reports
   module_user_management
   module_workshop_service
+  ACADEMICS
+  BILLING
+  FINANCE
+  STUDENTS
 }
 
 enum PaymentStatusEnum {
