@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getOrdersByTransactionCode,
   getRelayOrderById,
+  getActiveOrdersForTable,
   relayFlexibleAuth,
 } from '../controllers/relayOrdersController';
 
@@ -9,17 +10,22 @@ const router = Router({ mergeParams: true });
 
 router.use(relayFlexibleAuth);
 
-// 🔴 CRITICAL FIX: query order by STRING TRANSACTION CODE (receipt_number/reference_id VARCHAR column)
-//    NOT the numeric bigint `id` column. Route called by Bridge (X-Bridge-Proxy header)
-//    untuk polling Web Ordering by-txId setiap 2 detik → returns FULL items + nomor meja.
+// ✅ ENDPOINT 1 (Critical Fix 1 Items Kosong + Fix 2 Table Isolation):
+//    GET /api/v1/relay/orders/by-transaction/TX-1786123768977?tenantId=X&branchId=Y&tableId=33
+//    PRIORITAS items_json inline column, items selalu ADA.
+//    Jika ?tableId=33 diset → WHERE table_id filter TIDAK BOcOR meja lain!
 router.get('/by-transaction/:txId', getOrdersByTransactionCode);
 
-// Sibling route untuk pattern POS direct fetch by raw id (numeric atau TX-* string):
-//    /api/v1/relay/orders/{id}
+// ✅ ENDPOINT 2 (Sibling route POS fetch by id):
+//    /api/v1/relay/orders/{id} — accept numeric id ATAU TX-* string.
 router.get('/:id', getRelayOrderById);
 
-// Ack endpoint forward aliases: POS ack via relay path.
-//    (Handled oleh orderAckRoutes actual controller tapi path alias tambahan disini agar /api/v1/relay/orders/{id}/ack 200 OK)
+// ✅ ENDPOINT 3 (NEW — Fix 2 Cross-Table Contamination ISOLATION Web Ordering Order List):
+//    GET /api/v1/relay/orders/active?tenantId=X&branchId=Y&tableId=33
+//    WAJIB tableId → HANYA return order ACTIVE (PENDING/PREPARING) MILIK MEJA INI SAJA.
+router.get('/active', getActiveOrdersForTable);
+
+// Ack endpoint forward aliases (POS ack via relay path):
 router.post('/by-submission/:submissionId/ack-status', (_req, res) => {
   res.status(200).json({
     ok: true,

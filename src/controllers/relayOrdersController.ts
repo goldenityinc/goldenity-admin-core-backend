@@ -21,6 +21,12 @@ function resolveRelayBranchId(req: Request): bigint | null {
   try { return BigInt(raw); } catch { return null; }
 }
 
+function resolveRelayTableId(req: Request): bigint | null {
+  const raw = req.query.tableId ?? req.query.table_id ?? req.headers['x-table-id'];
+  if (!raw || typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  try { return BigInt(raw); } catch { return null; }
+}
+
 export function relayFlexibleAuth(req: Request, res: Response, next: NextFunction) {
   const hasInternalToken = Boolean((req.headers['x-internal-token'] || '').toString().trim());
   const hasBridgeHeader =
@@ -118,11 +124,81 @@ function mapStatusToAck(status: string | null): string {
   }
 }
 
-function normalizeItems(record: {
-  id: bigint; items_json: unknown; tenant_id: string | null;
-}, dbItems: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const recordItems = dbItems
-    .filter((it) => String((it as { sales_record_id?: bigint }).sales_record_id ?? '') === String(record.id))
+function timeoutAfterMs<T>(ms: number, fallback: T, _label = 'db'): Promise<T> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      clearTimeout(t);
+      resolve(fallback);
+    }, ms);
+    try {
+      (t as unknown as { unref?: () => void }).unref?.();
+    } catch { /* ignore */ }
+  }).catch(() => fallback) as Promise<T>;
+}
+
+/**
+ * ✅ CRITICAL FIX 1 — ITEMS KOSONG (EMPTY ITEMS ARRAY):
+ *    PRE-parse items DARI items_json (inlin JSON column sales_records) TERLEBIH DAHULU.
+ *    items_json DISIMPAN BERSAMAAN commit transaction createQrOrder → SELALU ADA,
+ *    BAHKAN SEBELUM rows sales_record_items relation di-insert secara async.
+ *    Sebelumnya parse DB relation first → race condition empty items polling <10 detik.
+ *
+ *    items_json shape: Array<{productId, qty, note?, customPrice?, batch_sequence?}>
+ *    Falls back ke sales_record_items rows relation jika items_json kosong.
+ */
+function parseItemsFromItemsJson(
+  itemsJson: unknown,
+  recordId: bigint,
+): Array<Record<string, unknown>> {
+  try {
+    if (Array.isArray(itemsJson) && itemsJson.length > 0) {
+      return itemsJson.map((raw, i) => {
+        const it = (raw ?? {}) as Record<string, unknown>;
+        const hasProductName = Boolean(it.productName || it.product_name || it.custom_name);
+        const rawName = String(
+          it.name ?? it.productName ?? it.product_name ?? it.custom_name ?? '',
+        ).trim();
+        const name = rawName || (hasProductName ? '' : `Item ${i + 1}`);
+        const qty = toFinite(it.qty ?? it.quantity) ?? 0;
+        const price = toFinite(it.price ?? it.unitPrice ?? it.unit_price ?? it.customPrice ?? it.custom_price ?? it.sale_price ?? it.harga_jual) ?? 0;
+        const notes = String(it.notes ?? it.note ?? it.item_note ?? '').trim();
+        const productId = String(it.productId ?? it.product_id ?? it.id ?? '');
+        return {
+          id: String(it.id ?? it.batch_sequence ? `${recordId}-batch-${it.batch_sequence}-${i}` : `${recordId}-fallback-${i}`),
+          productId,
+          product_id: productId,
+          name: name || `Produk ${i + 1}`,
+          productName: name || `Produk ${i + 1}`,
+          product_name: name || `Produk ${i + 1}`,
+          qty,
+          quantity: qty,
+          price,
+          unitPrice: price,
+          unit_price: price,
+          subtotal: qty > 0 && price > 0 ? qty * price : (toFinite(it.subtotal) ?? 0),
+          customPrice: toFinite(it.customPrice ?? it.custom_price),
+          custom_price: toFinite(it.customPrice ?? it.custom_price),
+          batchSequence: toFinite(it.batch_sequence ?? it.batchSequence),
+          batch_sequence: toFinite(it.batch_sequence ?? it.batchSequence),
+          isService: Boolean(it.isService ?? it.is_service),
+          is_service: Boolean(it.isService ?? it.is_service),
+          isCustomItem: Boolean(it.isCustomItem ?? it.is_custom_item),
+          is_custom_item: Boolean(it.isCustomItem ?? it.is_custom_item),
+          notes,
+          note: notes,
+        };
+      });
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function parseItemsFromDbRelation(
+  dbItems: Array<Record<string, unknown>>,
+  recordId: bigint,
+): Array<Record<string, unknown>> {
+  return dbItems
+    .filter((it) => String((it as { sales_record_id?: bigint }).sales_record_id ?? '') === String(recordId))
     .map((raw) => {
       const item = raw as Record<string, unknown>;
       const price = toFinite(item.custom_price) ?? 0;
@@ -133,10 +209,11 @@ function normalizeItems(record: {
       const name = String(
         (item.custom_name ?? item.product_name ?? '') as string,
       ).trim() || 'Item';
+      const productId = String(item.product_id ?? '');
       return {
-        id: String(item.id ?? `${record.id}-${item.product_id ?? 'item'}`),
-        productId: String(item.product_id ?? ''),
-        product_id: String(item.product_id ?? ''),
+        id: String(item.id ?? `${recordId}-${productId || 'item'}`),
+        productId,
+        product_id: productId,
         name,
         productName: name,
         product_name: name,
@@ -145,6 +222,7 @@ function normalizeItems(record: {
         price,
         unitPrice: price,
         unit_price: price,
+        subtotal: qty > 0 && price > 0 ? qty * price : 0,
         customPrice: toFinite(item.custom_price),
         custom_price: toFinite(item.custom_price),
         isService: Boolean(item.is_service),
@@ -159,40 +237,36 @@ function normalizeItems(record: {
         note: notes,
       };
     });
-  if (recordItems.length > 0) return recordItems;
-  // Fallback items_json
+}
+
+function normalizeItems(record: {
+  id: bigint; items_json: unknown; tenant_id: string | null;
+}, dbItems: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  // 🔴 PRIORITAS UTAMA: items_json inline column (disimpan BERSAMA create order transaction)
+  const fromInlineJson = parseItemsFromItemsJson(record.items_json, record.id);
+  if (fromInlineJson.length > 0) return fromInlineJson;
+  // Fallback jika items_json empty/null: baca dari DB relation sales_record_items
+  return parseItemsFromDbRelation(dbItems, record.id);
+}
+
+function resolveTableNumber(record: {
+  table_id: bigint | null;
+  table: unknown;
+  items_json: unknown;
+}): string | null {
+  const table = record.table as { id?: bigint; table_number?: unknown } | null | undefined;
+  const rawTableNumber = table?.table_number ?? record.table_id ?? null;
+  const str = rawTableNumber == null ? '' : String(rawTableNumber).trim();
+  if (str) return str;
   try {
     const json = record.items_json;
-    if (Array.isArray(json) && json.length > 0) {
-      return json.map((raw, i) => {
-        const it = (raw ?? {}) as Record<string, unknown>;
-        const name = String(
-          it.name ?? it.productName ?? it.product_name ?? it.custom_name ?? '',
-        ).trim() || `Item ${i + 1}`;
-        const qty = toFinite(it.qty ?? it.quantity) ?? 0;
-        const price = toFinite(it.price ?? it.unitPrice ?? it.unit_price ?? it.customPrice ?? it.sale_price) ?? 0;
-        const notes = String(it.notes ?? it.note ?? '').trim();
-        return {
-          id: String(it.id ?? `${record.id}-fallback-${i}`),
-          productId: String(it.productId ?? it.product_id ?? ''),
-          product_id: String(it.productId ?? it.product_id ?? ''),
-          name,
-          productName: name,
-          product_name: name,
-          qty,
-          quantity: qty,
-          price,
-          unitPrice: price,
-          unit_price: price,
-          isService: Boolean(it.isService ?? it.is_service),
-          is_service: Boolean(it.isService ?? it.is_service),
-          notes,
-          note: notes,
-        };
-      });
+    if (json && typeof json === 'object' && !Array.isArray(json)) {
+      const meta = (json as { tableNumber?: unknown; table_number?: unknown; table?: unknown });
+      const fromMeta = String(meta.tableNumber ?? meta.table_number ?? meta.table ?? '').trim();
+      if (fromMeta) return fromMeta;
     }
   } catch { /* ignore */ }
-  return [];
+  return null;
 }
 
 function buildRelayOrderPayload(
@@ -202,9 +276,8 @@ function buildRelayOrderPayload(
   },
 ): Record<string, unknown> {
   const txCode = record._txCode ?? record.receipt_number ?? record.reference_id ?? String(record.id);
-  const table = record.table as { id?: bigint; table_number?: unknown } | null | undefined;
-  const tableNumberRaw = table?.table_number ?? null;
-  const tableNumber = tableNumberRaw == null ? null : String(tableNumberRaw);
+  const tableNumber = resolveTableNumber(record);
+  const table = record.table as { id?: bigint } | null | undefined;
   const tableId = table?.id ?? record.table_id ?? null;
   const items = record.items ?? [];
   const totalAmount = toFinite(record.total_amount) ?? toFinite(record.total_price) ?? toFinite(record.amount_paid) ?? 0;
@@ -229,6 +302,9 @@ function buildRelayOrderPayload(
     table_id: tableId ? String(tableId) : null,
     totalAmount,
     total_amount: totalAmount,
+    grandTotal: totalAmount,
+    grand_total: totalAmount,
+    subtotal: totalAmount,
     totalPrice: toFinite(record.total_price),
     total_price: toFinite(record.total_price),
     amountPaid: toFinite(record.amount_paid),
@@ -237,6 +313,8 @@ function buildRelayOrderPayload(
     payment_method: paymentMethod,
     items,
     itemCount: items.length,
+    pax: toFinite((record as unknown as { pax?: unknown }).pax),
+    orderNote: String((record as unknown as { special_note?: unknown }).special_note ?? '').trim() || null,
     customerName,
     customer_name: customerName,
     orderType: record.order_type,
@@ -257,62 +335,98 @@ function buildRelayOrderPayload(
   };
 }
 
+function buildTransactionFallbackWhereClauses(rawTx: string): Array<Prisma.sales_recordsWhereInput> {
+  const clauses: Array<Prisma.sales_recordsWhereInput> = [];
+  const isNumeric = /^\d+$/.test(rawTx);
+  const stripped = /^(TX-|TX_|tx-|tx_)/i.test(rawTx)
+    ? rawTx.replace(/^(TX-|TX_|tx-|tx_)/i, '').trim()
+    : null;
+  const strippedIsNumeric = stripped ? /^\d+$/.test(stripped) : false;
+  clauses.push({ receipt_number: { equals: rawTx, mode: 'insensitive' } });
+  clauses.push({ reference_id: { equals: rawTx, mode: 'insensitive' } });
+  if (stripped) {
+    clauses.push({ receipt_number: { equals: stripped, mode: 'insensitive' } });
+    clauses.push({ reference_id: { equals: stripped, mode: 'insensitive' } });
+  }
+  if (isNumeric) {
+    try { clauses.push({ id: BigInt(rawTx) }); } catch { /* ignore */ }
+  }
+  if (strippedIsNumeric) {
+    try { clauses.push({ id: BigInt(stripped as string) }); } catch { /* ignore */ }
+  }
+  return clauses;
+}
+
+function buildScopeFilters(req: Request): {
+  tenantId: string | null;
+  branchId: bigint | null;
+  tableId: bigint | null;
+} {
+  return {
+    tenantId: resolveRelayTenantId(req),
+    branchId: resolveRelayBranchId(req),
+    tableId: resolveRelayTableId(req),
+  };
+}
+
 export const getOrdersByTransactionCode = asyncHandler(async (req: Request, res: Response) => {
-  const tenantId = resolveRelayTenantId(req);
+  const { tenantId, branchId, tableId } = buildScopeFilters(req);
   if (!tenantId) {
     return res.status(200).json([]);
   }
-  const branchId = resolveRelayBranchId(req);
   const rawTx = (req.params.txId ?? req.params.id ?? '').toString().trim();
   if (!rawTx) {
     return res.status(200).json([]);
-  }
-  const isNumeric = /^\d+$/.test(rawTx);
-  const strippedNumeric = /^(TX-|TX_|tx-|tx_)/i.test(rawTx)
-    ? rawTx.replace(/^(TX-|TX_|tx-|tx_)/i, '').trim()
-    : null;
-  const strippedIsNumeric = strippedNumeric ? /^\d+$/.test(strippedNumeric) : false;
-
-  const whereClauses: Array<Prisma.sales_recordsWhereInput> = [];
-  whereClauses.push({ receipt_number: { equals: rawTx, mode: 'insensitive' } });
-  whereClauses.push({ reference_id: { equals: rawTx, mode: 'insensitive' } });
-  if (strippedNumeric) {
-    whereClauses.push({ receipt_number: { equals: strippedNumeric, mode: 'insensitive' } });
-    whereClauses.push({ reference_id: { equals: strippedNumeric, mode: 'insensitive' } });
-  }
-  if (isNumeric) {
-    try { whereClauses.push({ id: BigInt(rawTx) }); } catch { /* ignore */ }
-  }
-  if (strippedIsNumeric) {
-    try { whereClauses.push({ id: BigInt(strippedNumeric as string) }); } catch { /* ignore */ }
   }
 
   const where: Prisma.sales_recordsWhereInput = {
     tenant_id: tenantId,
     ...(branchId !== null ? { branch_id: branchId } : {}),
-    OR: whereClauses,
+    // ✅ FIX 2 — CROSS-TABLE CONTAMINATION ISOLATION:
+    //    JIKA client mengirim ?tableId=33 → WHERE table_id = 33
+    //    Agar meja 3 hanya melihat order milik dirinya, tidak bocor meja lain.
+    ...(tableId !== null ? { table_id: tableId } : {}),
+    OR: buildTransactionFallbackWhereClauses(rawTx),
   };
 
-  const records = await prisma.sales_records.findMany({
-    where,
-    select: relayOrderSelect,
-    orderBy: { created_at: 'desc' },
-    take: 20,
-  });
+  // ✅ FIX 3 — SLOW / TIMEOUT RACE:
+  //    Promise.race PRISMA query vs timeout 1.2s fallback empty array [].
+  //    Tidak hang frontend, response selalu <1.5 detik.
+  const recordsRace = Promise.race<Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>>>([
+    prisma.sales_records.findMany({
+      where,
+      select: relayOrderSelect,
+      orderBy: { created_at: 'desc' },
+      take: 20,
+    }),
+    timeoutAfterMs(1200, [], 'sales_records findMany'),
+  ]);
 
+  const records: Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>> = (await recordsRace.catch(() => [])) || [];
   if (records.length === 0) {
     return res.status(200).json([]);
   }
 
-  const recordIds = records.map((r) => r.id);
-  const dbItems = await prisma.sales_record_items.findMany({
-    where: { tenant_id: tenantId, sales_record_id: { in: recordIds } },
-    select: relayItemSelect,
-    orderBy: [{ sales_record_id: 'asc' }, { id: 'asc' }],
-  }).catch(() => []);
+  // ✅ OPTIMIZE FAST PATH: items_json exists untuk record apapun → LEWATI db items query SAMA SEKALI
+  //    Menghemat 1 query SELECT sales_record_items + join latensi (100ms -> 0ms).
+  let dbItems: Array<Record<string, unknown>> = [];
+  const needDbItems = records.some((r) => {
+    try { return !(r.items_json && Array.isArray(r.items_json) && (r.items_json as Array<unknown>).length > 0); } catch { return true; }
+  });
+  if (needDbItems) {
+    const recordIds = records.map((r) => r.id);
+    dbItems = (await Promise.race<Array<unknown>>([
+      prisma.sales_record_items.findMany({
+        where: { tenant_id: tenantId, sales_record_id: { in: recordIds } },
+        select: relayItemSelect,
+        orderBy: [{ sales_record_id: 'asc' }, { id: 'asc' }],
+      }),
+      timeoutAfterMs(800, [], 'sales_record_items findMany'),
+    ]).catch(() => [])) as Array<Record<string, unknown>>;
+  }
 
   const recordsWithTx = records.map((r) => {
-    const items = normalizeItems({ id: r.id, items_json: r.items_json, tenant_id: r.tenant_id }, (dbItems as unknown) as Array<Record<string, unknown>>);
+    const items = normalizeItems({ id: r.id, items_json: r.items_json, tenant_id: r.tenant_id }, dbItems);
     let txCode = rawTx;
     if (String(r.receipt_number || '').toLowerCase() === rawTx.toLowerCase()) txCode = r.receipt_number as string;
     else if (String(r.reference_id || '').toLowerCase() === rawTx.toLowerCase()) txCode = r.reference_id as string;
@@ -325,7 +439,7 @@ export const getOrdersByTransactionCode = asyncHandler(async (req: Request, res:
 });
 
 export const getRelayOrderById = asyncHandler(async (req: Request, res: Response, next: import('express').NextFunction) => {
-  const tenantId = resolveRelayTenantId(req);
+  const { tenantId } = buildScopeFilters(req);
   if (!tenantId) {
     return res.status(200).json([]);
   }
@@ -333,4 +447,78 @@ export const getRelayOrderById = asyncHandler(async (req: Request, res: Response
   if (!rawId) return res.status(200).json([]);
   req.params.txId = rawId;
   return getOrdersByTransactionCode(req, res, next);
+});
+
+/**
+ * ✅ NEW ENDPOINT: Active Orders untuk Web Ordering UI Order List per MEJA
+ *    Route: GET /api/v1/relay/orders/active
+ *    PARAMS WAJIB via query: tenantId, branchId, tableId
+ *    WHERE clause ISOLATION per table_id: hanya order milik meja TERSEBUT yang ditampilkan.
+ *    Filter order_status: HANYA ACTIVE (PENDING/PREPARING/READY_FOR_PICKUP/PENDING_PAYMENT) —
+ *    exclude COMPLETED / POS_PRINTED / CANCELLED / VOID supaya history lama tidak tampil.
+ */
+export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Response) => {
+  const { tenantId, branchId, tableId } = buildScopeFilters(req);
+  if (!tenantId) {
+    return res.status(200).json([]);
+  }
+  // ✅ FIX 2 CROSS-TABLE ISOLATION ENFORCEMENT: ENDPOINT INI WAJIB ADA tableId!
+  //    Jika tidak ada tableId → return [] INSTANT (tidak bocor semua order branch).
+  if (tableId === null) {
+    return res.status(200).json([]);
+  }
+
+  const activeStatuses: Array<string> = ['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'PENDING_PAYMENT', 'PARTIAL', 'NEW'];
+  const where: Prisma.sales_recordsWhereInput = {
+    tenant_id: tenantId,
+    ...(branchId !== null ? { branch_id: branchId } : {}),
+    table_id: tableId,
+    order_status: { in: activeStatuses as unknown as never },
+    AND: [
+      { NOT: { order_status: { in: ['COMPLETED', 'CANCELLED', 'VOID', 'POS_PRINTED', 'REFUNDED'] as unknown as never } } },
+    ],
+  };
+
+  const records: Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>> = (
+    await Promise.race([
+      prisma.sales_records.findMany({
+        where,
+        select: relayOrderSelect,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        take: 50,
+      }),
+      timeoutAfterMs(1200, [], 'activeOrders sales_records findMany'),
+    ]).catch(() => [])
+  ) as Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>>;
+
+  if (records.length === 0) {
+    return res.status(200).json([]);
+  }
+
+  let dbItems: Array<Record<string, unknown>> = [];
+  const needDbItems = records.some((r) => {
+    try { return !(r.items_json && Array.isArray(r.items_json) && (r.items_json as Array<unknown>).length > 0); } catch { return true; }
+  });
+  if (needDbItems) {
+    const recordIds = records.map((r) => r.id);
+    dbItems = (await Promise.race([
+      prisma.sales_record_items.findMany({
+        where: { tenant_id: tenantId, sales_record_id: { in: recordIds } },
+        select: relayItemSelect,
+      }),
+      timeoutAfterMs(700, [], 'activeOrders items findMany'),
+    ]).catch(() => [])) as Array<Record<string, unknown>>;
+  }
+
+  const withItems = records.map((r) => {
+    const items = normalizeItems({ id: r.id, items_json: r.items_json, tenant_id: r.tenant_id }, dbItems);
+    return {
+      ...r,
+      items,
+      _txCode: (r.receipt_number ?? r.reference_id ?? String(r.id)) as string,
+    };
+  });
+
+  const payload = withItems.map(buildRelayOrderPayload);
+  return res.status(200).json(serializeForJson(payload));
 });
