@@ -468,7 +468,8 @@ export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Re
     return res.status(200).json([]);
   }
 
-  const activeStatuses: Array<string> = ['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'PENDING_PAYMENT', 'PARTIAL', 'NEW'];
+  const activeStatuses: Array<string> = ['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'PENDING_PAYMENT', 'PARTIAL', 'NEW', 'OPEN', 'ACTIVE'];
+  const excludedPaymentStatuses: Array<string> = ['PAID', 'REFUNDED', 'CANCELLED', 'VOID'];
   const where: Prisma.sales_recordsWhereInput = {
     tenant_id: tenantId,
     ...(branchId !== null ? { branch_id: branchId } : {}),
@@ -476,18 +477,35 @@ export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Re
     order_status: { in: activeStatuses as unknown as never },
     AND: [
       { NOT: { order_status: { in: ['COMPLETED', 'CANCELLED', 'VOID', 'POS_PRINTED', 'REFUNDED'] as unknown as never } } },
+      // 🔴 CRITICAL FIX 2: EXCLUDE SEMUA PAYMENT_STATUS = PAID / REFUNDED / VOID
+      //    Query sebelumnya TIDAK filter payment_status. Akibatnya order QRIS yang SUDAH PAID
+      //    tapi order_status masih PREPARING → masih muncul sebagai "active" di POS,
+      //    dan POS salah menganggap order CASHIER yang lain sebagai PAID juga (contamination visual).
+      //    Sekarang: HANYA tampilkan yang payment_status BELUM PAID / masih unpaid.
+      {
+        NOT: {
+          payment_status: {
+            in: excludedPaymentStatuses as unknown as never,
+            mode: 'insensitive',
+          },
+        },
+      },
     ],
   };
 
+  // 🔴 CRITICAL FIX 2b:
+  //    - orderBy CREATED_AT ASC → order TERLAMA muncul DULU, tidak terpotong take:50
+  //      (sebelumnya DESC = latest first, jadi order lama Americano hilang, munculnya Kue Lapis saja)
+  //    - take dinaikkan 50 → 200 agar edge case padat (1 table > 50 order) tetap ke load
   const records: Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>> = (
     await Promise.race([
       prisma.sales_records.findMany({
         where,
         select: relayOrderSelect,
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-        take: 50,
+        orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+        take: 200,
       }),
-      timeoutAfterMs(1200, [], 'activeOrders sales_records findMany'),
+      timeoutAfterMs(1500, [], 'activeOrders sales_records findMany'),
     ]).catch(() => [])
   ) as Array<Prisma.sales_recordsGetPayload<{ select: typeof relayOrderSelect }>>;
 

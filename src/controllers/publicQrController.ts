@@ -472,7 +472,14 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       }
     }
 
+    const paymentMethodLabelForExistingSale =
+      paymentMethod === PAYMENT_METHOD_QRIS ? 'QRIS' : 'Bayar di Kasir';
     // Lock current active/unpaid order for this table to avoid race conditions under heavy load.
+    // 🔴 CRITICAL FIX (PAYMENT CONTAMINATION — QRIS vs CASHIER):
+    //    HANYA append ke existing sale JIKA payment_method SAMA PERSIS.
+    //    Jika user buat Order 1 = CASHIER, lalu Order 2 = QRIS — JANGAN DIGABUNG,
+    //    harus INSERT sales_record BARU, supaya saat QRIS di-mark PAID, Order 1 CASHIER TIDAK ikut ter-mark PAID.
+    //    Tambahan: reference_id HARUS sama atau null (idempotency), dan created_at < 30 menit lalu.
     const existingSaleRows = await tx.$queryRaw<ExistingSaleRow[]>`
       SELECT
         id,
@@ -502,6 +509,16 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
             'UNPAID'
           )
         )
+        AND (
+          UPPER(COALESCE(payment_method, '')) = UPPER(${paymentMethodLabelForExistingSale})
+          OR COALESCE(payment_method, '') = ''
+        )
+        AND (
+          (reference_id IS NOT NULL AND ${referenceId} IS NOT NULL AND reference_id = ${referenceId})
+          OR reference_id IS NULL
+          OR COALESCE(reference_id, '') = ''
+        )
+        AND created_at >= NOW() - INTERVAL '30 minutes'
       ORDER BY created_at DESC, id DESC
       LIMIT 1
       FOR UPDATE
