@@ -406,10 +406,16 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       payment_proof_url: string | null;
     };
 
+    // 🔴 CRITICAL FIX: effectiveBranchId MUST BE DEFINED FIRST before any WHERE clause.
+    //    Dipakai di tableRows SELECT (L409), existingSale WHERE, OCCUPIED UPDATE, dan return.
+    //    Pattern double-lock branch_id (jika NULL berarti legacy table shared = aman).
+    const effectiveBranchId = branchId ?? null;
+
     const tableRows = await tx.$queryRaw<Array<{ id: bigint; status: string; table_number: string | null }>>`
       SELECT id, status, table_number
       FROM tables
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
+        AND (branch_id = ${effectiveBranchId} OR branch_id IS NULL)
       LIMIT 1
       FOR UPDATE
     `;
@@ -527,7 +533,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       FOR UPDATE
     `;
     const existingSale = existingSaleRows[0] ?? null;
-    const effectiveBranchId = existingSale?.branch_id ?? branchId ?? null;
 
     const productIds = items.map((item) => item.productId);
     const products = await tx.$queryRaw<Array<{ id: string; name: string; price: number | null; is_service: boolean | null; is_stock_tracked: boolean | null; stock: number | null }>>`
@@ -764,6 +769,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       UPDATE tables
       SET status = ${'OCCUPIED'}::"TableStatus", updated_at = NOW()
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
+        AND (branch_id = ${effectiveBranchId} OR branch_id IS NULL)
     `;
 
     return {
@@ -951,6 +957,38 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'incoming_qr_order', qrOrderSocketPayload);
   emitToTenant(tenantId, 'new_web_order', qrOrderSocketPayload);
   emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order', qrOrderSocketPayload);
+
+  // 🔴 FIX 2 (TABLE STATUS OCCUPIED SOCKET REFRESH):
+  //    Sebelumnya UPDATE tables SET STATUS=OCCUPIED hanya di DB, TAPI TIDAK ADA
+  //    socket broadcast ke POS Flutter untuk refresh table management grid.
+  //    Result: user di POS harus tekan tombol Refresh manual setiap kali order QR.
+  //    Solusi: EMIT tables_refresh event (multi-pattern) ke BOTH tenant & branch room,
+  //    dengan payload yg berisi tableId, branchId, dan STATUS BARU = 'OCCUPIED'.
+  {
+    const tableRefreshPayload: Record<string, unknown> = {
+      type: 'TABLE_STATUS_CHANGED',
+      reason: 'NEW_WEB_ORDER_OCCUPIED',
+      tableId: tableId.toString(),
+      table_id: tableId.toString(),
+      tableNumber: tableLabel || tableId.toString(),
+      table_number: tableLabel || tableId.toString(),
+      newStatus: 'OCCUPIED',
+      new_status: 'OCCUPIED',
+      status: 'OCCUPIED',
+      branchId: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
+      branch_id: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
+      transactionId: result.receipt_number ?? result.reference_id ?? result.id,
+      receiptNumber: result.receipt_number ?? null,
+      timestamp: new Date().toISOString(),
+    };
+    // Multi event patterns agar semua client (Flutter / Web Admin) 100% dapat:
+    emitToTenant(tenantId, 'tables_refresh', tableRefreshPayload);
+    emitToTenant(tenantId, 'tables:refresh', tableRefreshPayload);
+    emitToTenant(tenantId, 'table_status_changed', tableRefreshPayload);
+    emitToBranch(tenantId, (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null, 'tables_refresh', tableRefreshPayload);
+    emitToBranch(tenantId, (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null, 'tables:refresh', tableRefreshPayload);
+    emitToBranch(tenantId, (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null, 'table_status_changed', tableRefreshPayload);
+  }
 
   return res.status(201).json({
     success: true,
@@ -1364,6 +1402,38 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   };
   emitToTenant(tenantId, 'qr_order_payment_status_updated', statusSocketPayload);
   emitToBranch(tenantId, orderBranchId, 'qr_order_payment_status_updated', statusSocketPayload);
+  // 🔴 CRITICAL FIX (QRIS PAID AUTO-PRINT FAIL — SOCKET EVENT NAME MISMATCH):
+  //    POS Flutter RealtimeSyncService.dart L221 LISTEN event:    'qr_order_payment_status' (TANPA _updated)
+  //    SERVER Admin Core EMIT event TADI: 'qr_order_payment_status_updated' (DENGAN _updated)
+  //    → MISMATCH event name → POS TIDAK PERNAH TERIMA PAYMENT STATUS PAID
+  //      → STRUK PAID QRIS TIDAK PERNAH DICETAK OTOMATIS!
+  //    SOLUSI: EMIT DUA-DUANYA (dengan + tanpa _updated suffix), dan tambah event
+  //    pattern lain (payment_success / qris_paid) agar semua POS version lama & baru
+  //    100% dapat event PAID dan trigger auto-print queue.
+  emitToTenant(tenantId, 'qr_order_payment_status', statusSocketPayload);
+  emitToBranch(tenantId, orderBranchId, 'qr_order_payment_status', statusSocketPayload);
+  if (String(finalPaymentStatusForSocket).toUpperCase() === 'PAID') {
+    emitToTenant(tenantId, 'payment_success', {
+      ...statusSocketPayload,
+      event_type: 'payment_success',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToBranch(tenantId, orderBranchId, 'payment_success', {
+      ...statusSocketPayload,
+      event_type: 'payment_success',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToTenant(tenantId, 'qris_paid', {
+      ...statusSocketPayload,
+      event_type: 'qris_paid',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToBranch(tenantId, orderBranchId, 'qris_paid', {
+      ...statusSocketPayload,
+      event_type: 'qris_paid',
+      reason: 'qr_order_upload_payment_proof',
+    });
+  }
 
   // Re-emit incoming_qr_order too so any POS listening to that still refreshes the list
   const reemitPayload: Record<string, unknown> = {
