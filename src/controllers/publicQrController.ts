@@ -948,15 +948,47 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
     created_at: new Date().toISOString(),
     isAutoPaid: false,
   };
-  // 🔴 FIX 1 (Socket broadcast):
-  //    DUA-DUANYA di-emit! Tenant room (UI admin di browser PC) DAPET,
-  //    Branch room (Tablet Printer POS Flutter yang sudah join_branch) JUGA DAPET.
-  //    Tidak lagi "hanya satu device PC yang dapat notif" — SEMUA device di branch terkait
-  //    (Tablet + Printer + Kasir) menerima incoming_qr_order secara bersamaan.
+  // 🔴 2-STEP QRIS FLOW FIX — Socket broadcast:
+  //    CASHIER / SUDAH PAID → emit `new_web_order` (POS: print CHECKER + STRUK).
+  //    QRIS PENDING_PAYMENT (Step 1) → emit `new_web_order_checker` KHUSUS (POS: HANYA print CHECKER dapur saja, JANGAN print STRUK official dulu).
+  //    Nanti di Step 2 (upload proof PAID) kita emit `web_order_paid` terpisah untuk trigger STRUK.
+  const isQrisPendingFlow =
+    finalPaymentMethod === 'QRIS' &&
+    String(finalPaymentStatus || '').toUpperCase() !== 'PAID' &&
+    String(finalPaymentStatus || '').toUpperCase() !== 'COMPLETED' &&
+    String(finalPaymentStatus || '').toUpperCase() !== 'SETTLED';
+
+  const checkerOnlyPayload = {
+    ...qrOrderSocketPayload,
+    print_type: 'CHECKER_ONLY',
+    printType: 'CHECKER_ONLY',
+    order_stage: 'CHECKER_PRINT',
+    orderStage: 'CHECKER_PRINT',
+  };
+
   emitToTenant(tenantId, 'incoming_qr_order', qrOrderSocketPayload);
   emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'incoming_qr_order', qrOrderSocketPayload);
-  emitToTenant(tenantId, 'new_web_order', qrOrderSocketPayload);
-  emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order', qrOrderSocketPayload);
+
+  if (isQrisPendingFlow) {
+    // 🔴 STEP 1 QRIS: Hanya checker yang dicetak dulu. Struk nanti setelah PAID emit `web_order_paid`.
+    emitToTenant(tenantId, 'new_web_order_checker', checkerOnlyPayload);
+    emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order_checker', checkerOnlyPayload);
+    // Backward compat: POS Flutter lama listen `new_web_order`. Tandai payload agar POS cuma print checker.
+    const legacyCompatCheckerOnly = {
+      ...qrOrderSocketPayload,
+      print_type: 'CHECKER_ONLY',
+      printType: 'CHECKER_ONLY',
+      order_stage: 'CHECKER_PRINT',
+      orderStage: 'CHECKER_PRINT',
+      __qris_unpaid_checker_only: true,
+    };
+    emitToTenant(tenantId, 'new_web_order', legacyCompatCheckerOnly);
+    emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order', legacyCompatCheckerOnly);
+  } else {
+    // CASHIER / already PAID → normal flow (print checker + struk)
+    emitToTenant(tenantId, 'new_web_order', qrOrderSocketPayload);
+    emitToBranch(tenantId, (result.effectiveBranchId ?? result.branch_id ?? null), 'new_web_order', qrOrderSocketPayload);
+  }
 
   // 🔴 FIX 2 (TABLE STATUS OCCUPIED SOCKET REFRESH):
   //    Sebelumnya UPDATE tables SET STATUS=OCCUPIED hanya di DB, TAPI TIDAK ADA
@@ -1412,30 +1444,8 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   //    100% dapat event PAID dan trigger auto-print queue.
   emitToTenant(tenantId, 'qr_order_payment_status', statusSocketPayload);
   emitToBranch(tenantId, orderBranchId, 'qr_order_payment_status', statusSocketPayload);
-  if (String(finalPaymentStatusForSocket).toUpperCase() === 'PAID') {
-    emitToTenant(tenantId, 'payment_success', {
-      ...statusSocketPayload,
-      event_type: 'payment_success',
-      reason: 'qr_order_upload_payment_proof',
-    });
-    emitToBranch(tenantId, orderBranchId, 'payment_success', {
-      ...statusSocketPayload,
-      event_type: 'payment_success',
-      reason: 'qr_order_upload_payment_proof',
-    });
-    emitToTenant(tenantId, 'qris_paid', {
-      ...statusSocketPayload,
-      event_type: 'qris_paid',
-      reason: 'qr_order_upload_payment_proof',
-    });
-    emitToBranch(tenantId, orderBranchId, 'qris_paid', {
-      ...statusSocketPayload,
-      event_type: 'qris_paid',
-      reason: 'qr_order_upload_payment_proof',
-    });
-  }
 
-  // Re-emit incoming_qr_order too so any POS listening to that still refreshes the list
+  // Pindahkan reemitPayload ke ATAS (dibutuhkan oleh paidReceiptPayload dan emit incoming_qr_order)
   const reemitPayload: Record<string, unknown> = {
     tenantId,
     branchId: orderBranchId,
@@ -1511,10 +1521,52 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
     isAutoPaid: false,
     idempotentReplay: result.idempotentReplay,
   };
+
+  if (String(finalPaymentStatusForSocket).toUpperCase() === 'PAID') {
+    emitToTenant(tenantId, 'payment_success', {
+      ...statusSocketPayload,
+      event_type: 'payment_success',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToBranch(tenantId, orderBranchId, 'payment_success', {
+      ...statusSocketPayload,
+      event_type: 'payment_success',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToTenant(tenantId, 'qris_paid', {
+      ...statusSocketPayload,
+      event_type: 'qris_paid',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    emitToBranch(tenantId, orderBranchId, 'qris_paid', {
+      ...statusSocketPayload,
+      event_type: 'qris_paid',
+      reason: 'qr_order_upload_payment_proof',
+    });
+    const paidReceiptPayload = {
+      ...reemitPayload,
+      print_type: 'RECEIPT_ONLY',
+      printType: 'RECEIPT_ONLY',
+      order_stage: 'SALES_RECEIPT_PRINT',
+      orderStage: 'SALES_RECEIPT_PRINT',
+      event_type: 'web_order_paid',
+      eventType: 'web_order_paid',
+    };
+    emitToTenant(tenantId, 'web_order_paid', paidReceiptPayload);
+    emitToBranch(tenantId, orderBranchId, 'web_order_paid', paidReceiptPayload);
+    emitToTenant(tenantId, 'web_order_paid_receipt', paidReceiptPayload);
+    emitToBranch(tenantId, orderBranchId, 'web_order_paid_receipt', paidReceiptPayload);
+  }
+
   emitToTenant(tenantId, 'incoming_qr_order', reemitPayload);
   emitToBranch(tenantId, orderBranchId, 'incoming_qr_order', reemitPayload);
-  emitToTenant(tenantId, 'new_web_order', reemitPayload);
-  emitToBranch(tenantId, orderBranchId, 'new_web_order', reemitPayload);
+  // Untuk PAID: JANGAN emit `new_web_order` lagi di upload payment (sudah di emit di create step dengan checker_only tag,
+  // dan Step 2 sudah ada event khusus `web_order_paid`).
+  // Hanya jika statusnya BUKAN PAID (jarang terjadi) baru normal emit new_web_order.
+  if (String(finalPaymentStatusForSocket).toUpperCase() !== 'PAID') {
+    emitToTenant(tenantId, 'new_web_order', reemitPayload);
+    emitToBranch(tenantId, orderBranchId, 'new_web_order', reemitPayload);
+  }
 
   return res.status(200).json({
     success: true,
