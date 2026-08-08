@@ -1,25 +1,39 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PaymentStatusEnum } from '@prisma/client';
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
-import type { CreateExpenseInput, UpdateExpenseInput } from '../validations/expenseValidation';
+import type {
+  CreateExpenseInput,
+  UpdateExpenseInput,
+  SetPaymentStatusInput,
+} from '../validations/expenseValidation';
+
+type AttachmentInput = {
+  url: string;
+  caption?: string;
+};
 
 type ExpenseFilters = {
-  tenantId: string;
+  tenantId: string | null;
   startDate?: Date;
   endDate?: Date;
   category?: string;
   status?: string;
+  payment_status?: string;
   page?: number;
   limit?: number;
 };
 
+const expenseInclude = {
+  attachments: {
+    orderBy: { sort_order: 'asc' as const },
+  },
+};
+
 export class ExpenseService {
-  /**
-   * Create a new expense record
-   * Accepts: title, category, expense_date, amount, notes, status
-   */
-  static async createExpense(tenantId: string, payload: CreateExpenseInput) {
-    // Validate that required fields are provided from frontend
+  static async createExpense(
+    tenantId: string | null,
+    payload: CreateExpenseInput & { attachments?: AttachmentInput[] }
+  ) {
     if (!payload.title || !payload.title.trim()) {
       throw new AppError('Title pengeluaran wajib diisi', 400);
     }
@@ -32,8 +46,8 @@ export class ExpenseService {
       throw new AppError('Tanggal pengeluaran wajib diisi', 400);
     }
 
-    if (!payload.amount || payload.amount <= 0) {
-      throw new AppError('Amount pengeluaran harus lebih dari 0', 400);
+    if (payload.amount === undefined || payload.amount === null || payload.amount < 0) {
+      throw new AppError('Amount pengeluaran tidak valid', 400);
     }
 
     const expenseDate = new Date(payload.expense_date);
@@ -46,33 +60,46 @@ export class ExpenseService {
         ? BigInt(payload.branchId.toString())
         : null;
 
+    const attachmentsData = payload.attachments ?? [];
+
     const expense = await prisma.expenses.create({
       data: {
         tenant_id: tenantId,
         branchId,
-        // Extract from request body - CRITICAL: Don't use hardcoded defaults
         title: payload.title.trim(),
         category: payload.category.trim(),
         expense_date: expenseDate,
         amount: new Prisma.Decimal(payload.amount),
+        pic_name: payload.pic_name?.trim() || null,
+        payment_status: (payload.payment_status as PaymentStatusEnum) ?? PaymentStatusEnum.NotPaid,
         notes: payload.notes?.trim() || null,
         attachment_url: payload.attachment_url?.trim() || null,
         status: payload.status ?? 'ACTIVE',
         created_at: new Date(),
         updated_at: new Date(),
+        attachments:
+          attachmentsData.length > 0
+            ? {
+                create: attachmentsData.map((att, idx) => ({
+                  tenant_id: tenantId,
+                  url: att.url,
+                  caption: att.caption?.trim() || null,
+                  sort_order: idx,
+                  created_at: new Date(),
+                })),
+              }
+            : undefined,
       },
+      include: expenseInclude,
     });
 
     console.log(
-      `[ExpenseService.createExpense] Expense created: ID=${expense.id}, Title="${expense.title}", Category="${expense.category}", Amount=${expense.amount}, Date=${expense.expense_date.toISOString()}, TenantId=${tenantId}`
+      `[ExpenseService.createExpense] Expense created: ID=${expense.id}, Title="${expense.title}", Category="${expense.category}", Amount=${expense.amount}, Date=${expense.expense_date.toISOString()}, PaymentStatus=${expense.payment_status}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return expense;
   }
 
-  /**
-   * List expenses with filters and pagination
-   */
   static async listExpenses(filters: ExpenseFilters) {
     const {
       tenantId,
@@ -80,6 +107,7 @@ export class ExpenseService {
       endDate,
       category,
       status,
+      payment_status,
       page = 1,
       limit = 50,
     } = filters;
@@ -89,7 +117,7 @@ export class ExpenseService {
     const skip = (safePage - 1) * safeLimit;
 
     const where: Prisma.expensesWhereInput = {
-      tenant_id: tenantId,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       ...(startDate || endDate
         ? {
             expense_date: {
@@ -100,6 +128,7 @@ export class ExpenseService {
         : {}),
       ...(category ? { category } : {}),
       ...(status ? { status } : {}),
+      ...(payment_status ? { payment_status: payment_status as PaymentStatusEnum } : {}),
     };
 
     const [expenses, total] = await Promise.all([
@@ -108,6 +137,7 @@ export class ExpenseService {
         orderBy: { expense_date: 'desc' },
         skip,
         take: safeLimit,
+        include: expenseInclude,
       }),
       prisma.expenses.count({ where }),
     ]);
@@ -123,15 +153,13 @@ export class ExpenseService {
     };
   }
 
-  /**
-   * Get a single expense by ID
-   */
-  static async getExpenseById(tenantId: string, id: bigint) {
+  static async getExpenseById(tenantId: string | null, id: bigint) {
     const expense = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
+      include: expenseInclude,
     });
 
     if (!expense) {
@@ -141,20 +169,17 @@ export class ExpenseService {
     return expense;
   }
 
-  /**
-   * Update an expense record
-   */
   static async updateExpense(
-    tenantId: string,
+    tenantId: string | null,
     id: bigint,
-    payload: UpdateExpenseInput,
+    payload: UpdateExpenseInput & { attachments?: AttachmentInput[] }
   ) {
-    // Verify expense exists and belongs to tenant
     const existing = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
+      include: expenseInclude,
     });
 
     if (!existing) {
@@ -165,7 +190,6 @@ export class ExpenseService {
       updated_at: new Date(),
     };
 
-    // Only update fields that are provided
     if (payload.title !== undefined) {
       updateData.title = payload.title.trim();
     }
@@ -181,6 +205,12 @@ export class ExpenseService {
     if (payload.branchId !== undefined) {
       updateData.branchId = BigInt(payload.branchId.toString());
     }
+    if (payload.pic_name !== undefined) {
+      updateData.pic_name = payload.pic_name?.trim() || null;
+    }
+    if (payload.payment_status !== undefined) {
+      updateData.payment_status = payload.payment_status as PaymentStatusEnum;
+    }
     if (payload.notes !== undefined) {
       updateData.notes = payload.notes?.trim() || null;
     }
@@ -191,27 +221,46 @@ export class ExpenseService {
       updateData.status = payload.status;
     }
 
+    const attachmentsData = payload.attachments;
+
+    if (attachmentsData !== undefined) {
+      await prisma.expense_attachments.deleteMany({
+        where: { expense_id: id },
+      });
+
+      if (attachmentsData.length > 0) {
+        updateData.attachments = {
+          create: attachmentsData.map((att, idx) => ({
+            tenant_id: tenantId,
+            url: att.url,
+            caption: att.caption?.trim() || null,
+            sort_order: idx,
+            created_at: new Date(),
+          })),
+        };
+      }
+    }
+
     const updated = await prisma.expenses.update({
       where: { id },
       data: updateData,
+      include: expenseInclude,
     });
 
     console.log(
-      `[ExpenseService.updateExpense] Expense updated: ID=${id}, TenantId=${tenantId}`
+      `[ExpenseService.updateExpense] Expense updated: ID=${id}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return updated;
   }
 
-  /**
-   * Delete (void) an expense record
-   */
-  static async voidExpense(tenantId: string, id: bigint, voidReason?: string) {
+  static async voidExpense(tenantId: string | null, id: bigint, voidReason?: string) {
     const existing = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
+      include: expenseInclude,
     });
 
     if (!existing) {
@@ -230,12 +279,46 @@ export class ExpenseService {
         voided_at: new Date(),
         updated_at: new Date(),
       },
+      include: expenseInclude,
     });
 
     console.log(
-      `[ExpenseService.voidExpense] Expense voided: ID=${id}, TenantId=${tenantId}`
+      `[ExpenseService.voidExpense] Expense voided: ID=${id}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return voided;
+  }
+
+  static async setPaymentStatus(
+    tenantId: string | null,
+    id: bigint,
+    payload: SetPaymentStatusInput
+  ) {
+    const existing = await prisma.expenses.findFirst({
+      where: {
+        id,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
+      },
+      include: expenseInclude,
+    });
+
+    if (!existing) {
+      throw new AppError('Pengeluaran tidak ditemukan', 404);
+    }
+
+    const updated = await prisma.expenses.update({
+      where: { id },
+      data: {
+        payment_status: payload.payment_status as PaymentStatusEnum,
+        updated_at: new Date(),
+      },
+      include: expenseInclude,
+    });
+
+    console.log(
+      `[ExpenseService.setPaymentStatus] Expense payment status updated: ID=${id}, PaymentStatus=${updated.payment_status}, TenantId=${tenantId ?? '<GLOBAL>'}`
+    );
+
+    return updated;
   }
 }

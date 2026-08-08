@@ -11,8 +11,8 @@ function normalizeRole(rawRole: unknown): string {
  * Resolves the branch filter for POS operational data queries.
  *
  * Rules:
- * - HQ users (isHQ: true) WITHOUT a query param `branchId` → return null (no branch filter, sees all branches)
- * - HQ users WITH a valid query param `branchId`            → return that specific branchId as BigInt
+ * - SUPER_ADMIN / HQ users (isHQ: true) WITHOUT a query param `branchId` → return null (no branch filter, sees all branches)
+ * - SUPER_ADMIN / HQ users WITH a valid query param `branchId`            → return that specific branchId as BigInt
  * - Non-HQ users (Kasir, CRM_STAFF, etc.)                  → MUST use branchId from JWT; throw 403 if missing
  *
  * @returns bigint  – filter by this specific branch
@@ -26,14 +26,15 @@ export function resolveBranchFilter(req: Request): bigint | null {
   }
 
   const role = normalizeRole(user.role);
-  const isTenantAdminHq = role === 'TENANT_ADMIN' && user.isHQ === true;
+  const isSuperAdmin = role === 'SUPER_ADMIN';
+  const isTenantAdminHq = (role === 'TENANT_ADMIN' && user.isHQ === true) || isSuperAdmin;
 
   if (isTenantAdminHq) {
     const queryBranchId = req.query.branchId;
     if (queryBranchId && typeof queryBranchId === 'string' && /^\d+$/.test(queryBranchId)) {
       return BigInt(queryBranchId);
     }
-    // TENANT_ADMIN + HQ boleh lintas cabang.
+    // SUPER_ADMIN / TENANT_ADMIN + HQ boleh lintas cabang.
     return null;
   }
 

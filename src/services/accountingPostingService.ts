@@ -254,7 +254,12 @@ export class AccountingPostingService {
     }
   }
 
-  static async postExpenseToJournal(expenseTransactionId: string, tenantId: string) {
+  static async postExpenseToJournal(expenseTransactionId: string, tenantId: string | null) {
+    // Global (tenantless) expenses do not belong to any tenant's chart of accounts,
+    // so skip journal posting silently.
+    if (!tenantId) {
+      return null;
+    }
     const expenseId = this.parseBigIntId(expenseTransactionId, 'expenseTransactionId');
 
     return prisma.$transaction(async (tx) => {

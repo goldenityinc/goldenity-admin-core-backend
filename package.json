@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon src/index.ts",
     "build": "npx prisma generate && tsc",
+    "build:monolith": "npm install --include=dev && (cd ../goldenity-super-admin && npm install --include=dev && npm run build && cp -r dist/* ../goldenity-admin-core-backend/public/) && npx prisma generate && tsc",
+    "build:standalone": "npx prisma generate && tsc",
     "start": "node scripts/startWithMigrate.js",
     "db:ensure-first-admin-schema": "node scripts/ensure_first_admin_schema.js",
     "db:ensure-pos-user-login-schema": "node scripts/ensure_pos_user_login_schema.js",
