@@ -903,23 +903,25 @@ enum PaymentStatusEnum {
 }
 
 model client_payment_records {
-  id               BigInt              @id @default(autoincrement())
-  tenant_id        String?
-  client_id        BigInt              @map("client_id")
-  product_id       String              @map("product_id")
-  period_month     Int                 @map("period_month")
-  period_year      Int                 @map("period_year")
-  status           PaymentStatusEnum   @default(NotPaid)
-  amount           Decimal             @default(0) @db.Decimal(14, 2)
-  receipt_images   String?             @db.Text
-  notes            String?
-  created_at       DateTime?           @default(now())
-  updated_at       DateTime?           @default(now())
+  id                 BigInt              @id @default(autoincrement())
+  tenant_id          String?
+  client_id          BigInt              @map("client_id")
+  original_client_id String?             @map("original_client_id") @db.VarChar(128)
+  product_id         String              @map("product_id")
+  period_month       Int                 @map("period_month")
+  period_year        Int                 @map("period_year")
+  status             PaymentStatusEnum   @default(NotPaid)
+  amount             Decimal             @default(0) @db.Decimal(14, 2)
+  receipt_images     String?             @db.Text
+  notes              String?
+  created_at         DateTime?           @default(now())
+  updated_at         DateTime?           @default(now())
 
   @@unique([tenant_id, client_id, product_id, period_month, period_year], map: "uq_client_payments_per_cell")
   @@index([tenant_id])
   @@index([tenant_id, period_year, period_month])
   @@index([tenant_id, client_id])
+  @@index([tenant_id, original_client_id])
 }
 
 enum AppUserModuleScope {

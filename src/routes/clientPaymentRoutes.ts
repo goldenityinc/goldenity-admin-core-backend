@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   listMatrix,
+  listReferences,
   getCell,
   upsertCell,
 } from '../controllers/clientPaymentController';
@@ -13,6 +14,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 router.use(authMiddleware);
 
 router.get('/matrix', listMatrix);
+router.get('/references', listReferences);
 router.get('/:id', getCell);
 router.put('/cell', upload.array('receipt_images', 10), upsertCell);
 

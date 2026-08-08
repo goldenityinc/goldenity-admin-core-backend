@@ -90,54 +90,6 @@ export class ClientPaymentService {
       throw new AppError('amount tidak boleh negatif', 400);
     }
 
-    const existingClient = await prisma.customers.findFirst({
-      where: { tenant_id: tenantId, id: clientIdNum },
-    });
-
-    if (!existingClient) {
-      await prisma.customers.create({
-        data: {
-          tenant_id: tenantId,
-          id: clientIdNum,
-          name: /^\d+$/.test(originalClientId)
-            ? `Customer ${originalClientId}`
-            : originalClientId,
-          phone: null,
-          total_spent: 0,
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-      }).catch(() => null);
-    }
-
-    try {
-      const existingProduct = await prisma.products.findUnique({
-        where: { id: productId },
-      });
-      if (!existingProduct) {
-        await prisma.products.create({
-          data: {
-            id: productId,
-            tenant_id: tenantId,
-            name: `Produk ${productId}`,
-            product_type: 'Layanan',
-            unit: 'paket',
-            price: Number(payload.amount || 0),
-            purchase_price: 0,
-            stock: 0,
-            is_stock_tracked: false,
-            is_available: true,
-            is_service: true,
-            is_active: true,
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
-        });
-      }
-    } catch {
-      // Tidak fatal, jika prisma gagal (ada relasi/kolom required lain), lanjutkan saja insert matrix
-    }
-
     const existingRecord = await prisma.client_payment_records.findFirst({
       where: {
         tenant_id: tenantId,
@@ -158,6 +110,7 @@ export class ClientPaymentService {
           amount: new Prisma.Decimal(payload.amount),
           receipt_images: serializeReceiptImages(payload.receiptImages || []),
           notes: payload.notes?.trim() || null,
+          original_client_id: originalClientId || null,
           updated_at: new Date(),
         },
       });
@@ -166,6 +119,7 @@ export class ClientPaymentService {
         data: {
           tenant_id: tenantId,
           client_id: clientIdBig,
+          original_client_id: originalClientId || null,
           product_id: productId,
           period_month: periodMonth,
           period_year: periodYear,
@@ -190,27 +144,29 @@ export class ClientPaymentService {
     tenantId: string,
     opts?: { isSuperAdmin?: boolean }
   ) {
+    void tenantId;
     void opts;
 
-    const { ensureDefaultSeedProductsForTenant, ensureDefaultSeedClientsForTenant } = require('../services/productService');
-    await Promise.all([
-      ensureDefaultSeedProductsForTenant(tenantId),
-      ensureDefaultSeedClientsForTenant(tenantId),
-    ]);
-
     const [clients, products] = await Promise.all([
-      prisma.customers.findMany({
-        where: { tenant_id: tenantId },
+      prisma.tenant.findMany({
+        where: { isActive: true },
         orderBy: { name: 'asc' },
-        select: { id: true, name: true, phone: true },
+        select: { id: true, name: true, email: true, phone: true },
       }),
-      prisma.products.findMany({
-        where: { tenant_id: tenantId, is_active: true },
+      prisma.solution.findMany({
+        where: { isActive: true },
         orderBy: { name: 'asc' },
-        select: { id: true, name: true, price: true },
+        select: { id: true, name: true, code: true },
       }),
     ]);
 
-    return { clients, products };
+    const productsWithPrice = products.map((p) => ({
+      id: String(p.id),
+      name: p.name,
+      code: p.code,
+      price: 0,
+    }));
+
+    return { clients, products: productsWithPrice };
   }
 }

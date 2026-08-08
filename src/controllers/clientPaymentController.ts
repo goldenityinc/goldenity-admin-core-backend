@@ -106,6 +106,16 @@ async function resolveReceiptImages(req: Request): Promise<string[]> {
   return [...bodyImages, ...uploadedUrls];
 }
 
+export const listReferences = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const isSuperAdmin = req.user?.role === 'SUPER_ADMIN';
+  const refs = await ClientPaymentService.listClientsAndProducts(tenantId, { isSuperAdmin });
+  return res.status(200).json({
+    success: true,
+    data: serializeForJson(refs),
+  });
+});
+
 export const listMatrix = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
 
@@ -122,7 +132,7 @@ export const listMatrix = asyncHandler(async (req: Request, res: Response) => {
     ? parsed.data.productId.toString()
     : undefined;
 
-  const isSuperAdmin = true;
+  const isSuperAdmin = req.user?.role === 'SUPER_ADMIN';
 
   const [matrix, refs] = await Promise.all([
     ClientPaymentService.getMatrix(tenantId, parsed.data.year, productId),
