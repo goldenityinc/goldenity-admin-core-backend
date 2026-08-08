@@ -298,8 +298,79 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next(error);
 });
 
+function normalizePrismaError(err: any): { message: string; statusCode: number; isOperational: boolean } | null {
+  if (!err) return null;
+  const code: string | undefined = err.code;
+  if (typeof code !== 'string') return null;
+
+  if (code === 'P2002') {
+    const target = Array.isArray(err.meta?.target)
+      ? (err.meta.target as string[]).join(', ')
+      : 'data';
+    return {
+      message: `Data duplikat terdeteksi pada kolom: ${target}. Silakan gunakan nilai lain.`,
+      statusCode: 409,
+      isOperational: true,
+    };
+  }
+  if (code === 'P2003') {
+    return {
+      message: 'Data referensial tidak valid. Pastikan data terkait sudah tersedia.',
+      statusCode: 400,
+      isOperational: true,
+    };
+  }
+  if (code === 'P2010' || code === 'P2028') {
+    const rawMsg = String(err.message || '');
+    const matchCheck = rawMsg.match(/violates check constraint "([^"]+)"/i);
+    if (matchCheck) {
+      return {
+        message: `Validasi database gagal (${matchCheck[1]}). Periksa kembali isian Anda.`,
+        statusCode: 400,
+        isOperational: true,
+      };
+    }
+    if (rawMsg.includes('check constraint')) {
+      return {
+        message: 'Validasi database gagal. Periksa kembali isian Anda.',
+        statusCode: 400,
+        isOperational: true,
+      };
+    }
+  }
+  if (code === 'P2025' || code === 'P2016') {
+    return {
+      message: 'Data yang diminta tidak ditemukan.',
+      statusCode: 404,
+      isOperational: true,
+    };
+  }
+  if (code === 'P2000') {
+    return {
+      message: 'Salah satu nilai yang dimasukkan terlalu panjang untuk kolomnya.',
+      statusCode: 400,
+      isOperational: true,
+    };
+  }
+  if (code.startsWith('P2')) {
+    return {
+      message: 'Terjadi kesalahan saat memproses data. Silakan coba lagi.',
+      statusCode: 400,
+      isOperational: true,
+    };
+  }
+  return null;
+}
+
 // Global error handler
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  const prismaNormalized = normalizePrismaError(err);
+  if (prismaNormalized) {
+    err.message = prismaNormalized.message;
+    err.statusCode = prismaNormalized.statusCode;
+    err.isOperational = prismaNormalized.isOperational;
+  }
+
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
@@ -345,6 +416,7 @@ app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
       error: err.message ?? 'Internal error',
       stack: err.stack ?? null,
       statusCode,
+      prismaCode: err.code,
     });
     return;
   }

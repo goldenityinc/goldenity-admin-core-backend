@@ -13,7 +13,7 @@ type AttachmentInput = {
 };
 
 type ExpenseFilters = {
-  tenantId: string;
+  tenantId: string | null;
   startDate?: Date;
   endDate?: Date;
   category?: string;
@@ -31,7 +31,7 @@ const expenseInclude = {
 
 export class ExpenseService {
   static async createExpense(
-    tenantId: string,
+    tenantId: string | null,
     payload: CreateExpenseInput & { attachments?: AttachmentInput[] }
   ) {
     if (!payload.title || !payload.title.trim()) {
@@ -94,7 +94,7 @@ export class ExpenseService {
     });
 
     console.log(
-      `[ExpenseService.createExpense] Expense created: ID=${expense.id}, Title="${expense.title}", Category="${expense.category}", Amount=${expense.amount}, Date=${expense.expense_date.toISOString()}, PaymentStatus=${expense.payment_status}, TenantId=${tenantId}`
+      `[ExpenseService.createExpense] Expense created: ID=${expense.id}, Title="${expense.title}", Category="${expense.category}", Amount=${expense.amount}, Date=${expense.expense_date.toISOString()}, PaymentStatus=${expense.payment_status}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return expense;
@@ -117,7 +117,7 @@ export class ExpenseService {
     const skip = (safePage - 1) * safeLimit;
 
     const where: Prisma.expensesWhereInput = {
-      tenant_id: tenantId,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       ...(startDate || endDate
         ? {
             expense_date: {
@@ -153,11 +153,11 @@ export class ExpenseService {
     };
   }
 
-  static async getExpenseById(tenantId: string, id: bigint) {
+  static async getExpenseById(tenantId: string | null, id: bigint) {
     const expense = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
       include: expenseInclude,
     });
@@ -170,14 +170,14 @@ export class ExpenseService {
   }
 
   static async updateExpense(
-    tenantId: string,
+    tenantId: string | null,
     id: bigint,
     payload: UpdateExpenseInput & { attachments?: AttachmentInput[] }
   ) {
     const existing = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
       include: expenseInclude,
     });
@@ -248,17 +248,17 @@ export class ExpenseService {
     });
 
     console.log(
-      `[ExpenseService.updateExpense] Expense updated: ID=${id}, TenantId=${tenantId}`
+      `[ExpenseService.updateExpense] Expense updated: ID=${id}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return updated;
   }
 
-  static async voidExpense(tenantId: string, id: bigint, voidReason?: string) {
+  static async voidExpense(tenantId: string | null, id: bigint, voidReason?: string) {
     const existing = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
       include: expenseInclude,
     });
@@ -283,21 +283,21 @@ export class ExpenseService {
     });
 
     console.log(
-      `[ExpenseService.voidExpense] Expense voided: ID=${id}, TenantId=${tenantId}`
+      `[ExpenseService.voidExpense] Expense voided: ID=${id}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return voided;
   }
 
   static async setPaymentStatus(
-    tenantId: string,
+    tenantId: string | null,
     id: bigint,
     payload: SetPaymentStatusInput
   ) {
     const existing = await prisma.expenses.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       },
       include: expenseInclude,
     });
@@ -316,7 +316,7 @@ export class ExpenseService {
     });
 
     console.log(
-      `[ExpenseService.setPaymentStatus] Expense payment status updated: ID=${id}, PaymentStatus=${updated.payment_status}, TenantId=${tenantId}`
+      `[ExpenseService.setPaymentStatus] Expense payment status updated: ID=${id}, PaymentStatus=${updated.payment_status}, TenantId=${tenantId ?? '<GLOBAL>'}`
     );
 
     return updated;

@@ -126,11 +126,18 @@ async function resolveExpenseAttachments(req: Request): Promise<ParsedAttachment
   return [...parsedBodyAttachments, ...uploadedAttachments];
 }
 
-function readTenantId(req: Request): string {
+/**
+ * Resolve tenant context for expense operations.
+ * - SUPER_ADMIN may provide tenantId override via query/body to target a specific tenant,
+ *   or omit it entirely to operate in "global" mode (tenant_id = NULL on create,
+ *   and no tenant filtering on list/get).
+ * - Regular tenant-scoped roles are always resolved from the JWT tenantId and are required.
+ */
+function readTenantId(req: Request): string | null {
   if (req.user?.role === 'SUPER_ADMIN') {
     const override = String(req.query.tenantId ?? req.body?.tenantId ?? '').trim();
     if (override) return override;
-    throw new AppError('Pilih tenant terlebih dahulu (SUPER_ADMIN mode)', 400);
+    return null;
   }
   const tenantId = req.user?.tenantId;
   if (!tenantId) {
@@ -173,12 +180,17 @@ export const createExpense = asyncHandler(async (req: Request, res: Response) =>
     });
 
     try {
-      await AccountingPostingService.postExpenseToJournal(String(expense.id), readTenantId(req));
-    } catch (journalError) {
-      console.error(
-        `[createExpense] AccountingPostingService.postExpenseToJournal failed for ID=${expense.id}:`,
-        journalError
-      );
+      setImmediate(() => {
+        AccountingPostingService.postExpenseToJournal(String(expense.id), readTenantId(req))
+          .catch((journalError) => {
+            console.error(
+              `[createExpense] (non-blocking) AccountingPostingService.postExpenseToJournal failed for ID=${expense.id}:`,
+              journalError
+            );
+          });
+      });
+    } catch {
+      /* ignore scheduling error */
     }
 
     console.log(
@@ -279,12 +291,17 @@ export const updateExpense = asyncHandler(async (req: Request, res: Response) =>
     });
 
     try {
-      await AccountingPostingService.postExpenseToJournal(rawId, tenantId);
-    } catch (journalError) {
-      console.error(
-        `[updateExpense] AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
-        journalError
-      );
+      setImmediate(() => {
+        AccountingPostingService.postExpenseToJournal(rawId, tenantId)
+          .catch((journalError) => {
+            console.error(
+              `[updateExpense] (non-blocking) AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
+              journalError
+            );
+          });
+      });
+    } catch {
+      /* ignore scheduling error */
     }
 
     return res.status(200).json({
@@ -312,12 +329,17 @@ export const voidExpense = asyncHandler(async (req: Request, res: Response) => {
     const expense = await ExpenseService.voidExpense(tenantId, BigInt(rawId), voidReason);
 
     try {
-      await AccountingPostingService.postExpenseToJournal(rawId, tenantId);
-    } catch (journalError) {
-      console.error(
-        `[voidExpense] AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
-        journalError
-      );
+      setImmediate(() => {
+        AccountingPostingService.postExpenseToJournal(rawId, tenantId)
+          .catch((journalError) => {
+            console.error(
+              `[voidExpense] (non-blocking) AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
+              journalError
+            );
+          });
+      });
+    } catch {
+      /* ignore scheduling error */
     }
 
     return res.status(200).json({
@@ -356,12 +378,17 @@ export const setPaymentStatus = asyncHandler(async (req: Request, res: Response)
     );
 
     try {
-      await AccountingPostingService.postExpenseToJournal(rawId, tenantId);
-    } catch (journalError) {
-      console.error(
-        `[setPaymentStatus] AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
-        journalError
-      );
+      setImmediate(() => {
+        AccountingPostingService.postExpenseToJournal(rawId, tenantId)
+          .catch((journalError) => {
+            console.error(
+              `[setPaymentStatus] (non-blocking) AccountingPostingService.postExpenseToJournal failed for ID=${rawId}:`,
+              journalError
+            );
+          });
+      });
+    } catch {
+      /* ignore scheduling error */
     }
 
     return res.status(200).json({

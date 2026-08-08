@@ -190,46 +190,7 @@ export class ClientPaymentService {
     tenantId: string,
     opts?: { isSuperAdmin?: boolean }
   ) {
-    const isSuperAdmin = opts?.isSuperAdmin === true;
-
-    const SOLUTION_PRICE_MAP: Record<string, number> = {
-      POS: 500000,
-      ERP: 1500000,
-      SCHOOL_ERP: 2500000,
-      CLINIC: 750000,
-    };
-
-    if (isSuperAdmin) {
-      const [tenants, solutions] = await Promise.all([
-        prisma.tenant.findMany({
-          where: { isActive: true },
-          orderBy: { name: 'asc' },
-          select: { id: true, name: true, slug: true, email: true, phone: true, createdAt: true },
-        }),
-        prisma.solution.findMany({
-          where: { isActive: true },
-          orderBy: { name: 'asc' },
-          select: { id: true, code: true, name: true },
-        }),
-      ]);
-
-      const mappedClients = tenants.map((t) => ({
-        id: t.slug ? String(t.slug) : String(t.id),
-        name: t.name,
-        phone: t.phone ?? null,
-        email: t.email ?? null,
-      }));
-
-      const mappedProducts = solutions.map((s) => ({
-        id: s.code ? String(s.code) : String(s.id),
-        name: s.name,
-        price: Number(
-          SOLUTION_PRICE_MAP[(s.code || '').toUpperCase()] ?? 1000000
-        ),
-      }));
-
-      return { clients: mappedClients, products: mappedProducts };
-    }
+    void opts;
 
     const { ensureDefaultSeedProductsForTenant, ensureDefaultSeedClientsForTenant } = require('../services/productService');
     await Promise.all([
