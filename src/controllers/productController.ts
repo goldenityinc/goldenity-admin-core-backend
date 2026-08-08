@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
-import { ensureDefaultSeedProductsForTenant } from '../services/productService';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { createProductSchema, updateProductSchema } from '../validations/productValidation';
 import { serializeForJson } from '../utils/serializeForJson';
@@ -216,8 +215,6 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 100);
-
-  await ensureDefaultSeedProductsForTenant(tenantId);
 
   const result = await ProductService.listProducts({
     tenantId,

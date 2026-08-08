@@ -8,7 +8,6 @@ import { serializeForJson } from '../utils/serializeForJson';
 import { resolveBranchFilter } from '../utils/branchIsolation';
 import { emitToTenant } from '../services/socketServer';
 import prisma from '../config/database';
-import { ensureDefaultSeedClientsForTenant } from '../services/productService';
 
 function readTenantId(req: Request): string {
   if (req.user?.role === 'SUPER_ADMIN') {
@@ -222,8 +221,6 @@ export const listCustomers = asyncHandler(async (req: Request, res: Response) =>
   if (search && search.length > 0) {
     where.name = { contains: search, mode: 'insensitive' };
   }
-
-  await ensureDefaultSeedClientsForTenant(tenantId);
 
   const [records, total] = await Promise.all([
     prisma.customers.findMany({
