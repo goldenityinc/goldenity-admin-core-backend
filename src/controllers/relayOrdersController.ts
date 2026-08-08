@@ -284,20 +284,56 @@ function buildRelayOrderPayload(
   const paymentMethod = String(record.payment_method ?? record.payment_type ?? '').trim() || null;
   const customerName = String(record.customer_name ?? record.cashier_name ?? '').trim() || null;
   const orderStatus = String(record.order_status || 'PENDING').trim().toUpperCase();
+
+  // 🔴 CRITICAL FIX: Pax fallback extract dari items_json metadata
+  //    (banyak prisma sales_records TIDAK PUNYA column pax, ambil dari item[*].metadata.pax)
+  const anyRecord = record as Record<string, unknown>;
+  let paxFinal: number | null = toFinite(anyRecord.pax) ?? null;
+  if ((paxFinal == null || paxFinal <= 0) && Array.isArray(items) && items.length > 0) {
+    try {
+      for (const it of items) {
+        const m = it.metadata || it.meta;
+        if (m && typeof m === 'object') {
+          const p = toFinite((m as Record<string, unknown>).pax) ?? 0;
+          if (p > 0) { paxFinal = p; break; }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  const paxOut = (paxFinal != null && paxFinal > 0) ? paxFinal : null;
+
+  // 🔴 CRITICAL FIX: Special notes aliases
+  //    Prisma type select TIDAK expose special_note column, tapi di DB ada.
+  //    Pakai anyRecord + order_id fallback chain.
+  const specialNoteDirect = (
+    anyRecord.special_note ?? anyRecord.specialNote ?? anyRecord.notes ?? anyRecord.note ??
+    anyRecord.orderNote ?? anyRecord.order_notes ?? ''
+  ).toString().trim();
+  const notesOut = specialNoteDirect.length > 0 ? specialNoteDirect : null;
+
+  const customerOut = customerName && customerName.length > 0 ? customerName : null;
+  const tableOut = tableNumber && tableNumber.length > 0 ? tableNumber : (tableId ? String(tableId) : null);
+
   return {
     submissionId: String(record.reference_id || record.receipt_number || record.id),
     orderId: String(record.id),
+    order_id: String(record.id),
     salesRecordId: String(record.id),
     sales_record_id: String(record.id),
     transactionId: txCode,
+    transaction_id: txCode,
     txId: txCode,
     ackStatus: mapStatusToAck(orderStatus),
     orderStatus,
     order_status: orderStatus,
     paymentStatus: record.payment_status,
     payment_status: record.payment_status,
-    tableNumber,
-    table_number: tableNumber,
+    tableNumber: tableOut,
+    table_number: tableOut,
+    tableName: tableOut,
+    table_name: tableOut,
+    tableLabel: tableOut,
+    table_label: tableOut,
     tableId: tableId ? String(tableId) : null,
     table_id: tableId ? String(tableId) : null,
     totalAmount,
@@ -313,10 +349,30 @@ function buildRelayOrderPayload(
     payment_method: paymentMethod,
     items,
     itemCount: items.length,
-    pax: toFinite((record as unknown as { pax?: unknown }).pax),
-    orderNote: String((record as unknown as { special_note?: unknown }).special_note ?? '').trim() || null,
-    customerName,
-    customer_name: customerName,
+    pax: paxOut,
+    guestCount: paxOut,
+    guests: paxOut,
+    customer_count: paxOut,
+    orderNote: notesOut,
+    order_note: notesOut,
+    order_notes: notesOut,
+    notes: notesOut,
+    note: notesOut,
+    specialNote: notesOut,
+    special_note: notesOut,
+    specialInstruction: notesOut,
+    special_instruction: notesOut,
+    remarks: notesOut,
+    remark: notesOut,
+    catatan: notesOut,
+    catatan_pesanan: notesOut,
+    customerName: customerOut,
+    customer_name: customerOut,
+    customer: customerOut,
+    guest: customerOut,
+    guestName: customerOut,
+    pelanggan: customerOut,
+    pembeli: customerOut,
     orderType: record.order_type,
     order_type: record.order_type,
     resolvedDeviceUuid: null,
@@ -330,6 +386,8 @@ function buildRelayOrderPayload(
     branch_id: record.branch_id ? String(record.branch_id) : null,
     receiptNumber: record.receipt_number,
     receipt_number: record.receipt_number,
+    invoiceNumber: record.receipt_number,
+    invoice_number: record.receipt_number,
     referenceId: record.reference_id,
     reference_id: record.reference_id,
   };

@@ -849,32 +849,91 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       ? (result as Record<string, unknown>).effectiveBranchId as bigint | string | null
       : ((result as Record<string, unknown>).branch_id as bigint | string | null ?? null);
 
+  // 🔴 CRITICAL FIX: Extract pax fallback dari items_json metadata
+  //    (banyak prisma sales_records BELUM punya kolom pax, jadi ambil dari meta items).
+  const anyResult = result as Record<string, unknown>;
+  let paxValue: number | null = null;
+  try {
+    const paxDirect = Number(anyResult.pax ?? 0);
+    if (Number.isFinite(paxDirect) && paxDirect > 0) paxValue = paxDirect;
+    if (paxValue == null && Array.isArray(result.items_json)) {
+      for (const it of (result.items_json as Array<unknown>)) {
+        const m = (it as Record<string, unknown>).metadata || (it as Record<string, unknown>).meta;
+        if (m && typeof m === 'object') {
+          const p = Number((m as Record<string, unknown>).pax ?? 0);
+          if (Number.isFinite(p) && p > 0) { paxValue = p; break; }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  const paxFinal = (paxValue != null && paxValue > 0) ? paxValue : null;
+
   const qrOrderSocketPayload: Record<string, unknown> = {
     tenantId,
     branchId: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
     branch_id: (resultEffectiveBranchId !== null && resultEffectiveBranchId !== undefined) ? String(resultEffectiveBranchId) : null,
     orderId: result.id,
+    order_id: String(result.id),
     referenceId: result.reference_id,
+    reference_id: result.reference_id,
+    transactionId: result.receipt_number ?? result.reference_id ?? result.id,
+    transaction_id: result.receipt_number ?? result.reference_id ?? result.id,
+    salesRecordId: result.id,
+    sales_record_id: String(result.id),
     receiptNumber: result.receipt_number,
+    receipt_number: result.receipt_number,
+    invoiceNumber: result.receipt_number,
+    invoice_number: result.receipt_number,
     tableId,
     table_id: tableId.toString(),
     tableName: tableLabel || tableId.toString(),
+    table_name: tableLabel || tableId.toString(),
+    tableNumber: tableLabel || tableId.toString(),
     table_number: tableLabel || tableId.toString(),
+    tableLabel: tableLabel || tableId.toString(),
+    table_label: tableLabel || tableId.toString(),
     orderType: finalOrderType,
     order_type: finalOrderType,
     orderStatus: finalOrderStatus,
+    order_status: finalOrderStatus,
     paymentStatus: finalPaymentStatus,
+    payment_status: finalPaymentStatus,
     paymentMethod: finalPaymentMethod,
+    payment_method: finalPaymentMethod,
     paymentProofUrl: finalPaymentProofUrl,
     payment_proof_url: finalPaymentProofUrl,
     customerName: customerName || 'Guest',
+    customer_name: customerName || 'Guest',
+    customer: customerName || 'Guest',
+    guest: customerName || 'Guest',
+    guestName: customerName || 'Guest',
+    pelanggan: customerName || 'Guest',
+    pembeli: customerName || 'Guest',
     orderNote,
+    order_note: orderNote,
+    order_notes: orderNote,
+    notes: orderNote,
+    note: orderNote,
     special_note: orderNote || null,
     specialNote: orderNote || null,
+    specialInstruction: orderNote,
+    special_instruction: orderNote,
+    remarks: orderNote,
+    remark: orderNote,
+    catatan: orderNote,
+    catatan_pesanan: orderNote,
+    pax: paxFinal,
+    guestCount: paxFinal,
+    guests: paxFinal,
+    customer_count: paxFinal,
     orderAction: result.orderAction,
     order_action: result.orderAction,
     totalItems,
     grandTotal: Number(result.total_price ?? 0),
+    grand_total: Number(result.total_price ?? 0),
+    totalAmount: Number(result.total_price ?? 0),
+    total_amount: Number(result.total_price ?? 0),
+    subtotal: Number(result.total_price ?? 0),
     current_batch_sequence: result.current_batch_sequence,
     new_items: result.new_items,
     items: result.new_items,
@@ -1118,16 +1177,66 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   const finalProofUrlForSocket = finalProofUrl;
   const finalMethodForSocket = (order.payment_method ?? paymentMethodLabel).toString();
   const totalGrand = Number(order.total_price ?? order.total_amount ?? 0);
-  const tableLabel = '';
   const tableIdForSocket = order.table_id;
-  // 🔴 FIX 1: Extract branch_id dari order record untuk socket broadcast ke branch room
+  // 🔴 FIX 1 scope fix: Extract branch_id dari order record untuk socket broadcast ke branch room
   const orderBranchId = order.branch_id !== undefined && order.branch_id !== null ? String(order.branch_id) : null;
+
+  // 🔴 CRITICAL FIX (ROOT CAUSE tableLabel = ''):
+  //    Sebelumnya tableLabel HARDCODED '' → print ulang checker / status socket PAYLOAD
+  //    kirim table_number = '' → POS menangkap sebagai "-".
+  //    Sekarang lakukan 3-layer fallback:
+  //    1) Result include table_number (jika prisma query join table)
+  //    2) Query tables table_number via order.table_id
+  //    3) Fallback ke table_id toString()
+  const anyOrder = order as Record<string, unknown>;
+  let tableLabelForSocket = '';
+  try {
+    const direct = (anyOrder.table_number ?? '').toString().trim();
+    if (direct.length > 0) {
+      tableLabelForSocket = direct;
+    } else if (order.table_id != null) {
+      const tableRows = await prisma.$queryRawUnsafe<Array<{ table_number: string | null }>>(
+        `SELECT table_number FROM tables WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+        [Number(order.table_id), String(tenantId)],
+      );
+      tableLabelForSocket = (tableRows?.[0]?.table_number ?? '').toString().trim() || (order.table_id ? String(order.table_id) : '');
+    } else {
+      tableLabelForSocket = '';
+    }
+  } catch (tblErr) {
+    console.warn('[publicQrController.uploadQrOrderPayment] resolve table_number failed, fallback empty', (tblErr as Error).message || String(tblErr));
+    tableLabelForSocket = (anyOrder.table_number ?? '').toString().trim();
+  }
+  const tableLabelFinal = tableLabelForSocket.length > 0 ? tableLabelForSocket : (order.table_id ? String(order.table_id) : '');
 
   const itemsJsonArr = Array.isArray(order.items_json) ? (order.items_json as Array<Record<string, unknown>>) : [];
   const totalQty = itemsJsonArr.reduce<number>((sum, item) => {
     const q = Number((item as Record<string, unknown>).qty);
     return sum + (Number.isFinite(q) && q > 0 ? Number(q) : 0);
   }, 0);
+
+  // 🔴 CRITICAL FIX: Extract pax & customerNotes dari order record (fallback items_json)
+  let paxUploadValue: number | null = null;
+  try {
+    const paxDirect = Number(anyOrder.pax ?? 0);
+    if (Number.isFinite(paxDirect) && paxDirect > 0) paxUploadValue = paxDirect;
+    if (paxUploadValue == null && itemsJsonArr.length > 0) {
+      for (const it of itemsJsonArr) {
+        const m = it.metadata || it.meta;
+        if (m && typeof m === 'object') {
+          const p = Number((m as Record<string, unknown>).pax ?? 0);
+          if (Number.isFinite(p) && p > 0) { paxUploadValue = p; break; }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  const paxUploadFinal = (paxUploadValue != null && paxUploadValue > 0) ? paxUploadValue : null;
+  const orderNotesFinal = (
+    (anyOrder.special_note ?? anyOrder.notes ?? anyOrder.orderNote ?? anyOrder.notes ?? '').toString().trim()
+  ) || '';
+  const customerNameFinal = (
+    (anyOrder.customer_name ?? anyOrder.customerName ?? anyOrder.customer ?? 'Guest').toString().trim()
+  ) || 'Guest';
 
   // Post-commit: accounting + audit (same structure as the removed auto-paid branch in createQrOrder)
   if (!result.idempotentReplay) {
@@ -1184,19 +1293,72 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
     branchId: orderBranchId,
     branch_id: orderBranchId,
     orderId: order.id,
+    order_id: String(order.id),
     referenceId: order.reference_id,
+    reference_id: order.reference_id,
+    transactionId: order.receipt_number ?? order.reference_id ?? order.id,
+    transaction_id: order.receipt_number ?? order.reference_id ?? order.id,
+    salesRecordId: order.id,
+    sales_record_id: String(order.id),
     receiptNumber: order.receipt_number,
+    receipt_number: order.receipt_number,
+    invoiceNumber: order.receipt_number,
+    invoice_number: order.receipt_number,
+    tableId: tableIdForSocket,
+    table_id: tableIdForSocket ? String(tableIdForSocket) : '',
+    tableName: tableLabelFinal,
+    table_name: tableLabelFinal,
+    tableNumber: tableLabelFinal,
+    table_number: tableLabelFinal,
+    tableLabel: tableLabelFinal,
+    table_label: tableLabelFinal,
+    orderType: (order.order_type ?? 'DINE_IN').toString(),
+    order_type: (order.order_type ?? 'DINE_IN').toString(),
+    orderStatus: finalOrderStatusForSocket,
+    order_status: finalOrderStatusForSocket,
+    paymentStatus: finalPaymentStatusForSocket,
+    payment_status: finalPaymentStatusForSocket,
+    paymentMethod: finalMethodForSocket,
+    payment_method: finalMethodForSocket,
+    paymentProofUrl: finalProofUrlForSocket,
+    payment_proof_url: finalProofUrlForSocket,
+    customerName: customerNameFinal,
+    customer_name: customerNameFinal,
+    customer: customerNameFinal,
+    guest: customerNameFinal,
+    guestName: customerNameFinal,
+    pelanggan: customerNameFinal,
+    pembeli: customerNameFinal,
+    orderNote: orderNotesFinal,
+    order_note: orderNotesFinal,
+    order_notes: orderNotesFinal,
+    notes: orderNotesFinal,
+    note: orderNotesFinal,
+    specialNote: orderNotesFinal || null,
+    special_note: orderNotesFinal || null,
+    specialInstruction: orderNotesFinal,
+    special_instruction: orderNotesFinal,
+    remarks: orderNotesFinal,
+    remark: orderNotesFinal,
+    catatan: orderNotesFinal,
+    catatan_pesanan: orderNotesFinal,
+    pax: paxUploadFinal,
+    guestCount: paxUploadFinal,
+    guests: paxUploadFinal,
+    customer_count: paxUploadFinal,
     transition: result.transition,
     idempotentReplay: result.idempotentReplay,
     previousPaymentStatus: null,
-    orderStatus: finalOrderStatusForSocket,
-    paymentStatus: finalPaymentStatusForSocket,
-    paymentMethod: finalMethodForSocket,
-    paymentProofUrl: finalProofUrlForSocket,
-    payment_proof_url: finalProofUrlForSocket,
     storageKey,
     grandTotal: totalGrand,
+    grand_total: totalGrand,
+    totalAmount: totalGrand,
+    total_amount: totalGrand,
+    subtotal: totalGrand,
     totalQty,
+    items: itemsJsonArr,
+    items_json: itemsJsonArr,
+    totalItems: totalQty,
     updatedAt: order.updated_at ? new Date(order.updated_at).toISOString() : null,
     created_at: new Date().toISOString(),
   };
@@ -1209,27 +1371,67 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
     branchId: orderBranchId,
     branch_id: orderBranchId,
     orderId: order.id,
+    order_id: String(order.id),
     referenceId: order.reference_id,
+    reference_id: order.reference_id,
+    transactionId: order.receipt_number ?? order.reference_id ?? order.id,
+    transaction_id: order.receipt_number ?? order.reference_id ?? order.id,
+    salesRecordId: order.id,
+    sales_record_id: String(order.id),
     receiptNumber: order.receipt_number,
+    receipt_number: order.receipt_number,
+    invoiceNumber: order.receipt_number,
+    invoice_number: order.receipt_number,
     tableId: tableIdForSocket,
     table_id: tableIdForSocket ? tableIdForSocket.toString() : '',
-    tableName: tableLabel,
-    table_number: tableLabel,
+    tableName: tableLabelFinal,
+    table_name: tableLabelFinal,
+    tableNumber: tableLabelFinal,
+    table_number: tableLabelFinal,
+    tableLabel: tableLabelFinal,
+    table_label: tableLabelFinal,
     orderType: (order.order_type ?? 'DINE_IN').toString(),
     order_type: (order.order_type ?? 'DINE_IN').toString(),
     orderStatus: finalOrderStatusForSocket,
+    order_status: finalOrderStatusForSocket,
     paymentStatus: finalPaymentStatusForSocket,
+    payment_status: finalPaymentStatusForSocket,
     paymentMethod: finalMethodForSocket,
+    payment_method: finalMethodForSocket,
     paymentProofUrl: finalProofUrlForSocket,
     payment_proof_url: finalProofUrlForSocket,
-    customerName: (order.customer_name ?? 'Guest').toString(),
-    orderNote: (order.notes ?? '').toString(),
-    special_note: (order.notes ?? '').toString() || null,
-    specialNote: (order.notes ?? '').toString() || null,
+    customerName: customerNameFinal,
+    customer_name: customerNameFinal,
+    customer: customerNameFinal,
+    guest: customerNameFinal,
+    guestName: customerNameFinal,
+    pelanggan: customerNameFinal,
+    pembeli: customerNameFinal,
+    orderNote: orderNotesFinal,
+    order_note: orderNotesFinal,
+    order_notes: orderNotesFinal,
+    notes: orderNotesFinal,
+    note: orderNotesFinal,
+    special_note: orderNotesFinal || null,
+    specialNote: orderNotesFinal || null,
+    specialInstruction: orderNotesFinal,
+    special_instruction: orderNotesFinal,
+    remarks: orderNotesFinal,
+    remark: orderNotesFinal,
+    catatan: orderNotesFinal,
+    catatan_pesanan: orderNotesFinal,
+    pax: paxUploadFinal,
+    guestCount: paxUploadFinal,
+    guests: paxUploadFinal,
+    customer_count: paxUploadFinal,
     orderAction: result.transition,
     order_action: result.transition,
     totalItems: totalQty,
     grandTotal: totalGrand,
+    grand_total: totalGrand,
+    totalAmount: totalGrand,
+    total_amount: totalGrand,
+    subtotal: totalGrand,
     current_batch_sequence: 1,
     new_items: itemsJsonArr,
     items: itemsJsonArr,
