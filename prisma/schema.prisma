@@ -43,16 +43,21 @@ model Tenant {
 model tables {
   id           BigInt          @id @default(autoincrement())
   tenant_id    String
+  branch_id    BigInt?         @map("branch_id")
   table_number String
   capacity     Int
   status       TableStatus     @default(AVAILABLE)
   created_at   DateTime?       @default(now())
   updated_at   DateTime?       @default(now()) @updatedAt
   tenant       Tenant          @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  branch       Branch?         @relation(fields: [branch_id], references: [id], onDelete: SetNull)
   salesRecords sales_records[]
 
+  @@unique([tenant_id, branch_id, table_number])
   @@unique([tenant_id, table_number])
   @@index([tenant_id])
+  @@index([tenant_id, branch_id])
+  @@index([branch_id])
 }
 
 model Branch {
@@ -70,6 +75,7 @@ model Branch {
   updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at")
   tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   products            products[]
+  tables              tables[]
   users               User[]
   shifts              shifts[]
   salesRecords        sales_records[] @relation("SalesRecordBranch")
