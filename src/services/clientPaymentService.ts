@@ -43,10 +43,14 @@ function mapRecord(rec: any): MatrixRecord {
   };
 }
 
+export const GLOBAL_FINANCE_MATRIX_TENANT_ID = 'SUPER_ADMIN_GLOBAL_FINANCE_MATRIX';
+
 export class ClientPaymentService {
   static async getMatrix(tenantId: string, year: number, productId?: string) {
+    const isGlobal = tenantId === GLOBAL_FINANCE_MATRIX_TENANT_ID;
+
     const where: Prisma.client_payment_recordsWhereInput = {
-      tenant_id: tenantId,
+      tenant_id: isGlobal ? GLOBAL_FINANCE_MATRIX_TENANT_ID : tenantId,
       period_year: year,
       ...(productId ? { product_id: productId } : {}),
     };
@@ -64,10 +68,11 @@ export class ClientPaymentService {
   }
 
   static async getCellById(tenantId: string, id: bigint) {
+    const isGlobal = tenantId === GLOBAL_FINANCE_MATRIX_TENANT_ID;
     const record = await prisma.client_payment_records.findFirst({
       where: {
         id,
-        tenant_id: tenantId,
+        tenant_id: isGlobal ? GLOBAL_FINANCE_MATRIX_TENANT_ID : tenantId,
       },
     });
 
@@ -76,6 +81,9 @@ export class ClientPaymentService {
   }
 
   static async upsertCell(tenantId: string, payload: UpsertClientPaymentCellInput) {
+    const scopedTenantId = tenantId === GLOBAL_FINANCE_MATRIX_TENANT_ID
+      ? GLOBAL_FINANCE_MATRIX_TENANT_ID
+      : tenantId;
     const clientIdBig = clientIdToNumericBigInt(payload.clientId);
     const clientIdNum = clientIdToNumber(payload.clientId);
     const productId = payload.productId.toString();
@@ -92,7 +100,7 @@ export class ClientPaymentService {
 
     const existingRecord = await prisma.client_payment_records.findFirst({
       where: {
-        tenant_id: tenantId,
+        tenant_id: scopedTenantId,
         client_id: clientIdBig,
         product_id: productId,
         period_month: periodMonth,
@@ -117,7 +125,7 @@ export class ClientPaymentService {
     } else {
       result = await prisma.client_payment_records.create({
         data: {
-          tenant_id: tenantId,
+          tenant_id: scopedTenantId,
           client_id: clientIdBig,
           original_client_id: originalClientId || null,
           product_id: productId,
@@ -134,7 +142,7 @@ export class ClientPaymentService {
     }
 
     console.log(
-      `[ClientPaymentService.upsertCell] Cell upserted: ID=${result.id}, originalClientId=${originalClientId}, clientIdNumeric=${clientIdBig}, productId=${productId}, period=${periodMonth}/${periodYear}, status=${payload.status}, TenantId=${tenantId}`
+      `[ClientPaymentService.upsertCell] Cell upserted: ID=${result.id}, originalClientId=${originalClientId}, clientIdNumeric=${clientIdBig}, productId=${productId}, period=${periodMonth}/${periodYear}, status=${payload.status}, TenantId=${scopedTenantId}, isGlobal=${tenantId === GLOBAL_FINANCE_MATRIX_TENANT_ID}`
     );
 
     return { ...mapRecord(result), originalClientId } as any;
