@@ -134,14 +134,32 @@ export const listMatrix = asyncHandler(async (req: Request, res: Response) => {
 
   const isSuperAdmin = req.user?.role === 'SUPER_ADMIN';
 
-  const [matrix, refs] = await Promise.all([
+  const [matrixRecords, refs] = await Promise.all([
     ClientPaymentService.getMatrix(tenantId, parsed.data.year, productId),
     ClientPaymentService.listClientsAndProducts(tenantId, { isSuperAdmin }),
   ]);
 
+  const matrixCells: Record<string, any> = {};
+  for (const rec of matrixRecords) {
+    const clientId = String(rec.client_id ?? rec.original_client_id ?? '').trim();
+    const pId = String(rec.product_id ?? '').trim();
+    const m = Number(rec.period_month) || 0;
+    const y = Number(rec.period_year) || 0;
+    if (!clientId || !pId || m <= 0 || y <= 0) continue;
+    const key = `${clientId}:${pId}:${m}:${y}`;
+    matrixCells[key] = rec;
+  }
+
   return res.status(200).json({
     success: true,
-    data: serializeForJson(matrix),
+    data: serializeForJson({
+      records: matrixRecords,
+      matrix: matrixCells,
+      cells: matrixCells,
+      clients: refs.clients.map((c: any) => String(c.id ?? '')).filter(Boolean),
+      clientIds: refs.clients.map((c: any) => String(c.id ?? '')).filter(Boolean),
+      months: matrixRecords.map((r: any) => Number((r as any).period_month) || 0).filter((v: number) => v > 0),
+    }),
     references: serializeForJson(refs),
   });
 });
