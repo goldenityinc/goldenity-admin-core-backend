@@ -38,10 +38,12 @@ function serializeReceiptImages(images: string[]): string {
 }
 
 function mapRecord(rec: any): MatrixRecord {
-  const rawClientId = (rec?.original_client_id ?? '').toString().trim();
-  const exposedClientId = rawClientId.length > 0
-    ? rawClientId
-    : (rec?.client_id?.toString() ?? '');
+  const rawOriginal = String(rec?.original_client_id ?? '').trim();
+  const rawBigIntStr = String(rec?.client_id ?? '').trim();
+  const isUUIDFormat = (s: string) => s.length >= 8 && /[a-fA-F-]/.test(s);
+  const exposedClientId: bigint | string = (rawOriginal.length > 0)
+    ? rawOriginal
+    : (isUUIDFormat(rawBigIntStr) ? rawBigIntStr : rawBigIntStr);
   return {
     ...rec,
     client_id: exposedClientId,
