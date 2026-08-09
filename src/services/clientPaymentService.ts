@@ -7,7 +7,8 @@ import type { UpsertClientPaymentCellInput } from '../validations/clientPaymentV
 type MatrixRecord = {
   id: bigint;
   tenant_id: string | null;
-  client_id: bigint;
+  client_id: bigint | string;
+  original_client_id?: string | null;
   product_id: string;
   period_month: number;
   period_year: number;
@@ -37,8 +38,13 @@ function serializeReceiptImages(images: string[]): string {
 }
 
 function mapRecord(rec: any): MatrixRecord {
+  const rawClientId = (rec?.original_client_id ?? '').toString().trim();
+  const exposedClientId = rawClientId.length > 0
+    ? rawClientId
+    : (rec?.client_id?.toString() ?? '');
   return {
     ...rec,
+    client_id: exposedClientId,
     receipt_images: parseReceiptImages(rec.receipt_images),
   };
 }
