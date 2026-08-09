@@ -185,4 +185,48 @@ export class ClientPaymentService {
 
     return { clients, products: productsWithPrice };
   }
+
+  static async deleteCell(
+    tenantId: string,
+    payload: {
+      clientId: string;
+      productId: string;
+      periodMonth: number;
+      periodYear: number;
+    }
+  ) {
+    const scopedTenantId = tenantId === GLOBAL_FINANCE_MATRIX_TENANT_ID
+      ? GLOBAL_FINANCE_MATRIX_TENANT_ID
+      : tenantId;
+    const clientIdBig = clientIdToNumericBigInt(payload.clientId);
+    const productId = payload.productId.toString();
+    const periodMonth = payload.periodMonth;
+    const periodYear = payload.periodYear;
+
+    if (periodMonth < 1 || periodMonth > 12) {
+      throw new AppError('periodMonth harus di antara 1 sampai 12', 400);
+    }
+
+    const where: Prisma.client_payment_recordsWhereInput = {
+      tenant_id: scopedTenantId,
+      product_id: productId,
+      period_month: periodMonth,
+      period_year: periodYear,
+      OR: [
+        { client_id: clientIdBig },
+        { original_client_id: (payload.clientId ?? '').toString().trim() || null },
+      ],
+    };
+
+    const existing = await prisma.client_payment_records.findFirst({ where });
+    if (!existing) {
+      throw new AppError('Record pembayaran client tidak ditemukan', 404);
+    }
+
+    await prisma.client_payment_records.delete({ where: { id: existing.id } });
+
+    console.log(
+      `[ClientPaymentService.deleteCell] Cell deleted: ID=${existing.id}, tenantId=${scopedTenantId}, client=${payload.clientId}, product=${productId}, period=${periodMonth}/${periodYear}`
+    );
+  }
 }

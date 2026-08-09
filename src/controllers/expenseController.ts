@@ -401,3 +401,24 @@ export const setPaymentStatus = asyncHandler(async (req: Request, res: Response)
     throw error;
   }
 });
+
+export const deleteExpense = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+  const rawId = req.params.id;
+
+  if (!rawId || !/^\d+$/.test(rawId)) {
+    throw new AppError('ID pengeluaran tidak valid', 400);
+  }
+
+  try {
+    await ExpenseService.deleteExpense(tenantId, BigInt(rawId));
+
+    return res.status(200).json({
+      success: true,
+      message: 'Pengeluaran berhasil dihapus permanen',
+    });
+  } catch (error) {
+    console.error('[deleteExpense] Error deleting expense:', error);
+    throw error;
+  }
+});

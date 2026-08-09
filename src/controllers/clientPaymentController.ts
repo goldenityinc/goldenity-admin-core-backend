@@ -224,3 +224,49 @@ export const upsertCell = asyncHandler(async (req: Request, res: Response) => {
     throw error;
   }
 });
+
+export const deleteCell = asyncHandler(async (req: Request, res: Response) => {
+  const tenantId = readTenantId(req);
+
+  const q = req.query ?? {};
+  const b = (req.body ?? {}) as Record<string, unknown>;
+
+  function readStr(key: string): string {
+    const v = (q[key] !== undefined ? String(q[key]) : '') || (b[key] !== undefined ? String(b[key]) : '') || '';
+    return v.trim();
+  }
+  function readNum(key: string): number {
+    const raw = readStr(key);
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  const clientId = readStr('clientId');
+  const productId = readStr('productId');
+  const periodMonth = readNum('periodMonth');
+  const periodYear = readNum('periodYear');
+
+  if (!clientId || !productId || periodMonth < 1 || periodMonth > 12 || periodYear < 1900) {
+    throw new AppError(
+      'Payload delete tidak lengkap: clientId, productId, periodMonth (1-12), periodYear diperlukan',
+      400
+    );
+  }
+
+  try {
+    await ClientPaymentService.deleteCell(tenantId, {
+      clientId,
+      productId,
+      periodMonth,
+      periodYear,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Cell pembayaran client berhasil dihapus permanen',
+    });
+  } catch (error) {
+    console.error('[deleteCell] Error deleting client payment cell:', error);
+    throw error;
+  }
+});

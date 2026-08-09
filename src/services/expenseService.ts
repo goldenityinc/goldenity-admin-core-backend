@@ -321,4 +321,27 @@ export class ExpenseService {
 
     return updated;
   }
+
+  static async deleteExpense(tenantId: string | null, id: bigint): Promise<void> {
+    const existing = await prisma.expenses.findFirst({
+      where: {
+        id,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new AppError('Pengeluaran tidak ditemukan', 404);
+    }
+
+    await prisma.$transaction([
+      prisma.expense_attachments.deleteMany({ where: { expense_id: id } }),
+      prisma.expenses.delete({ where: { id } }),
+    ]);
+
+    console.log(
+      `[ExpenseService.deleteExpense] Expense deleted permanently: ID=${id}, TenantId=${tenantId ?? '<GLOBAL>'}`
+    );
+  }
 }

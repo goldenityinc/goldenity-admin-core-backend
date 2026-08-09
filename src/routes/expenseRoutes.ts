@@ -6,6 +6,7 @@ import {
   updateExpense,
   voidExpense,
   setPaymentStatus,
+  deleteExpense,
 } from '../controllers/expenseController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import multer from 'multer';
@@ -24,6 +25,7 @@ router.get('/', listExpenses);
 router.post('/', upload.array('attachments', 10), createExpense);
 router.get('/:id', getExpense);
 router.put('/:id', upload.array('attachments', 10), updateExpense);
+router.delete('/:id', deleteExpense);
 router.patch('/:id/void', voidExpense);
 router.patch('/:id/payment-status', setPaymentStatus);
 
