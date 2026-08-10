@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
@@ -215,6 +216,11 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 100);
+  const stockLevelRaw = typeof req.query.stockLevel === 'string' ? req.query.stockLevel.trim() : undefined;
+  const stockLevel: 'low' | 'out' | 'all' | 'tracked' | undefined =
+    stockLevelRaw === 'low' || stockLevelRaw === 'out' || stockLevelRaw === 'tracked' || stockLevelRaw === 'all'
+      ? stockLevelRaw
+      : undefined;
 
   const result = await ProductService.listProducts({
     tenantId,
@@ -224,6 +230,7 @@ export const listProducts = asyncHandler(async (req: Request, res: Response) => 
     search,
     page,
     limit,
+    ...(stockLevel !== undefined ? { stockLevel } : {}),
   });
 
   return res.status(200).json({
@@ -429,7 +436,11 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       ? { unit: parseOptionalUnit(unitRaw) ?? 'pcs' }
       : {}),
     ...((stockRaw === undefined && !resolvedIsStockTracked)
-      ? { stock: 0 }
+      // 🔴 FIX BUG Stok Menipis / Habis masih nyertakan Non Stok:
+      //    Stock 0 (integer) di produk NON_STOCK akan masuk filter stock<=0 (Stok Habis).
+      //    Solusi: SET NULL (bukan 0) untuk produk yang tidak tracked inventory.
+      //    Di SQL NULL < comparison / BETWEEN always false → TIDAK pernah ikut filter Stok Habis/Menipis.
+      ? { stock: null as unknown as Prisma.NullableEnum<number> }
       : {}),
   };
 

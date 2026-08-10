@@ -9,6 +9,7 @@ export type ProductListFilters = {
   search?: string;
   page?: number;
   limit?: number;
+  stockLevel?: 'low' | 'out' | 'all' | 'tracked';
 };
 
 export type ProductUpdateFields = {
@@ -71,6 +72,7 @@ export class ProductService {
       search,
       page = 1,
       limit = 100,
+      stockLevel = 'all',
     } = filters;
     const normalizedTenantId = this.assertTenantId(tenantId);
 
@@ -83,6 +85,26 @@ export class ProductService {
       ...(branchId !== null ? { branchId } : {}),
       ...(isActive !== undefined ? { is_active: isActive } : {}),
       ...(category ? { category } : {}),
+      ...(stockLevel === 'tracked' || stockLevel === 'low' || stockLevel === 'out'
+        ? { is_stock_tracked: true }
+        : {}),
+      ...(stockLevel === 'low'
+        ? {
+            AND: [
+              { stock: { not: null } },
+              { stock: { gte: 1 } },
+              { stock: { lte: 9 } },
+            ],
+          }
+        : {}),
+      ...(stockLevel === 'out'
+        ? {
+            AND: [
+              { stock: { not: null } },
+              { stock: { lte: 0 } },
+            ],
+          }
+        : {}),
       ...(search
           ? {
               OR: [
