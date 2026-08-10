@@ -1,5 +1,4 @@
 import type { Request, Response } from 'express';
-import { Prisma } from '@prisma/client';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
 import { ProductService } from '../services/productService';
