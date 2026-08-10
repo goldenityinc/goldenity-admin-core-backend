@@ -440,7 +440,9 @@ export const updateProductBranch = asyncHandler(async (req: Request, res: Respon
       //    Stock 0 (integer) di produk NON_STOCK akan masuk filter stock<=0 (Stok Habis).
       //    Solusi: SET NULL (bukan 0) untuk produk yang tidak tracked inventory.
       //    Di SQL NULL < comparison / BETWEEN always false → TIDAK pernah ikut filter Stok Habis/Menipis.
-      ? { stock: null as unknown as Prisma.NullableEnum<number> }
+      // 🔴 BYPASS TS2694 Railway Prisma.NullableEnum MISSING (v5.22.0 generated client tidak export NullableEnum).
+      //    Ganti dengan (number | null) cast via any (stock field di schema.prisma = BigInt? → jadi null OK).
+      ? { stock: null as unknown as number | null }
       : {}),
   };
 
