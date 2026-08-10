@@ -26,7 +26,7 @@ export type ProductUpdateFields = {
   category?: string | null;
   price?: number;
   purchase_price?: number | null;
-  stock?: number;
+  stock?: number | null;
 };
 
 export type ProductCreateInput = {
