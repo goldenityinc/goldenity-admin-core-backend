@@ -5,9 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon src/index.ts",
-    "build": "npx prisma generate && tsc",
-    "build:monolith": "npm install --include=dev && (cd ../goldenity-super-admin && npm install --include=dev && npm run build && cp -r dist/* ../goldenity-admin-core-backend/public/) && npx prisma generate && tsc",
-    "build:standalone": "npx prisma generate && tsc",
+    "build": "npx prisma generate && npx tsc",
+    "build:monolith": "npm install --include=dev && (cd ../goldenity-super-admin && npm install --include=dev && npm run build && cp -r dist/* ../goldenity-admin-core-backend/public/) && npx prisma generate && npx tsc",
+    "build:standalone": "npx prisma generate && npx tsc",
     "start": "node scripts/startWithMigrate.js",
     "db:ensure-first-admin-schema": "node scripts/ensure_first_admin_schema.js",
     "db:ensure-pos-user-login-schema": "node scripts/ensure_pos_user_login_schema.js",
@@ -53,6 +53,7 @@
     "multer": "^2.1.1",
     "pg": "^8.22.0",
     "socket.io": "^4.8.3",
+    "typescript": "^5.3.3",
     "zod": "^3.22.4"
   },
   "devDependencies": {
@@ -64,7 +65,6 @@
     "@types/pg": "^8.11.11",
     "nodemon": "^3.1.0",
     "prisma": "^5.20.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "ts-node": "^10.9.2"
   }
 }
