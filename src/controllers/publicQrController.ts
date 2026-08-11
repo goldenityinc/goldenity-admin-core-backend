@@ -1064,19 +1064,26 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   //    karena orderId = undefined.
   //    SEKARANG: Jika txIdParam ada → lookup sales_record by tenant + (receipt_number OR reference_id OR id = txId).
   let orderId = orderIdParam ? parseSalesRecordId(orderIdParam) : undefined;
-  if ((!orderId || Number.isNaN(orderId) || !Number.isFinite(orderId)) && txIdParam) {
+  if ((!orderId || typeof orderId !== 'bigint') && txIdParam) {
     try {
       const txStr = String(txIdParam).trim();
-      const lookup = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+      const lookup = await prisma.$queryRawUnsafe<Array<{ id: number | bigint }>>(
         `SELECT id FROM sales_records WHERE tenant_id = $1::bigint AND (receipt_number = $2 OR reference_id = $2 OR CAST(id AS VARCHAR) = $2) LIMIT 1`,
         [tenantId, txStr],
       );
       if (lookup && lookup[0] && lookup[0].id) {
-        orderId = Number(lookup[0].id);
+        orderId = typeof lookup[0].id === 'bigint' ? lookup[0].id : BigInt(lookup[0].id);
       }
     } catch (txLookupErr) {
       console.warn('[uploadQrOrderPayment] txId lookup failed (non-fatal):', (txLookupErr as Error).message || String(txLookupErr));
     }
+  }
+
+  if (!orderId || typeof orderId !== 'bigint') {
+    throw new AppError(
+      'Pesanan tidak ditemukan. Periksa kembali order ID atau transaction ID.',
+      404,
+    );
   }
 
   const file = getFirstUploadedFile(req, 'payment_proof') ??
