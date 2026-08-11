@@ -33,5 +33,28 @@ router.put(
   ]),
   uploadQrOrderPayment,
 );
+// 🔴 FIX CRITICAL: by-transaction PAYMENT ROUTE (not found upstream error)
+//    Bridge relay sudah route PUT /relay/qr-orders/by-transaction/:txId/payment → TAPI upstream admin core TIDAK ADA handler nya → 404 "Route not found".
+//    TAMBAHKAN 2 route handlers for by-transaction/:txId/payment → same uploadQrOrderPayment controller.
+router.put(
+  '/qr-orders/by-transaction/:txId/payment',
+  proofUpload.fields([
+    { name: 'payment_proof', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'proof', maxCount: 1 },
+    { name: 'paymentProof', maxCount: 1 },
+  ]),
+  uploadQrOrderPayment,
+);
+router.put(
+  '/qr-orders/by-transaction/:transactionId/payment',
+  proofUpload.fields([
+    { name: 'payment_proof', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'proof', maxCount: 1 },
+    { name: 'paymentProof', maxCount: 1 },
+  ]),
+  uploadQrOrderPayment,
+);
 
 export default router;

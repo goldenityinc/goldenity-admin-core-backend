@@ -1040,7 +1040,17 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Response) => {
-  const orderId = parseSalesRecordId(req.params.id ?? req.params.orderId);
+  const orderIdParam =
+    req.params?.id ??
+    req.params?.orderId ??
+    undefined;
+  const txIdParam =
+    req.params?.txId ??
+    req.params?.transactionId ??
+    req.body?.transactionId ??
+    req.body?.transaction_id ??
+    req.query?.transactionId ??
+    undefined;
   const tenantId = parseTenantId(
     req.body.tenantId ??
       req.body.tenant_id ??
@@ -1048,6 +1058,26 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
       req.query.tenant_id ??
       req.header('X-Tenant-Id'),
   );
+
+  // 🔴 FIX CRITICAL: by-transaction PAYMENT ROUTE support.
+  //    Sebelumnya HANYA lookup via orderId req.params.id/:orderId → route by-transaction selalu FAIL
+  //    karena orderId = undefined.
+  //    SEKARANG: Jika txIdParam ada → lookup sales_record by tenant + (receipt_number OR reference_id OR id = txId).
+  let orderId = orderIdParam ? parseSalesRecordId(orderIdParam) : undefined;
+  if ((!orderId || Number.isNaN(orderId) || !Number.isFinite(orderId)) && txIdParam) {
+    try {
+      const txStr = String(txIdParam).trim();
+      const lookup = await prisma.$queryRawUnsafe<Array<{ id: number }>>(
+        `SELECT id FROM sales_records WHERE tenant_id = $1::bigint AND (receipt_number = $2 OR reference_id = $2 OR CAST(id AS VARCHAR) = $2) LIMIT 1`,
+        [tenantId, txStr],
+      );
+      if (lookup && lookup[0] && lookup[0].id) {
+        orderId = Number(lookup[0].id);
+      }
+    } catch (txLookupErr) {
+      console.warn('[uploadQrOrderPayment] txId lookup failed (non-fatal):', (txLookupErr as Error).message || String(txLookupErr));
+    }
+  }
 
   const file = getFirstUploadedFile(req, 'payment_proof') ??
     getFirstUploadedFile(req, 'file') ??
