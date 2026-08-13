@@ -528,6 +528,10 @@ export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Re
 
   const activeStatuses: Array<string> = ['PENDING', 'PREPARING', 'READY_FOR_PICKUP', 'PENDING_PAYMENT', 'PARTIAL', 'NEW', 'OPEN', 'ACTIVE'];
   const excludedPaymentStatuses: Array<string> = ['PAID', 'REFUNDED', 'CANCELLED', 'VOID'];
+
+  const now = new Date();
+  const cutoffRegular = new Date(now.getTime() - 120 * 1000);
+  const cutoffQris = new Date(now.getTime() - 900 * 1000);
   const where: Prisma.sales_recordsWhereInput = {
     tenant_id: tenantId,
     ...(branchId !== null ? { branch_id: branchId } : {}),
@@ -547,6 +551,45 @@ export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Re
             mode: 'insensitive',
           },
         },
+      },
+      // 🔴 HOTFIX QRIS TIMEOUT 120s → 900s:
+      //    Conditional cutoff per payment_status / order_status:
+      //    - PENDING_PAYMENT (QRIS belum upload bukti): cutoff 15 menit (900 detik)
+      //    - status lain (CASHIER bayar di kasir PREPARING/PENDING biasa): cutoff 2 menit (120 detik)
+      {
+        OR: [
+          {
+            payment_status: { equals: 'PENDING_PAYMENT', mode: 'insensitive' },
+            created_at: { gte: cutoffQris },
+          },
+          {
+            order_status: { equals: 'PENDING_PAYMENT' },
+            created_at: { gte: cutoffQris },
+          },
+          {
+            payment_method: { contains: 'QRIS', mode: 'insensitive' },
+            OR: [
+              { payment_status: { equals: 'PENDING_PAYMENT', mode: 'insensitive' } },
+              { payment_status: null },
+              { payment_status: { equals: '' } },
+            ],
+            created_at: { gte: cutoffQris },
+          },
+          {
+            AND: [
+              { NOT: { payment_status: { equals: 'PENDING_PAYMENT', mode: 'insensitive' } } },
+              { NOT: { order_status: { equals: 'PENDING_PAYMENT' } } },
+              {
+                OR: [
+                  { NOT: { payment_method: { contains: 'QRIS', mode: 'insensitive' } } },
+                  { payment_method: null },
+                  { payment_method: { equals: '' } },
+                ],
+              },
+            ],
+            created_at: { gte: cutoffRegular },
+          },
+        ],
       },
     ],
   };

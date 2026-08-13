@@ -417,7 +417,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       WHERE id = ${tableId} AND tenant_id = ${tenantId}
         AND (branch_id = ${effectiveBranchId} OR branch_id IS NULL)
       LIMIT 1
-      FOR UPDATE
     `;
 
     if (!tableRows[0]) {
@@ -446,7 +445,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
           AND reference_id = ${referenceId}
         ORDER BY created_at DESC, id DESC
         LIMIT 1
-        FOR UPDATE
       `;
       const existingByIdem = idempotentRows[0];
       if (existingByIdem) {
@@ -530,7 +528,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
         AND created_at >= NOW() - INTERVAL '30 minutes'
       ORDER BY created_at DESC, id DESC
       LIMIT 1
-      FOR UPDATE
     `;
     const existingSale = existingSaleRows[0] ?? null;
 
@@ -541,7 +538,6 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
       WHERE tenant_id = ${tenantId}
         AND id IN (${Prisma.join(productIds)})
         AND (${effectiveBranchId}::bigint IS NULL OR branch_id = ${effectiveBranchId})
-      FOR NO KEY UPDATE
     `;
 
     const productMap = new Map(products.map((row) => [row.id, row]));
