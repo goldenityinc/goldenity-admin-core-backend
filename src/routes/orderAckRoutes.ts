@@ -23,6 +23,7 @@ function ensureTenantContext(req: Request, _res: Response, next: NextFunction) {
   return next();
 }
 
+router.post('/:id/ack', flexibleAuth, ensureTenantContext, acknowledgeOrder);
 router.post('/:id/acknowledge', flexibleAuth, ensureTenantContext, acknowledgeOrder);
 
 router.use(authMiddleware);
