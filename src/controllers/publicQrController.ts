@@ -1200,7 +1200,7 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
         updated_at
       FROM sales_records
       WHERE id = ${orderId} AND tenant_id = ${tenantId}
-      FOR UPDATE
+      LIMIT 1
     `;
     const orderRow = lockedRows[0];
     if (!orderRow) {

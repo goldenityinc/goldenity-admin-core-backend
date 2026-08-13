@@ -76,7 +76,6 @@ async function cancelOpenOrdersForTable(
         )
       )
       AND UPPER(COALESCE(order_status::text, '')) NOT IN ('COMPLETED', 'CANCELLED')
-    FOR UPDATE
   `;
 
   if (openOrderIds.length === 0) {
@@ -250,7 +249,6 @@ export class TableService {
           WHERE id = ${id} AND tenant_id = ${tenantId}
             ${branchFilter}
           LIMIT 1
-          FOR UPDATE
         `;
 
         if (!tableRows[0]) {
@@ -273,7 +271,7 @@ export class TableService {
 
       return rows[0];
     }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     });
 
     return updatedTable;
