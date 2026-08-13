@@ -566,7 +566,7 @@ export class TransactionService {
         }
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
       },
     );
 

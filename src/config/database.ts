@@ -25,7 +25,7 @@ const prisma = new PrismaClient({
   transactionOptions: {
     maxWait: parsePositiveInt(process.env.PRISMA_TX_MAX_WAIT_MS, 8000),
     timeout: parsePositiveInt(process.env.PRISMA_TX_TIMEOUT_MS, 20000),
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
   },
   errorFormat: process.env.NODE_ENV === 'production' ? 'minimal' : 'pretty',
 });

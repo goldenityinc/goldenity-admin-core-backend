@@ -85,7 +85,7 @@ export async function withTransaction<T>(
   const {
     maxAttempts = 6,
     initialBackoffMs = 75,
-    isolationLevel = Prisma.TransactionIsolationLevel.Serializable,
+    isolationLevel = Prisma.TransactionIsolationLevel.ReadCommitted,
     timeoutMs = 15_000,
   } = options;
 

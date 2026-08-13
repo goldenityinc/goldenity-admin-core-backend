@@ -788,7 +788,7 @@ export const createQrOrder = asyncHandler(async (req: Request, res: Response) =>
   }, {
     maxAttempts: 6,
     initialBackoffMs: 80,
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     timeoutMs: 18_000,
   });
 
@@ -1270,7 +1270,7 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   }, {
     maxAttempts: 6,
     initialBackoffMs: 70,
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
     timeoutMs: 15_000,
   });
 
