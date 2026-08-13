@@ -1059,12 +1059,15 @@ export const uploadQrOrderPayment = asyncHandler(async (req: Request, res: Respo
   //    Sebelumnya HANYA lookup via orderId req.params.id/:orderId → route by-transaction selalu FAIL
   //    karena orderId = undefined.
   //    SEKARANG: Jika txIdParam ada → lookup sales_record by tenant + (receipt_number OR reference_id OR id = txId).
-  let orderId = orderIdParam ? parseSalesRecordId(orderIdParam) : undefined;
+  let orderId: bigint | undefined = undefined;
+  if (orderIdParam) {
+    try { orderId = parseSalesRecordId(orderIdParam); } catch { orderId = undefined; }
+  }
   if ((!orderId || typeof orderId !== 'bigint') && txIdParam) {
     try {
       const txStr = String(txIdParam).trim();
       const lookup = await prisma.$queryRawUnsafe<Array<{ id: number | bigint }>>(
-        `SELECT id FROM sales_records WHERE tenant_id = $1::bigint AND (receipt_number = $2 OR reference_id = $2 OR CAST(id AS VARCHAR) = $2) LIMIT 1`,
+        `SELECT id FROM sales_records WHERE tenant_id = $1 AND (receipt_number = $2 OR reference_id = $2 OR CAST(id AS VARCHAR) = $2) LIMIT 1`,
         [tenantId, txStr],
       );
       if (lookup && lookup[0] && lookup[0].id) {

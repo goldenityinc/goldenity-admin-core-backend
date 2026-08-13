@@ -200,33 +200,66 @@ export const acknowledgeOrder = asyncHandler(async (req: Request, res: Response)
 export const getOrderAckStatus = asyncHandler(async (req: Request, res: Response) => {
   const tenantId = readTenantId(req);
   const { id } = req.params;
+  const submissionId = req.body?.submissionId ?? req.query?.submissionId;
 
   if (!id) {
     throw new AppError('Order ID is required', 400);
   }
 
-  const salesRecordId = parseSalesRecordId(id);
+  let salesRecordId: bigint | null = null;
+  try {
+    salesRecordId = parseSalesRecordId(id);
+  } catch (_) {
+    salesRecordId = null;
+  }
 
-  const salesRecord = await prisma.sales_records.findUnique({
-    where: { id: salesRecordId },
-    select: {
-      id: true,
-      tenant_id: true,
-    },
+  const where: any = { tenant_id: tenantId };
+  where.OR = [];
+  if (salesRecordId !== null) {
+    where.OR.push({ id: salesRecordId });
+  }
+  if (submissionId && typeof submissionId === 'string' && submissionId.trim()) {
+    where.OR.push({ submissionId: String(submissionId).trim() });
+  }
+  if (id && typeof id === 'string' && id.trim()) {
+    where.OR.push({ submissionId: id.trim() });
+    where.OR.push({ reference_id: id.trim() });
+    where.OR.push({ receipt_number: id.trim() });
+  }
+
+  const salesRecordUnique = salesRecordId !== null
+    ? await prisma.sales_records.findUnique({
+        where: { id: salesRecordId },
+        select: { id: true, tenant_id: true },
+      }).catch(() => null)
+    : null;
+
+  const resolvedSales = salesRecordUnique ?? await prisma.sales_records.findFirst({
+    where,
+    orderBy: { id: 'desc' },
+    select: { id: true, tenant_id: true },
   });
 
-  if (!salesRecord) {
+  if (!resolvedSales) {
     throw new AppError('Sales record not found', 404);
   }
 
-  if (salesRecord.tenant_id && salesRecord.tenant_id !== tenantId) {
+  if (resolvedSales.tenant_id && resolvedSales.tenant_id !== tenantId) {
     throw new AppError('Sales record does not belong to this tenant', 403);
   }
 
-  let ack = await prisma.orderAcknowledgement.findFirst({
-    where: { salesRecordId },
-    orderBy: { createdAt: 'desc' },
-  });
+  salesRecordId = resolvedSales.id;
+
+  let ack = await prisma.orderAcknowledgement.findUnique({
+    where: { submissionId: (submissionId ?? '').toString().trim() || id.trim() },
+  }).catch(() => null);
+
+  if (!ack) {
+    ack = await prisma.orderAcknowledgement.findFirst({
+      where: { salesRecordId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
   if (!ack) {
     return res.status(200).json({
