@@ -738,3 +738,118 @@ export const patchRelayOrderSyncStatus = asyncHandler(async (req: Request, res: 
     tableRefresh: tableRefreshPayload,
   });
 });
+
+export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, res: Response) => {
+  const { tenantId } = buildScopeFilters(req);
+  if (!tenantId) {
+    return res.status(400).json({ ok: false, error: 'TENANT_ID_REQUIRED', message: 'tenantId wajib via header/body/query.' });
+  }
+  const body = (req.body || {}) as Record<string, unknown>;
+  const submissionId = String(body.submissionId ?? body.submission_id ?? '').trim();
+  if (!submissionId) {
+    return res.status(400).json({ ok: false, error: 'SUBMISSION_ID_REQUIRED' });
+  }
+  const ackStatusRaw = String(body.ackStatus ?? body.ack_status ?? 'POS_PRINTED').trim().toUpperCase();
+  const validStatuses: Array<'PENDING_ACK' | 'POS_ACKNOWLEDGED' | 'POS_PRINTED' | 'FAILED_DELIVERY' | 'TIMEOUT'> = [
+    'PENDING_ACK', 'POS_ACKNOWLEDGED', 'POS_PRINTED', 'FAILED_DELIVERY', 'TIMEOUT',
+  ];
+  if (!validStatuses.includes(ackStatusRaw as never)) {
+    return res.status(400).json({ ok: false, error: 'ACK_STATUS_INVALID', valid: validStatuses });
+  }
+  const ackStatus = ackStatusRaw as 'PENDING_ACK' | 'POS_ACKNOWLEDGED' | 'POS_PRINTED' | 'FAILED_DELIVERY' | 'TIMEOUT';
+  const deviceUuid = String(body.deviceUuid ?? body.device_uuid ?? body.targetDeviceUuid ?? (body.ackPayload as any)?.deviceUuid ?? '').trim() || undefined;
+  const printedAtRaw = (body as any).printedAt ?? (body.ackPayload as any)?.printedAt ?? null;
+  const now = new Date();
+  const printedAt = ackStatus === 'POS_PRINTED'
+    ? (printedAtRaw ? new Date(String(printedAtRaw)) : now)
+    : undefined;
+  const acknowledgedAt = (ackStatus === 'POS_ACKNOWLEDGED' || ackStatus === 'POS_PRINTED') ? now : undefined;
+  const salesRecordIdRaw = body.salesRecordId ?? body.sales_record_id ?? (body.ackPayload as any)?.salesRecordId ?? null;
+  const transactionNumber = String(body.transactionNumber ?? body.transaction_number ?? (body.ackPayload as any)?.transactionNumber ?? '').trim() || undefined;
+
+  // Resolve salesRecord via where: submissionId OR provided id OR reference_id
+  const where: Prisma.sales_recordsWhereInput = { tenant_id: tenantId };
+  where.OR = [];
+  where.OR.push({ submissionId });
+  where.OR.push({ reference_id: submissionId });
+  where.OR.push({ receipt_number: submissionId });
+  if (salesRecordIdRaw !== null && salesRecordIdRaw !== undefined) {
+    try {
+      const id = BigInt(String(salesRecordIdRaw));
+      where.OR.push({ id });
+    } catch { /* noop */ }
+  }
+
+  const sr = await prisma.sales_records.findFirst({
+    where,
+    orderBy: { id: 'desc' },
+    select: { id: true, tenant_id: true, branch_id: true, receipt_number: true, reference_id: true, submissionId: true },
+  });
+
+  const branchId = sr?.branch_id ? BigInt(sr.branch_id) : undefined;
+  const salesRecordId = sr?.id ?? undefined;
+
+  let ack;
+  let found = await prisma.orderAcknowledgement.findUnique({ where: { submissionId } });
+  if (!found && salesRecordId) {
+    found = await prisma.orderAcknowledgement.findFirst({ where: { salesRecordId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  const upsertData: any = {
+    tenantId,
+    branchId,
+    salesRecordId,
+    submissionId,
+    transactionNumber,
+    targetDeviceUuid: deviceUuid,
+    ackStatus,
+    acknowledgedAt,
+    printedAt,
+    ackPayload: (body.ackPayload ?? {}) as any,
+  };
+  if (found) {
+    ack = await prisma.orderAcknowledgement.update({
+      where: { id: found.id },
+      data: { ...upsertData, retriesCount: { increment: 1 } },
+    });
+  } else {
+    ack = await prisma.orderAcknowledgement.create({
+      data: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
+    });
+  }
+
+  // Map ackStatus to syncStatus & update sales_records
+  const syncStatusMap: Record<string, string> = {
+    PENDING_ACK: 'PENDING_ACK',
+    POS_ACKNOWLEDGED: 'POS_ACKNOWLEDGED',
+    POS_PRINTED: 'POS_PRINTED',
+    FAILED_DELIVERY: 'FAILED_DELIVERY',
+    TIMEOUT: 'FAILED_DELIVERY',
+  };
+  const syncStatus = syncStatusMap[ackStatus] || 'PENDING_ACK';
+  if (salesRecordId) {
+    await prisma.sales_records.update({
+      where: { id: salesRecordId },
+      data: {
+        syncStatus: syncStatus as any,
+        targetDeviceUuid: deviceUuid,
+        submissionId,
+        updated_at: now,
+      },
+    }).catch(() => null);
+  } else if (sr) {
+    await prisma.sales_records.updateMany({ where: { id: sr.id }, data: { syncStatus: syncStatus as any, submissionId, targetDeviceUuid: deviceUuid, updated_at: now } });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    submissionId,
+    ackStatus,
+    ackId: ack.id.toString(),
+    acknowledgedAt: acknowledgedAt?.toISOString?.() ?? null,
+    printedAt: printedAt?.toISOString?.() ?? null,
+    salesRecordId: salesRecordId ? String(salesRecordId) : null,
+  });
+});
+
+

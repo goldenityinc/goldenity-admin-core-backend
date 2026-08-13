@@ -5,6 +5,7 @@ import {
   getActiveOrdersForTable,
   relayFlexibleAuth,
   patchRelayOrderSyncStatus,
+  postRelayOrderAckBySubmission,
 } from '../controllers/relayOrdersController';
 
 const router = Router({ mergeParams: true });
@@ -23,6 +24,7 @@ router.patch('/sync-status', patchRelayOrderSyncStatus);
 router.post('/sync-status', patchRelayOrderSyncStatus);
 router.patch('/:id/sync-status', patchRelayOrderSyncStatus);
 router.post('/:id/sync-status', patchRelayOrderSyncStatus);
+router.post('/ack', postRelayOrderAckBySubmission);
 
 // ✅ ENDPOINT 1 (Critical Fix 1 Items Kosong + Fix 2 Table Isolation):
 //    GET /api/v1/relay/orders/by-transaction/TX-1786123768977?tenantId=X&branchId=Y&tableId=33
