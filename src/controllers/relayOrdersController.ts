@@ -5,6 +5,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { serializeForJson } from '../utils/serializeForJson';
 import { internalServiceAuth } from '../middlewares/internalServiceAuth';
 import { authMiddleware, tenantMiddleware } from '../middlewares/authMiddleware';
+import { emitToBranch, emitToTenant } from '../services/socketServer';
 
 function resolveRelayTenantId(req: Request): string | null {
   const fromUser = (req as unknown as { user?: { tenantId?: string; tenant_id?: string } }).user?.tenantId
@@ -640,4 +641,100 @@ export const getActiveOrdersForTable = asyncHandler(async (req: Request, res: Re
 
   const payload = withItems.map(buildRelayOrderPayload);
   return res.status(200).json(serializeForJson(payload));
+});
+
+export const patchRelayOrderSyncStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { tenantId, branchId } = buildScopeFilters(req);
+  if (!tenantId) {
+    return res.status(400).json({ ok: false, error: 'TENANT_ID_REQUIRED', message: 'tenantId wajib via header/query.' });
+  }
+  const body = (req.body || {}) as Record<string, unknown>;
+  const submissionId = String(body.submissionId ?? req.params.submissionId ?? req.query.submissionId ?? '').trim() || null;
+  const salesRecordIdRaw = body.salesRecordId ?? body.sales_record_id ?? req.params.id ?? null;
+  const salesRecordId = (salesRecordIdRaw === null || salesRecordIdRaw === undefined)
+    ? null
+    : (typeof salesRecordIdRaw === 'bigint' ? salesRecordIdRaw : (() => { try { return BigInt(String(salesRecordIdRaw)); } catch { return null; } })());
+  const transactionIdRaw = body.transactionId ?? body.transaction_id ?? null;
+  const transactionId = (transactionIdRaw === null || transactionIdRaw === undefined)
+    ? null
+    : (typeof transactionIdRaw === 'bigint' ? transactionIdRaw : (() => { try { return BigInt(String(transactionIdRaw)); } catch { return null; } })());
+  const syncStatusRaw = String(body.syncStatus ?? body.sync_status ?? '').trim().toUpperCase();
+  if (!syncStatusRaw) return res.status(400).json({ ok: false, error: 'SYNC_STATUS_REQUIRED' });
+  const validSyncStatuses = ['DRAFT', 'QUEUED_FOR_POS', 'PENDING_ACK', 'POS_ACKNOWLEDGED', 'POS_PRINTED', 'FAILED_DELIVERY', 'SYNC_DELAYED'];
+  if (!validSyncStatuses.includes(syncStatusRaw)) {
+    return res.status(400).json({ ok: false, error: 'SYNC_STATUS_INVALID', valid: validSyncStatuses });
+  }
+  const where: Prisma.sales_recordsWhereInput = { tenant_id: tenantId };
+  if (submissionId) where.submissionId = submissionId;
+  else if (salesRecordId) where.id = salesRecordId;
+  else if (transactionId) where.OR = [{ id: transactionId }, { reference_id: String(transactionId) }];
+  else return res.status(400).json({ ok: false, error: 'IDENTIFIER_REQUIRED', message: 'Butuh salah satu: submissionId / salesRecordId / transactionId.' });
+  let updated: Array<{ id: bigint; table_id: bigint | null; branch_id: bigint | null; receipt_number: string | null; payment_status: string | null }> = [];
+  let tableRefreshPayload: Record<string, unknown> | null = null;
+  try {
+    const result = await prisma.sales_records.updateMany({
+      where,
+      data: {
+        syncStatus: syncStatusRaw as never,
+        updated_at: new Date(),
+      },
+    });
+    if (result.count > 0) {
+      updated = (await prisma.sales_records.findMany({
+        where,
+        take: 5,
+        select: { id: true, table_id: true, branch_id: true, receipt_number: true, payment_status: true },
+      })) as Array<{ id: bigint; table_id: bigint | null; branch_id: bigint | null; receipt_number: string | null; payment_status: string | null }>;
+      if (['QUEUED_FOR_POS', 'POS_ACKNOWLEDGED', 'POS_PRINTED'].includes(syncStatusRaw)) {
+        for (const sr of updated) {
+          if (!sr.table_id) continue;
+          const tblWhere: Prisma.tablesWhereUniqueInput = { id: sr.table_id };
+          if (branchId) tblWhere.branch_id = branchId;
+          tblWhere.tenant_id = tenantId;
+          try {
+            const current = await prisma.tables.findUnique({ where: tblWhere, select: { id: true, status: true, branch_id: true, tenant_id: true, table_number: true } });
+            if (current && (String(current.status ?? '').toUpperCase() === 'AVAILABLE' || !current.status)) {
+              await prisma.tables.update({
+                where: { id: sr.table_id },
+                data: { status: 'OCCUPIED', updated_at: new Date() },
+              });
+              const tblNum = (current as any).table_number ?? (current as any).tableNumber ?? null;
+              tableRefreshPayload = {
+                tableId: String(current.id),
+                tableName: tblNum ? String(tblNum) : `Meja ${current.id}`,
+                status: 'OCCUPIED',
+                branchId: current.branch_id ? String(current.branch_id) : null,
+                tenantId: String((current as any).tenant_id ?? tenantId),
+                source: 'bridge.sync_status',
+                syncStatus: syncStatusRaw,
+                timestamp: new Date().toISOString(),
+              };
+              emitToTenant(String((current as any).tenant_id ?? tenantId), 'tables_refresh', tableRefreshPayload);
+              emitToTenant(String((current as any).tenant_id ?? tenantId), 'tables:refresh', tableRefreshPayload);
+              emitToTenant(String((current as any).tenant_id ?? tenantId), 'table_status_changed', tableRefreshPayload);
+              const brId = current.branch_id ? String(current.branch_id) : null;
+              if (brId) {
+                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'tables_refresh', tableRefreshPayload);
+                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'tables:refresh', tableRefreshPayload);
+                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'table_status_changed', tableRefreshPayload);
+              }
+            }
+          } catch (tblErr) {
+            console.error('[relayOrders:syncStatus] table occupied fallback error', tblErr);
+          }
+        }
+      }
+    }
+  } catch (dbErr) {
+    console.error('[relayOrders:syncStatus] updateMany DB error', dbErr);
+    return res.status(500).json({ ok: false, error: 'DB_WRITE_FAILED', message: String(dbErr && (dbErr as any).message ? (dbErr as any).message : dbErr) });
+  }
+  return res.status(200).json({
+    ok: true,
+    syncStatus: syncStatusRaw,
+    updatedCount: updated.length,
+    updatedIds: updated.map(u => String(u.id)),
+    tableOccupied: !!tableRefreshPayload,
+    tableRefresh: tableRefreshPayload,
+  });
 });
