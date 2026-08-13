@@ -193,8 +193,6 @@ export const upsertCell = asyncHandler(async (req: Request, res: Response) => {
     preParseReceiptImagesForValidation(body);
   }
 
-  console.log('[upsertCell] req.body after normalize:', JSON.stringify(req.body, null, 2));
-
   const parsed = upsertClientPaymentCellSchema.safeParse(req.body);
 
   if (!parsed.success) {

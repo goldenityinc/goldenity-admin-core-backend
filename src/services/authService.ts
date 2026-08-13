@@ -207,12 +207,6 @@ export class AuthService {
       .map((item) => item.trim().toUpperCase())
       .filter((item) => item.length > 0);
 
-    console.log('LOGIN ATTEMPT:', {
-      email: credentials.username,
-      requestedSolution,
-      userAllowedSolutions: allowedSolutions,
-    });
-
     if (requestedSolution && !normalizedAllowedSolutions.includes(requestedSolution)) {
       throw new AppError('User tidak memiliki akses ke portal ini', 403);
     }

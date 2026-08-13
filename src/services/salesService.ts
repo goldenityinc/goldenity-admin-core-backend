@@ -445,40 +445,6 @@ export class SalesService {
       normalizeSalePayloadItems(payload as unknown as Record<string, unknown>);
     } catch (_) {}
 
-    try {
-      const itemsArr = Array.isArray((payload as unknown as Record<string, unknown>).items)
-        ? ((payload as unknown as Record<string, unknown>).items as Array<Record<string, unknown>>)
-        : [];
-      const firstItems = itemsArr.slice(0, 3).map((it, idx) => {
-        try { normalizeCartItemInPlace(it as unknown as CartItemLike); } catch (_) {}
-        return {
-          index: idx,
-          id: it?.id ?? null,
-          productId: it?.productId ?? it?.product_id ?? null,
-          nestedProductId: (it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).id ?? null) : null,
-          qty: it?.qty ?? it?.quantity ?? null,
-          price: it?.price ?? it?.unit_price ?? it?.custom_price ?? ((it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).price ?? null) : null),
-          name: it?.name ?? it?.product_name ?? it?.productName ?? ((it?.product && typeof it.product === 'object') ? ((it.product as Record<string, unknown>).name ?? null) : null),
-          isService: it?.isService ?? it?.is_service ?? ((it?.product && typeof it.product === 'object') ? (((it.product as Record<string, unknown>).isService ?? (it.product as Record<string, unknown>).is_service) ?? null) : null),
-          isCustomItem: it?.isCustomItem ?? it?.is_custom_item ?? null,
-        };
-      });
-      const summary = {
-        tenant: tenantId,
-        itemsCount: itemsArr.length,
-        branchId: (payload as unknown as Record<string, unknown>).branchId ?? null,
-        tableId: (payload as unknown as Record<string, unknown>).tableId ?? null,
-        orderType: (payload as unknown as Record<string, unknown>).orderType ?? null,
-        totalAmount: (payload as unknown as Record<string, unknown>).totalAmount ?? (payload as unknown as Record<string, unknown>).total_amount ?? (payload as unknown as Record<string, unknown>).totalPrice ?? null,
-        receiptNumber: (payload as unknown as Record<string, unknown>).receiptNumber ?? null,
-        firstItems,
-      };
-      console.log(`[SalesService.createSale ENTRY] payload summary=`, JSON.stringify(summary));
-      if (itemsArr.length > 0) {
-        console.log(`[SalesService.createSale ENTRY] RAW ITEMS JSON=`, JSON.stringify(itemsArr.slice(0, 5)).slice(0, 3500));
-      }
-    } catch (_) {}
-
     const branchId = toOptionalBigInt(payload.branchId ?? undefined);
     const tableId = toOptionalBigInt(payload.tableId ?? undefined);
     const shiftId = toOptionalBigInt(payload.shiftId ?? undefined);
@@ -493,36 +459,6 @@ export class SalesService {
     }
 
     const normalizedItems = payload.items.map(normalizeSaleItem);
-
-    try {
-      console.log(`[SalesService.createSale NORMALIZED] ${normalizedItems.length} items:`, JSON.stringify(
-        normalizedItems.map((it, i) => ({
-          i,
-          product_id: it.product_id,
-          product_name: it.product_name,
-          qty: it.qty,
-          custom_price: it.custom_price?.toString(),
-          is_service: it.is_service,
-          is_custom_item: it.is_custom_item,
-          mechanic_id: it.mechanic_id,
-        }))
-      ).slice(0, 3500));
-    } catch (_) {}
-
-    // Log items with custom prices for debugging
-    const itemsWithCustomPrices = normalizedItems.filter(
-      (item) => item.custom_price !== null && item.custom_price !== undefined
-    );
-    if (itemsWithCustomPrices.length > 0) {
-      console.log(
-        `[SalesService.createSale] Sale with ${itemsWithCustomPrices.length} items with custom prices:`,
-        itemsWithCustomPrices.map((item) => ({
-          productName: item.product_name,
-          customPrice: item.custom_price?.toString(),
-          isService: item.is_service,
-        }))
-      );
-    }
 
     return withTransaction(async (tx) => {
       const resolvedReceiptNumber = await this.resolveReceiptNumber(
@@ -659,16 +595,6 @@ export class SalesService {
         `;
 
         const insertedItem = itemRows[0];
-        if (insertedItem.custom_price && insertedItem.is_service) {
-          console.log(
-            `[SalesService.createSale] Service item saved with custom price: ${insertedItem.product_name} = ${insertedItem.custom_price}`
-          );
-        }
-        if (insertedItem.mechanic_id) {
-          console.log(
-            `[SalesService.createSale] Service item saved with mechanic_id: ${insertedItem.product_name} -> MechanicID=${insertedItem.mechanic_id}`
-          );
-        }
         items.push(insertedItem);
 
         const productId = (insertedItem.product_id ?? '').toString().trim();
