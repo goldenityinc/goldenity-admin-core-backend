@@ -28,6 +28,105 @@ function resolveRelayTableId(req: Request): bigint | null {
   try { return BigInt(raw); } catch { return null; }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔥🔥🔥 FIX BE NORMALIZE DUP SUFFIX (INFINITE RETRY BUG):
+//    Railway logs user: `[IDEMPOTENCY-RENAME] submissionId collision detected.
+//    original=d601b...7a7 final=d601b...7a7__dup_1 attempt=1`
+//
+//    MASALAH: Bridge IDEMPOTENCY RENAME menambahkan suffix `__dup_N` pada
+//    submissionId saat upstream save race. Jika BE MENERIMA ack dgn submissionId
+//    SUDAH di-rename = `...__dup_1`, maka:
+//      (A) prisma.orderAcknowledgement.findUnique({ where: { submissionId: dupId } })
+//          → NULL → BE membuat ACK ROW BARU dgn key dupId.
+//      (B) Original submissionId (TANPA __dup) TETAP dianggap BELUM di-ack
+//          → Bridge watchdog TETAP RETRY → INFINITE LOOP RETRY sampai MAX!
+//    SOLUSI: SELALU normalize submissionId dengan MENGHAPUS suffix __dup_N
+//    DI AWAL SEMUA function (patchSyncStatus, ackBySubmission, getByTxId, dst)
+//    sebelum write / find ke Prisma. Ini = mirror persis pattern di Flutter
+//    `_normalizeIdNoDupSuffix` + Bridge lookup identity!
+// ═══════════════════════════════════════════════════════════════════════════
+function normalizeSubmissionIdNoDupSuffix(raw: string | null | undefined): string {
+  if (raw == null) return '';
+  let s = String(raw).trim();
+  if (!s) return '';
+  const dupSuffixRe = /__dup_\d+$/;
+  while (dupSuffixRe.test(s)) {
+    s = s.replace(dupSuffixRe, '');
+  }
+  return s;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔥🔥🔥 FIX BE OCCUPIED TABLE LOCK (MEJA TETAP HIJAU MESKIPUN ACK DATANG):
+//    Reusable helper — SAMA PERSIS dengan pattern di patchRelayOrderSyncStatus
+//    L688-L720. Digunakan oleh 3 function: patchSyncStatus, postAckBySubmission,
+//    dan nanti acknowledgeOrder di orderAckController (mirror logic).
+//
+//    Business flow TIDAK BERUBAH — hanya MENAMBAHKAN SAFETY NET agar meja
+//    SELALU berstatus OCCUPIED ketika ack / sync-status positif datang dari
+//    POS / Bridge (jika sebelumnya status AVAILABLE / null).
+// ═══════════════════════════════════════════════════════════════════════════
+type OccupiedLockResult = { didOccupy: boolean; payload: Record<string, unknown> | null; };
+async function tryOccupyTableIfAvailable({
+  tenantId, branchId, tableId, source, syncStatus,
+}: { tenantId: string; branchId?: bigint | string | null; tableId: bigint | string; source: string; syncStatus: string; }): Promise<OccupiedLockResult> {
+  try {
+    const tblWhere: Prisma.tablesWhereUniqueInput = {
+      id: typeof tableId === 'bigint' ? tableId : BigInt(String(tableId)),
+      tenant_id: tenantId,
+    };
+    if (branchId !== null && branchId !== undefined && String(branchId).trim() !== '') {
+      try { tblWhere.branch_id = typeof branchId === 'bigint' ? branchId : BigInt(String(branchId)); } catch (_) { /* noop */ }
+    }
+    const current = await prisma.tables.findUnique({
+      where: tblWhere,
+      select: { id: true, status: true, branch_id: true, tenant_id: true, table_number: true },
+    });
+    if (!current) return { didOccupy: false, payload: null };
+    const curStatus = String(current.status ?? '').toUpperCase();
+    if (curStatus !== '' && curStatus !== 'AVAILABLE') {
+      // Sudah OCCUPIED / RESERVED / RECENTLY_PAID — JANGAN timpa status (business flow sesuai design)
+      return { didOccupy: false, payload: null };
+    }
+    await prisma.tables.update({
+      where: { id: current.id },
+      data: { status: 'OCCUPIED', updated_at: new Date() },
+    });
+    const tblNum = (current as any).table_number ?? (current as any).tableNumber ?? null;
+    const payload: Record<string, unknown> = {
+      tableId: String(current.id),
+      tableName: tblNum ? String(tblNum) : `Meja ${current.id}`,
+      status: 'OCCUPIED',
+      branchId: current.branch_id ? String(current.branch_id) : null,
+      tenantId: String((current as any).tenant_id ?? tenantId),
+      source,
+      syncStatus,
+      timestamp: new Date().toISOString(),
+    };
+    const tId = String((current as any).tenant_id ?? tenantId);
+    const brId = current.branch_id ? String(current.branch_id) : null;
+    emitToTenant(tId, 'tables_refresh', payload);
+    emitToTenant(tId, 'tables:refresh', payload);
+    emitToTenant(tId, 'table_status_changed', payload);
+    if (brId) {
+      emitToBranch(tId, brId, 'tables_refresh', payload);
+      emitToBranch(tId, brId, 'tables:refresh', payload);
+      emitToBranch(tId, brId, 'table_status_changed', payload);
+    }
+    try {
+      const ts = new Date().toISOString();
+      console.log(`[${ts}] [DEBUG-WEB-ORDER] [BE-OCCUPY-TABLE-OK] source=${source} syncStatus=${syncStatus} tableId=${current.id} name=${payload.tableName} tenantId=${tId} branchId=${brId ?? 'null'}`);
+    } catch (_) { /* noop */ }
+    return { didOccupy: true, payload };
+  } catch (tblErr) {
+    try {
+      const ts = new Date().toISOString();
+      console.error(`[${ts}] [DEBUG-WEB-ORDER] [BE-OCCUPY-TABLE-ERR] source=${source} syncStatus=${syncStatus} error=${(tblErr as any)?.message ?? String(tblErr)}`);
+    } catch (_) { /* noop */ }
+    return { didOccupy: false, payload: null };
+  }
+}
+
 export function relayFlexibleAuth(req: Request, res: Response, next: NextFunction) {
   const hasInternalToken = Boolean((req.headers['x-internal-token'] || '').toString().trim());
   const hasBridgeHeader =
@@ -649,7 +748,15 @@ export const patchRelayOrderSyncStatus = asyncHandler(async (req: Request, res: 
     return res.status(400).json({ ok: false, error: 'TENANT_ID_REQUIRED', message: 'tenantId wajib via header/query.' });
   }
   const body = (req.body || {}) as Record<string, unknown>;
-  const submissionId = String(body.submissionId ?? req.params.submissionId ?? req.query.submissionId ?? '').trim() || null;
+  // 🔥🔥🔥 FIX BE NORMALIZE DUP: Normalize submissionId HINDARI infinite retry ack
+  const rawSubmissionId = String(body.submissionId ?? req.params.submissionId ?? req.query.submissionId ?? '').trim() || null;
+  const submissionId = rawSubmissionId ? normalizeSubmissionIdNoDupSuffix(rawSubmissionId) || rawSubmissionId : null;
+  if (rawSubmissionId && submissionId && rawSubmissionId !== submissionId) {
+    try {
+      const ts = new Date().toISOString();
+      console.log(`[${ts}] [DEBUG-WEB-ORDER] [BE-NORMALIZE-SUBMISSION] patchSyncStatus from="${rawSubmissionId}" to normalized="${submissionId}"`);
+    } catch (_) { /* noop */ }
+  }
   const salesRecordIdRaw = body.salesRecordId ?? body.sales_record_id ?? req.params.id ?? null;
   const salesRecordId = (salesRecordIdRaw === null || salesRecordIdRaw === undefined)
     ? null
@@ -688,40 +795,15 @@ export const patchRelayOrderSyncStatus = asyncHandler(async (req: Request, res: 
       if (['QUEUED_FOR_POS', 'POS_ACKNOWLEDGED', 'POS_PRINTED'].includes(syncStatusRaw)) {
         for (const sr of updated) {
           if (!sr.table_id) continue;
-          const tblWhere: Prisma.tablesWhereUniqueInput = { id: sr.table_id };
-          if (branchId) tblWhere.branch_id = branchId;
-          tblWhere.tenant_id = tenantId;
-          try {
-            const current = await prisma.tables.findUnique({ where: tblWhere, select: { id: true, status: true, branch_id: true, tenant_id: true, table_number: true } });
-            if (current && (String(current.status ?? '').toUpperCase() === 'AVAILABLE' || !current.status)) {
-              await prisma.tables.update({
-                where: { id: sr.table_id },
-                data: { status: 'OCCUPIED', updated_at: new Date() },
-              });
-              const tblNum = (current as any).table_number ?? (current as any).tableNumber ?? null;
-              tableRefreshPayload = {
-                tableId: String(current.id),
-                tableName: tblNum ? String(tblNum) : `Meja ${current.id}`,
-                status: 'OCCUPIED',
-                branchId: current.branch_id ? String(current.branch_id) : null,
-                tenantId: String((current as any).tenant_id ?? tenantId),
-                source: 'bridge.sync_status',
-                syncStatus: syncStatusRaw,
-                timestamp: new Date().toISOString(),
-              };
-              emitToTenant(String((current as any).tenant_id ?? tenantId), 'tables_refresh', tableRefreshPayload);
-              emitToTenant(String((current as any).tenant_id ?? tenantId), 'tables:refresh', tableRefreshPayload);
-              emitToTenant(String((current as any).tenant_id ?? tenantId), 'table_status_changed', tableRefreshPayload);
-              const brId = current.branch_id ? String(current.branch_id) : null;
-              if (brId) {
-                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'tables_refresh', tableRefreshPayload);
-                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'tables:refresh', tableRefreshPayload);
-                emitToBranch(String((current as any).tenant_id ?? tenantId), brId, 'table_status_changed', tableRefreshPayload);
-              }
-            }
-          } catch (tblErr) {
-            console.error('[relayOrders:syncStatus] table occupied fallback error', tblErr);
-          }
+          // 🔥🔥🔥 FIX BE OCCUPIED: Pakai reusable helper tryOccupyTableIfAvailable!
+          const occ = await tryOccupyTableIfAvailable({
+            tenantId,
+            branchId: sr.branch_id ?? branchId ?? null,
+            tableId: sr.table_id,
+            source: 'bridge.sync_status',
+            syncStatus: syncStatusRaw,
+          });
+          if (occ.didOccupy && occ.payload) tableRefreshPayload = occ.payload;
         }
       }
     }
@@ -740,12 +822,20 @@ export const patchRelayOrderSyncStatus = asyncHandler(async (req: Request, res: 
 });
 
 export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, res: Response) => {
-  const { tenantId } = buildScopeFilters(req);
+  const { tenantId, branchId: branchIdFromScope } = buildScopeFilters(req);
   if (!tenantId) {
     return res.status(400).json({ ok: false, error: 'TENANT_ID_REQUIRED', message: 'tenantId wajib via header/body/query.' });
   }
   const body = (req.body || {}) as Record<string, unknown>;
-  const submissionId = String(body.submissionId ?? body.submission_id ?? '').trim();
+  // 🔥🔥🔥 FIX BE NORMALIZE DUP: Normalize submissionId HINDARI infinite retry ACK.
+  const rawSubmissionId = String(body.submissionId ?? body.submission_id ?? '').trim();
+  const submissionId = rawSubmissionId ? (normalizeSubmissionIdNoDupSuffix(rawSubmissionId) || rawSubmissionId) : '';
+  if (rawSubmissionId && submissionId && rawSubmissionId !== submissionId) {
+    try {
+      const ts = new Date().toISOString();
+      console.log(`[${ts}] [DEBUG-WEB-ORDER] [BE-NORMALIZE-SUBMISSION] postAckBySubmission from="${rawSubmissionId}" to normalized="${submissionId}"`);
+    } catch (_) { /* noop */ }
+  }
   if (!submissionId) {
     return res.status(400).json({ ok: false, error: 'SUBMISSION_ID_REQUIRED' });
   }
@@ -780,13 +870,14 @@ export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, r
     } catch { /* noop */ }
   }
 
+  // 🔥🔥🔥 FIX BE OCCUPIED LOCK: TAMBAHKAN table_id di select (agar nanti bisa occupy table!)
   const sr = await prisma.sales_records.findFirst({
     where,
     orderBy: { id: 'desc' },
-    select: { id: true, tenant_id: true, branch_id: true, receipt_number: true, reference_id: true, submissionId: true },
+    select: { id: true, tenant_id: true, branch_id: true, receipt_number: true, reference_id: true, submissionId: true, table_id: true },
   });
 
-  const branchId = sr?.branch_id ? BigInt(sr.branch_id) : undefined;
+  const branchId = sr?.branch_id ? BigInt(sr.branch_id) : (branchIdFromScope ?? undefined);
   const salesRecordId = sr?.id ?? undefined;
 
   let ack;
@@ -841,6 +932,29 @@ export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, r
     await prisma.sales_records.updateMany({ where: { id: sr.id }, data: { syncStatus: syncStatus as any, submissionId, targetDeviceUuid: deviceUuid, updated_at: now } });
   }
 
+  // 🔥🔥🔥 FIX BE OCCUPIED TABLE LOCK (MEJA TETAP HIJAU BUG):
+  //    Jika ackStatus = POS_ACKNOWLEDGED / POS_PRINTED & sales_record punya table_id
+  //    → PANGGIL helper tryOccupyTableIfAvailable (safety net sama persis seperti syncStatus patch).
+  //    Business flow TIDAK BERUBAH — memastikan meja MERAH jika ACK sudah datang!
+  let tableRefreshPayload: Record<string, unknown> | null = null;
+  if ((ackStatus === 'POS_ACKNOWLEDGED' || ackStatus === 'POS_PRINTED') && sr?.table_id) {
+    try {
+      const occ = await tryOccupyTableIfAvailable({
+        tenantId,
+        branchId: sr.branch_id ?? branchIdFromScope ?? null,
+        tableId: sr.table_id,
+        source: 'bridge.ack_by_submission',
+        syncStatus,
+      });
+      if (occ.didOccupy && occ.payload) tableRefreshPayload = occ.payload;
+    } catch (_occErr) {
+      try {
+        const ts = new Date().toISOString();
+        console.error(`[${ts}] [DEBUG-WEB-ORDER] [BE-OCCUPY-AckBySubmission-ERR] submissionId=${submissionId} error=${(_occErr as any)?.message ?? String(_occErr)}`);
+      } catch (_) { /* noop */ }
+    }
+  }
+
   return res.status(200).json({
     ok: true,
     submissionId,
@@ -849,6 +963,8 @@ export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, r
     acknowledgedAt: acknowledgedAt?.toISOString?.() ?? null,
     printedAt: printedAt?.toISOString?.() ?? null,
     salesRecordId: salesRecordId ? String(salesRecordId) : null,
+    tableOccupied: !!tableRefreshPayload,
+    tableRefresh: tableRefreshPayload,
   });
 });
 
