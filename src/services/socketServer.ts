@@ -19,18 +19,31 @@ export const buildBranchRoom = (tenantId: string, branchId: string | bigint | nu
   return `branch:${normalizedTenantId}:${String(branchId).trim()}`;
 };
 
+function _safeNormalizeToken(raw: unknown): string {
+  try {
+    if (raw == null) return '';
+    if (typeof raw !== 'string') return '';
+    let s = raw.trim();
+    if (!s) return '';
+    s = s.replace(/^Bearer\s+/i, '');
+    if (!s) return '';
+    const lower = s.toLowerCase();
+    if (lower === 'null' || lower === 'undefined' || lower === 'bearer' || lower === 'bearer null' || lower === 'bearer undefined') return '';
+    return s;
+  } catch (_) { return ''; }
+}
+
 function extractSocketToken(socket: Socket): string {
-  const authToken = socket.handshake.auth?.token;
-  if (typeof authToken === 'string' && authToken.trim().length > 0) {
-    return authToken.trim().replace(/^Bearer\s+/i, '');
-  }
+  const authToken = socket?.handshake?.auth?.token;
+  const safeAuth = _safeNormalizeToken(authToken);
+  if (safeAuth) return safeAuth;
 
-  const headerToken = socket.handshake.headers?.authorization;
-  if (typeof headerToken === 'string' && headerToken.startsWith('Bearer ')) {
-    return headerToken.slice(7).trim();
-  }
+  const headerToken = socket?.handshake?.headers?.authorization;
+  const safeHeader = _safeNormalizeToken(headerToken);
+  if (safeHeader) return safeHeader;
 
-  return '';
+  const queryToken = socket?.handshake?.query?.token;
+  return _safeNormalizeToken(queryToken);
 }
 
 async function resolveTenantIdFromToken(token: string): Promise<string> {
