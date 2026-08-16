@@ -29,29 +29,20 @@ function resolveRelayTableId(req: Request): bigint | null {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🔥🔥🔥 FIX BE NORMALIZE DUP SUFFIX (INFINITE RETRY BUG):
-//    Railway logs user: `[IDEMPOTENCY-RENAME] submissionId collision detected.
-//    original=d601b...7a7 final=d601b...7a7__dup_1 attempt=1`
+// 🧹 PHASE 2: SAFE SUBMISSION ID NORMALIZE (Backward Compat Only).
 //
-//    MASALAH: Bridge IDEMPOTENCY RENAME menambahkan suffix `__dup_N` pada
-//    submissionId saat upstream save race. Jika BE MENERIMA ack dgn submissionId
-//    SUDAH di-rename = `...__dup_1`, maka:
-//      (A) prisma.orderAcknowledgement.findUnique({ where: { submissionId: dupId } })
-//          → NULL → BE membuat ACK ROW BARU dgn key dupId.
-//      (B) Original submissionId (TANPA __dup) TETAP dianggap BELUM di-ack
-//          → Bridge watchdog TETAP RETRY → INFINITE LOOP RETRY sampai MAX!
-//    SOLUSI: SELALU normalize submissionId dengan MENGHAPUS suffix __dup_N
-//    DI AWAL SEMUA function (patchSyncStatus, ackBySubmission, getByTxId, dst)
-//    sebelum write / find ke Prisma. Ini = mirror persis pattern di Flutter
-//    `_normalizeIdNoDupSuffix` + Bridge lookup identity!
+// Bridge SUDAH TIDAK PERNAH mengirim __dup_ / __tblorder_ suffix lagi
+// (Phase 1 Dumb Relay). Namun helper normalize ini TETAP ADA sebagai
+// safety net apabila masih ada event in-flight dari versi Bridge lama
+// saat rolling deploy. Function = idempotent pass-through jika tidak ada suffix.
 // ═══════════════════════════════════════════════════════════════════════════
 function normalizeSubmissionIdNoDupSuffix(raw: string | null | undefined): string {
   if (raw == null) return '';
   let s = String(raw).trim();
   if (!s) return '';
-  const dupSuffixRe = /__dup_\d+$/;
-  while (dupSuffixRe.test(s)) {
-    s = s.replace(dupSuffixRe, '');
+  const legacySuffixesRe = /__(dup|tblorder)_\d+$/;
+  while (legacySuffixesRe.test(s)) {
+    s = s.replace(legacySuffixesRe, '');
   }
   return s;
 }
@@ -881,11 +872,18 @@ export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, r
   const salesRecordId = sr?.id ?? undefined;
 
   let ack;
-  let found = await prisma.orderAcknowledgement.findUnique({ where: { submissionId } });
-  if (!found && salesRecordId) {
-    found = await prisma.orderAcknowledgement.findFirst({ where: { salesRecordId }, orderBy: { createdAt: 'desc' } });
-  }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🧹 PHASE 2: IDEMPOTENT UPSERT (atomic by DB unique index).
+  //
+  // Ganti pattern lama (findUnique → if found ? update : create) dengan
+  // Prisma `upsert` yang ATOMIC & IDEMPOTEN oleh DB unique index.
+  // Dengan ini, menerima PAYLOAD YANG SAMA PERSIS 2x akan menghasilkan
+  // SAFE OVERWRITE (bukan error create duplicate atau 2 row).
+  //
+  // retriesCount increment hanya jika row SUDAH ADA (update),
+  // create baru set retriesCount = 0 + firstQueuedAt = now.
+  // ═══════════════════════════════════════════════════════════════════════════
   const upsertData: any = {
     tenantId,
     branchId,
@@ -898,15 +896,60 @@ export const postRelayOrderAckBySubmission = asyncHandler(async (req: Request, r
     printedAt,
     ackPayload: (body.ackPayload ?? {}) as any,
   };
-  if (found) {
-    ack = await prisma.orderAcknowledgement.update({
-      where: { id: found.id },
-      data: { ...upsertData, retriesCount: { increment: 1 } },
-    });
-  } else {
-    ack = await prisma.orderAcknowledgement.create({
-      data: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
-    });
+  try {
+    if (submissionId) {
+      // Fast path: submissionId unique constraint tersedia → atomic upsert langsung.
+      ack = await prisma.orderAcknowledgement.upsert({
+        where: { submissionId },
+        create: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
+        update: { ...upsertData, retriesCount: { increment: 1 } },
+      });
+    } else if (salesRecordId) {
+      // Fallback 1: tidak ada submissionId (edge case) → cari by salesRecordId dulu.
+      const existingBySr = await prisma.orderAcknowledgement.findFirst({
+        where: { salesRecordId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (existingBySr) {
+        ack = await prisma.orderAcknowledgement.update({
+          where: { id: existingBySr.id },
+          data: { ...upsertData, retriesCount: { increment: 1 } },
+        });
+      } else {
+        ack = await prisma.orderAcknowledgement.create({
+          data: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
+        });
+      }
+    } else {
+      // Last fallback: tetap pakai legacy create (upsert tanpa unique where impossible).
+      ack = await prisma.orderAcknowledgement.create({
+        data: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
+      });
+    }
+  } catch (upsertErr: any) {
+    // Safety net: jika Prisma upsert gagal karena transient issue,
+    // coba legacy pattern find-then-update/create 1x saja.
+    try {
+      let foundFallback = submissionId
+        ? await prisma.orderAcknowledgement.findUnique({ where: { submissionId } }).catch(() => null)
+        : null;
+      if (!foundFallback && salesRecordId) {
+        foundFallback = await prisma.orderAcknowledgement.findFirst({ where: { salesRecordId }, orderBy: { createdAt: 'desc' } }).catch(() => null);
+      }
+      if (foundFallback) {
+        ack = await prisma.orderAcknowledgement.update({
+          where: { id: (foundFallback as any).id },
+          data: { ...upsertData, retriesCount: { increment: 1 } },
+        });
+      } else {
+        ack = await prisma.orderAcknowledgement.create({
+          data: { ...upsertData, retriesCount: 0, firstQueuedAt: now },
+        });
+      }
+    } catch {
+      // Rethrow error UPSERT ASLI (bukan fallback) jika fallback juga gagal.
+      throw upsertErr;
+    }
   }
 
   // Map ackStatus to syncStatus & update sales_records
