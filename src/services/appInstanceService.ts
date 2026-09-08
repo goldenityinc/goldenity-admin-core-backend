@@ -120,15 +120,59 @@ function mergeRecord(
   };
 }
 
-function attachModuleKeys<T extends { modules?: Array<{ moduleDefinition: { moduleKey: string } }> }>(
+/**
+ * Ringkasan masa langganan dihitung dari `endDate` — dipakai FE Super Admin
+ * untuk kolom "Berakhir", badge "≤7 hari" & aksi perpanjangan. Grace 7 hari
+ * (POS V2 memakai default yang sama).
+ */
+export function computeSubscriptionView(endDate: Date | null | undefined, graceDays = 7) {
+  if (!endDate) {
+    return {
+      endDate: null as string | null,
+      daysRemaining: null as number | null,
+      graceUntil: null as string | null,
+      isNearDue: false,
+      isOverdue: false,
+      effectiveStatus: 'ACTIVE' as 'ACTIVE' | 'GRACE' | 'SUSPENDED',
+    };
+  }
+  const DAY = 86_400_000;
+  const now = Date.now();
+  const end = endDate.getTime();
+  const graceUntil = end + graceDays * DAY;
+  const daysRemaining = Math.ceil((end - now) / DAY);
+  const effectiveStatus = now > graceUntil ? 'SUSPENDED' : now > end ? 'GRACE' : 'ACTIVE';
+  return {
+    endDate: endDate.toISOString(),
+    daysRemaining,
+    graceUntil: new Date(graceUntil).toISOString(),
+    isNearDue: daysRemaining <= 7 && daysRemaining >= 0,
+    isOverdue: now > end,
+    effectiveStatus,
+  };
+}
+
+function attachModuleKeys<
+  T extends {
+    modules?: Array<{ moduleDefinition: { moduleKey: string } }>;
+    endDate?: Date | null;
+  },
+>(
   appInstance: T,
-): Omit<T, 'modules'> & { moduleKeys: string[] } {
+): Omit<T, 'modules'> & {
+  moduleKeys: string[];
+  subscriptionView: ReturnType<typeof computeSubscriptionView>;
+} {
   const { modules, ...rest } = appInstance as T & { adminPassword?: string | null };
   return {
     ...rest,
     adminPassword: undefined,
     appUrl: resolveEffectiveAppUrl(rest as AppInstanceUrlContext),
     moduleKeys: (modules ?? []).map((item) => item.moduleDefinition.moduleKey),
+    subscriptionView: computeSubscriptionView(appInstance.endDate ?? null),
+  } as Omit<T, 'modules'> & {
+    moduleKeys: string[];
+    subscriptionView: ReturnType<typeof computeSubscriptionView>;
   };
 }
 
