@@ -53,7 +53,14 @@ export type LoginResponseDto = {
     id: string;
     slug: string;
     name: string;
-    businessCategory?: 'GENERAL' | 'RETAIL_FNB' | 'SERVICES_AUTOMOTIVE';
+    businessCategory?:
+      | 'GENERAL'
+      | 'RETAIL_FNB'
+      | 'SERVICES_AUTOMOTIVE'
+      | 'BAKERY'
+      | 'CATERING'
+      | 'FLORIST'
+      | 'FROZEN_FOOD';
     bridgeApiUrl?: string | null;
     showInventoryImages?: boolean;
     syncMode?: string;

@@ -99,6 +99,54 @@ async function syncErpOrganizationProfile(
   }
 }
 
+/**
+ * Best-effort: mirror langganan ke POS V2 backend (read-model lokal di sana).
+ * Butuh env `POS_BACKEND_SYNC_URL` (base origin) + `CORE_SYNC_TOKEN` (shared
+ * secret, dikirim sebagai header x-core-sync-token). Kalau salah satu kosong
+ * atau solusi bukan POS → skip diam-diam. Tidak pernah menggagalkan request.
+ */
+async function syncPosSubscription(
+  appInstance: AppInstanceResponsePayload,
+): Promise<string | null> {
+  if (appInstance?.solution?.code !== 'POS') return null;
+  const base = process.env.POS_BACKEND_SYNC_URL;
+  const token = process.env.CORE_SYNC_TOKEN;
+  if (!base || !token) return null;
+
+  const tierMap: Record<string, string> = {
+    Standard: 'STANDARD',
+    Professional: 'PROFESSIONAL',
+    Enterprise: 'ENTERPRISE',
+    Custom: 'CUSTOM',
+  };
+  try {
+    const resp = await fetch(
+      `${base.replace(/\/+$/, '')}/api/v1/subscription/${appInstance.tenant.id}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-core-sync-token': token },
+        body: JSON.stringify({
+          tier: tierMap[appInstance.tier] ?? 'STANDARD',
+          status: appInstance.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE',
+          startDate: appInstance.createdAt,
+          endDate: appInstance.endDate ?? null,
+          externalRef: appInstance.id,
+        }),
+      },
+    );
+    if (!resp.ok) return `POS subscription sync HTTP ${resp.status}`;
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown';
+    console.error('POS subscription sync failed', {
+      tenantId: appInstance.tenant.id,
+      appInstanceId: appInstance.id,
+      error: message,
+    });
+    return `POS subscription sync skipped: ${message}`;
+  }
+}
+
 export const createAppInstance = asyncHandler(async (req: Request, res: Response) => {
   const bodyParsed = createAppInstanceSchema.safeParse(normalizeAppInstancePayload(req.body));
   if (!bodyParsed.success) {
@@ -111,12 +159,13 @@ export const createAppInstance = asyncHandler(async (req: Request, res: Response
       appInstance,
       typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
     );
+    const posWarning = await syncPosSubscription(appInstance);
 
     return res.status(201).json({
       success: true,
       message: 'App instance created successfully',
       data: appInstance,
-      ...(warning ? { warning } : {}),
+      ...(warning || posWarning ? { warning: [warning, posWarning].filter(Boolean).join('; ') } : {}),
     });
   } catch (error: unknown) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
@@ -189,6 +238,7 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
     updated,
     typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined,
   );
+  const posWarning = await syncPosSubscription(updated);
 
   const resolvedEntitlements = await EntitlementService.resolveForTenant(updated.tenant.id);
   await emitTenantUpdated(req, updated.tenant.id, {
@@ -204,7 +254,7 @@ export const updateAppInstance = asyncHandler(async (req: Request, res: Response
     success: true,
     message: 'App instance updated successfully',
     data: updated,
-    ...(warning ? { warning } : {}),
+    ...(warning || posWarning ? { warning: [warning, posWarning].filter(Boolean).join('; ') } : {}),
   });
 });
 

@@ -25,12 +25,20 @@ export const createExpenseSchema = z.object({
     .describe('Status pembayaran pengeluaran'),
   notes: optionalText.describe('Catatan pengeluaran'),
   attachment_url: optionalText.describe('URL lampiran pengeluaran (legacy)'),
+  // Frontend mengirim lampiran lama sebagai daftar URL (string), lampiran dari API lain sebagai objek {url}.
   attachments: z
     .array(
-      z.object({
-        url: z.string().min(1, 'URL lampiran wajib diisi'),
-        caption: z.string().trim().optional(),
-      })
+      z.union([
+        z
+          .string()
+          .trim()
+          .min(1, 'URL lampiran wajib diisi')
+          .transform((url): { url: string; caption?: string } => ({ url })),
+        z.object({
+          url: z.string().min(1, 'URL lampiran wajib diisi'),
+          caption: z.string().trim().optional(),
+        }),
+      ])
     )
     .optional()
     .describe('Daftar lampiran pengeluaran'),
