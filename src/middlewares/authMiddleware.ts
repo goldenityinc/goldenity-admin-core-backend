@@ -111,25 +111,42 @@ export const authMiddleware = async (
     // Prioritaskan JWT internal backend agar token dari /auth/login bisa dipakai lintas endpoint.
     const jwtSecret = process.env.JWT_SECRET;
     if (jwtSecret) {
+      let decoded: unknown = null;
       try {
-        const decoded = jwt.verify(token, jwtSecret);
-        if (isJwtAuthPayload(decoded)) {
-          req.user = {
-            userId: decoded.userId,
-            tenantId: decoded.tenantId,
-            role: decoded.role,
-            allowedSolutions: decoded.allowedSolutions,
-            branchId: decoded.branchId,
-            branchCode: decoded.branchCode,
-            isHQ: decoded.isHQ,
-            tier: decoded.tier,
-            addons: decoded.addons,
-          };
-
-          return next();
+        decoded = jwt.verify(token, jwtSecret);
+      } catch (jwtError: any) {
+        if (jwtError?.name === 'TokenExpiredError') {
+          throw new AppError('Token has expired. Please login again.', 401);
         }
-      } catch {
         // Bukan JWT internal, lanjutkan ke validasi Firebase.
+      }
+      if (isJwtAuthPayload(decoded)) {
+        // Super Admin: pastikan akun masih aktif (token lama dari akun yang dinonaktifkan ditolak).
+        if (decoded.role === 'SUPER_ADMIN') {
+          const admin = await prisma.user.findUnique({
+            where: { id: decoded.userId },
+            select: { isActive: true, role: true, email: true },
+          });
+          if (!admin || !admin.isActive || admin.role !== 'SUPER_ADMIN') {
+            throw new AppError('Your account has been deactivated.', 403);
+          }
+          decoded.email = decoded.email ?? admin.email ?? undefined;
+        }
+
+        req.user = {
+          userId: decoded.userId,
+          email: decoded.email,
+          tenantId: decoded.tenantId,
+          role: decoded.role,
+          allowedSolutions: decoded.allowedSolutions,
+          branchId: decoded.branchId,
+          branchCode: decoded.branchCode,
+          isHQ: decoded.isHQ,
+          tier: decoded.tier,
+          addons: decoded.addons,
+        };
+
+        return next();
       }
     }
 
@@ -185,8 +202,8 @@ export const authMiddleware = async (
       return next(new AppError('Token has expired. Please login again.', 401));
     }
     
-    if (error.code === 'auth/argument-error') {
-      return next(new AppError('Invalid token format', 401));
+    if (error.code === 'auth/argument-error' || error.code === 'auth/not-configured') {
+      return next(new AppError('Sesi tidak valid. Silakan login ulang.', 401));
     }
 
     // Pass error to global error handler

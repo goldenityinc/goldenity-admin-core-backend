@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
-import admin from '../config/firebase';
+// LAMA: script ini butuh akses Firebase. Untuk login baru, pakai src/scripts/setAdminPassword.ts.
+import admin, { getFirebaseAuth } from '../config/firebase';
 import prisma from '../config/database';
 
 dotenv.config();
@@ -13,6 +14,9 @@ async function main() {
     throw new Error('Usage: ts-node src/scripts/setSuperAdmin.ts <user-email>');
   }
 
+  if (!getFirebaseAuth()) {
+    throw new Error('Firebase tidak dikonfigurasi. Pakai src/scripts/setAdminPassword.ts.');
+  }
   const userRecord = await admin.auth().getUserByEmail(emailArg);
 
   await admin.auth().setCustomUserClaims(userRecord.uid, {
