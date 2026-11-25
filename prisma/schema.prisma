@@ -981,6 +981,54 @@ enum BusinessCategory {
   GENERAL
   RETAIL_FNB
   SERVICES_AUTOMOTIVE
+  BAKERY
+  CATERING
+  FLORIST
+  FROZEN_FOOD
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  INTERVIEW
+  DEMO
+  TRIAL
+  WON
+  LOST
+}
+
+/// Calon klien (prospek) untuk pipeline penjualan Super Admin.
+/// Sengaja tidak berelasi langsung ke Tenant; tenantId diisi saat lead dijadikan tenant.
+model Lead {
+  id              String    @id @default(uuid())
+  name            String
+  segment         String
+  stage           LeadStage @default(NEW)
+  tier            String?
+  score           Int?
+  area            String?
+  address         String?
+  phone           String?
+  instagram       String?
+  rating          Float?
+  reviewCount     Int?      @map("review_count")
+  outletCount     Int?      @map("outlet_count")
+  source          String?
+  mapsUrl         String?   @map("maps_url")
+  notes           String?
+  lostReason      String?   @map("lost_reason")
+  nextFollowUpAt  DateTime? @map("next_follow_up_at")
+  lastContactedAt DateTime? @map("last_contacted_at")
+  tenantId        String?   @map("tenant_id")
+  dedupeKey       String?   @unique @map("dedupe_key")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([stage])
+  @@index([segment])
+  @@index([tenantId])
+  @@index([nextFollowUpAt])
+  @@map("leads")
 }
 
 enum DeviceRole {
