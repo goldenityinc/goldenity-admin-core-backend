@@ -8,9 +8,14 @@ import {
 	me,
 	verify,
 } from '../controllers/authController';
-import { verifyToken } from '../middlewares/authMiddleware';
+import { authMiddleware, roleMiddleware, verifyToken } from '../middlewares/authMiddleware';
+import { adminLogin, adminMe } from '../controllers/adminAuthController';
 
 const router = Router();
+
+// Portal Super Admin (pengganti login Firebase).
+router.post('/admin/login', adminLogin);
+router.get('/admin/me', authMiddleware, roleMiddleware('SUPER_ADMIN'), adminMe);
 
 router.post('/login', login);
 // Backward compatibility for older clients.

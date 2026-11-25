@@ -11,6 +11,10 @@ export type JwtAuthPayload = {
   subscriptionEndDate?: string | null;
   entitlementsRevision?: number;
   activeModules?: string[];
+  /** Diisi untuk token login Super Admin (POST /api/auth/admin/login). */
+  email?: string;
+  /** 'admin' = token portal Super Admin. */
+  kind?: string;
 };
 
 export type ModuleEntitlementDto = {
@@ -86,6 +90,8 @@ export function isJwtAuthPayload(value: unknown): value is JwtAuthPayload {
     (candidate.addons === undefined || (Array.isArray(candidate.addons) && candidate.addons.every((item) => typeof item === 'string'))) &&
     (candidate.subscriptionEndDate === undefined || candidate.subscriptionEndDate === null || typeof candidate.subscriptionEndDate === 'string') &&
     (candidate.entitlementsRevision === undefined || typeof candidate.entitlementsRevision === 'number') &&
-    (candidate.activeModules === undefined || (Array.isArray(candidate.activeModules) && candidate.activeModules.every((item) => typeof item === 'string')))
+    (candidate.activeModules === undefined || (Array.isArray(candidate.activeModules) && candidate.activeModules.every((item) => typeof item === 'string'))) &&
+    (candidate.email === undefined || typeof candidate.email === 'string') &&
+    (candidate.kind === undefined || typeof candidate.kind === 'string')
   );
 }
